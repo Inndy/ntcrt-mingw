@@ -78,6 +78,17 @@ extern "C" struct _pthread_cleanup** (*_NtCRT_CleanupList)(void);
 extern "C" void (*_NtCRT_PthreadExit)(void);
 extern "C" void _NtCRT_KeyExit(void);
 
+/* A cancellation point: _NtCRT_TestCancel once a thread was cancelled, which pthread_cancel sets in any thread */
+static inline void _NtCRT_CancelPoint(void (*Pass)(void* Object), void* Object)
+{
+    void (*Test)(void (*)(void*), void*) = __atomic_load_n(&_NtCRT_TestCancel, __ATOMIC_ACQUIRE);
+
+    if (Test != NULL)
+    {
+        Test(Pass, Object);
+    }
+}
+
 /*
  * Wait while the Size bytes (4 or 8) at Address are Value, until _NtCRT_Wake of the address or the timeout. Returns
  * STATUS_SUCCESS (woken, or the value differs), STATUS_TIMEOUT, or with Alertable STATUS_ALERTED or STATUS_USER_APC.

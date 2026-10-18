@@ -23,6 +23,7 @@ typedef struct _NTCRT_PTHREAD
     _pthread_cleanup* Cleanup; /* pthread_cleanup_push */
     volatile LONG State;
     volatile LONG Cancel;
+    volatile LONG Pins; /* Of pthread_cancel, -1 when free */
 } NTCRT_PTHREAD, *PNTCRT_PTHREAD;
 
 #define THREAD_DETACHED 1
@@ -33,16 +34,17 @@ typedef struct _NTCRT_PTHREAD
 #define CANCEL_DISABLED 2
 #define CANCEL_ASYNC    4 /* Kept, acts as deferred */
 
-static NTCRT_PTHREAD g_FallbackThread = { NULL, NULL, NULL, NULL, NULL, NULL, THREAD_DETACHED | THREAD_FOREIGN, 0 };
+static NTCRT_PTHREAD g_FallbackThread = { NULL, NULL, NULL, NULL, NULL, NULL, THREAD_DETACHED | THREAD_FOREIGN, 0,
+                                          0 };
 
 /* The TLS slot of the pthread_t of a thread */
-static volatile DWORD g_SelfIndex = TLS_OUT_OF_INDEXES;
+static DWORD g_SelfIndex = TLS_OUT_OF_INDEXES;
 
 static bool ThreadSelfSlot(void)
 {
     DWORD Index;
 
-    if (g_SelfIndex != TLS_OUT_OF_INDEXES)
+    if (__atomic_load_n(&g_SelfIndex, __ATOMIC_ACQUIRE) != TLS_OUT_OF_INDEXES)
     {
         return true;
     }
@@ -62,15 +64,19 @@ static bool ThreadSelfSlot(void)
 /* NULL if the thread has none */
 static PNTCRT_PTHREAD ThreadSelf(void)
 {
-    DWORD Index = g_SelfIndex;
+    DWORD Index = __atomic_load_n(&g_SelfIndex, __ATOMIC_ACQUIRE);
 
     return Index != TLS_OUT_OF_INDEXES ? (PNTCRT_PTHREAD)_Inline_TlsGetValue2(Index) : NULL;
 }
 
+/* By its owner (the thread if detached or foreign, its joiner) or the last pin */
 static void ThreadFree(PNTCRT_PTHREAD Thread)
 {
-    NtClose(Thread->Handle);
-    RtlFreeHeap(NTCRT_HEAP, 0, Thread);
+    if (InterlockedDecrement(&Thread->Pins) < 0)
+    {
+        NtClose(Thread->Handle);
+        RtlFreeHeap(NTCRT_HEAP, 0, Thread);
+    }
 }
 
 static void ThreadExit(void)
@@ -81,7 +87,7 @@ static void ThreadExit(void)
     {
         return;
     }
-    _Inline_TlsSetValue(g_SelfIndex, NULL);
+    _Inline_TlsSetValue(__atomic_load_n(&g_SelfIndex, __ATOMIC_RELAXED), NULL);
     if ((Thread->State & THREAD_FOREIGN) != 0 || (InterlockedOr(&Thread->State, THREAD_EXITED) & THREAD_DETACHED) != 0)
     {
         ThreadFree(Thread);
@@ -130,7 +136,7 @@ static PNTCRT_PTHREAD CurrentThread(void)
                           0,
                           0,
                           DUPLICATE_SAME_ACCESS);
-        if (!ThreadSelfSlot() || !_Inline_TlsSetValue(g_SelfIndex, Thread))
+        if (!ThreadSelfSlot() || !_Inline_TlsSetValue(__atomic_load_n(&g_SelfIndex, __ATOMIC_RELAXED), Thread))
         {
             ThreadFree(Thread);
             return &g_FallbackThread;
@@ -149,13 +155,40 @@ static NTSTATUS NTAPI ThreadStart(PVOID Parameter)
 {
     PNTCRT_PTHREAD Thread = (PNTCRT_PTHREAD)Parameter;
 
-    /* pthread_create allocated the slot */
-    _Inline_TlsSetValue(g_SelfIndex, Thread);
+    /* A return is pthread_exit */
     if (Thread->StartC11 != NULL)
     {
-        ThreadEnd(Thread, (void*)(INT_PTR)Thread->StartC11(Thread->Arg));
+        pthread_exit((void*)(INT_PTR)Thread->StartC11(Thread->Arg));
     }
-    ThreadEnd(Thread, Thread->Start(Thread->Arg));
+    pthread_exit(Thread->Start(Thread->Arg));
+    __builtin_unreachable();
+}
+
+/* TlsSetValue of the slot of pthread_self for the thread, still suspended: it can fail only here */
+static bool ThreadSetSelf(PNTCRT_PTHREAD Thread)
+{
+    THREAD_BASIC_INFORMATION Info;
+    DWORD Index = __atomic_load_n(&g_SelfIndex, __ATOMIC_RELAXED);
+    PVOID* Slots;
+
+    if (!NT_SUCCESS(NtQueryInformationThread(Thread->Handle, ThreadBasicInformation, &Info, sizeof(Info), NULL)))
+    {
+        return false;
+    }
+    if (Index < TLS_MINIMUM_AVAILABLE)
+    {
+        Info.TebBaseAddress->TlsSlots[Index] = Thread;
+        return true;
+    }
+    /* The loader frees them at the exit of the thread */
+    Slots = (PVOID*)RtlAllocateHeap(RtlProcessHeap(), HEAP_ZERO_MEMORY, TLS_EXPANSION_SLOTS * sizeof(PVOID));
+    if (Slots == NULL)
+    {
+        return false;
+    }
+    Slots[Index - TLS_MINIMUM_AVAILABLE] = Thread;
+    Info.TebBaseAddress->TlsExpansionSlots = Slots;
+    return true;
 }
 
 /* The priorities of Windows (THREAD_PRIORITY_*) as SetThreadPriority takes them */
@@ -236,6 +269,13 @@ EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)
         RtlFreeHeap(NTCRT_HEAP, 0, Thread);
         return EAGAIN;
     }
+    if (!ThreadSetSelf(Thread))
+    {
+        NtTerminateThread(Thread->Handle, STATUS_NO_MEMORY);
+        NtClose(Thread->Handle);
+        RtlFreeHeap(NTCRT_HEAP, 0, Thread);
+        return EAGAIN;
+    }
     if (attr != NULL)
     {
         int Priority = attr->param.sched_priority;
@@ -265,8 +305,9 @@ NTCRT_API void pthread_exit(void* res)
     PNTCRT_PTHREAD Thread = CurrentThread();
     _pthread_cleanup* Cleanup;
 
-    /* The cleanup handlers are not cancelled */
+    /* The cleanup handlers and the key destructors are not cancelled, the type is deferred again */
     InterlockedOr(&Thread->Cancel, CANCEL_DISABLED);
+    InterlockedAnd(&Thread->Cancel, ~CANCEL_ASYNC);
     while ((Cleanup = Thread->Cleanup) != NULL)
     {
         Thread->Cleanup = Cleanup->next;
@@ -299,7 +340,7 @@ static int ThreadJoin(pthread_t t, void** res, PLARGE_INTEGER Timeout)
     {
         return EDEADLK;
     }
-    if ((Thread->State & THREAD_DETACHED) != 0)
+    if ((__atomic_load_n(&Thread->State, __ATOMIC_RELAXED) & THREAD_DETACHED) != 0)
     {
         return EINVAL;
     }
@@ -360,7 +401,8 @@ NTCRT_API int pthread_detach(pthread_t t)
 
 /*
  * Cancellation is deferred: a cancelled thread exits at a cancellation point (pthread_testcancel, pthread_join,
- * pthread_cond_wait, pthread_cond_timedwait, sem_wait, sem_timedwait, nanosleep, clock_nanosleep, pthread_delay_np).
+ * pthread_cond_wait, pthread_cond_timedwait, sem_wait, sem_timedwait, nanosleep, clock_nanosleep, sleep, usleep,
+ * pthread_delay_np).
  * These wait alertably, the alert of pthread_cancel ends the wait.
  */
 
@@ -368,7 +410,8 @@ static void TestCancel(void (*Pass)(void*), void* Object)
 {
     PNTCRT_PTHREAD Thread = ThreadSelf();
 
-    if (Thread != NULL && (Thread->Cancel & (CANCEL_PENDING | CANCEL_DISABLED)) == CANCEL_PENDING)
+    if (Thread != NULL &&
+        (__atomic_load_n(&Thread->Cancel, __ATOMIC_RELAXED) & (CANCEL_PENDING | CANCEL_DISABLED)) == CANCEL_PENDING)
     {
         if (Pass != NULL)
         {
@@ -391,9 +434,12 @@ NTCRT_API int pthread_cancel(pthread_t t)
     {
         return ESRCH;
     }
-    _NtCRT_TestCancel = TestCancel;
+    __atomic_store_n(&_NtCRT_TestCancel, &TestCancel, __ATOMIC_RELEASE);
+    /* A detached thread may end and free its data at the request, before the alert */
+    InterlockedIncrement(&Thread->Pins);
     InterlockedOr(&Thread->Cancel, CANCEL_PENDING);
     NtAlertThread(Thread->Handle);
+    ThreadFree(Thread);
     return 0;
 }
 

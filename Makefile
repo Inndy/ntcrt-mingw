@@ -117,8 +117,8 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 # Functions of libmingwex replaced by libntcrt: the printf of mingw-w64 by src/FormatNarrow.cpp and
 # src/FormatWide.cpp, its scanf (and the __ms_v*scanf that call msvcrt) by src/Scanf.cpp, src/ScanfWide.cpp,
 # src/StdioScanf.cpp and src/StdioWscanf.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll,
-# wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp and ftruncate64 by
-# src/LowIOFile.cpp. libntcrt defines them under their names too, for lld.
+# wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp, ftruncate64 by
+# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp. libntcrt defines them under their names too, for lld.
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
          $(foreach f,vfscanf vscanf vsscanf fscanf scanf sscanf vfwscanf vwscanf vswscanf fwscanf wscanf swscanf, \
@@ -126,7 +126,7 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
          $(foreach f,vfscanf vscanf vsscanf vfwscanf vwscanf vswscanf,--wrap=__ms_$(f)) \
          $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
          $(foreach f,strtold wcstold wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
-         --wrap=btowc --wrap=wctob --wrap=ftruncate64
+         --wrap=btowc --wrap=wctob --wrap=ftruncate64 --wrap=sleep --wrap=usleep
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
@@ -256,13 +256,17 @@ test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
 
 # The pthread functions, <threads.h> and the threads of libstdc++. -lpthread and -pthread link no winpthreads.
-THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe
+THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe $(BUILD)/thread/tlsslot.exe
 
 $(BUILD)/thread/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -pthread -o $@ $< -lpthread
 
 $(BUILD)/thread/c11.exe: test/thread/c11.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
+$(BUILD)/thread/tlsslot.exe: test/thread/tlsslot.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 

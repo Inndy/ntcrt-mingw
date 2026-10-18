@@ -152,12 +152,13 @@ extern "C"
 
 EXTERN_C void _NtCRT_ThreadDetach(void)
 {
+    void (*ThreadExit)(void) = __atomic_load_n(&_NtCRT_ThreadExit, __ATOMIC_ACQUIRE);
     PNTCRT_PTD Ptd;
 
     /* The key destructors may use the per-thread data */
-    if (_NtCRT_ThreadExit != NULL)
+    if (ThreadExit != NULL)
     {
-        _NtCRT_ThreadExit();
+        ThreadExit();
     }
     if (g_PtdIndex == TLS_OUT_OF_INDEXES)
     {

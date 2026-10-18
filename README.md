@@ -294,27 +294,33 @@ code.
 - Condition variables wait by `CLOCK_REALTIME` or `CLOCK_MONOTONIC` (`pthread_condattr_setclock`), or a relative
   time (`pthread_cond_timedwait_relative_np`). An absolute `CLOCK_REALTIME` time follows changes of the clock.
 - Read-write locks prefer readers: a thread may take a read lock again while a writer waits, so writers can starve. A
-  writer locking again gets `EDEADLK` (`EBUSY` from the try functions). A barrier counts up to 2^22 - 1 threads
-  (`EINVAL` beyond).
+  writer locking again gets `EDEADLK` (`EBUSY` from the try functions). A barrier counts up to 2^21 - 1 threads
+  (`EINVAL` beyond). The last thread of a round waits until the threads released from the previous one left the
+  barrier, `pthread_barrier_destroy` until those released left; a destroyed barrier is invalid (`EINVAL`).
 - `pthread_once` (and `call_once`, `std::call_once`) is reset when the routine exits by an exception (an unwind
   handler of x64 SEH on the frame that calls it) or is cancelled, another call runs the routine again (with
   winpthreads `std::call_once` deadlocks after an exception).
 - Keys are TLS slots (`TlsAlloc`, 1088 for all users). The destructors run at the exit of any thread, also of
   `CreateThread`, `_beginthreadex` and `_endthreadex`, in the TLS callback of NtCRT after that of libmingw32, which
   runs the `thread_local` destructors of C++: emutls frees their memory in a key destructor.
-  `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set again. They run under the loader lock, a
-  destructor must not wait for a thread that starts or ends.
+  `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set again. They run under the loader lock (except
+  those of the last thread, which ends the process), in the threads of `pthread_create` too: a destructor must not
+  join a thread, nor create one and wait for it, since a thread cannot start or end while the lock is held.
 - `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
   joined (`EINVAL`).
 - Cancellation is deferred, at `pthread_testcancel`, `pthread_join`, `pthread_cond_wait`, `pthread_cond_timedwait`,
-  `sem_wait`, `sem_timedwait`, `nanosleep`, `clock_nanosleep` and `pthread_delay_np`. These wait alertably and
-  `pthread_cancel` alerts the thread (`NtAlertThread`), so a user APC queued to a thread also runs in them, as a
-  spurious wakeup (an APC may post or signal what its thread waits for; a wake that the waiter does not take within
-  1 ms, as in an APC, alerts it). A cancelled thread passes on a signal or a post it was woken by, runs its cleanup
-  handlers (`pthread_cleanup_push`) with cancellation disabled and its key destructors; the stack is not unwound (no C++
-  destructors run). `PTHREAD_CANCEL_ASYNCHRONOUS` is kept and acts as deferred.
+  `sem_wait`, `sem_timedwait`, `nanosleep`, `clock_nanosleep`, `sleep`, `usleep` and `pthread_delay_np` (`sleep` and
+  `usleep` of libmingwex are replaced, they wait by `Sleep`). These wait alertably and `pthread_cancel` alerts the
+  thread (`NtAlertThread`), so a user APC queued to a thread also runs in them, as a spurious wakeup (an APC may post
+  or signal what its thread waits for; a wake that the waiter does not take within 1 ms, as in an APC, alerts it). An
+  APC must not end its thread while the thread waits in NtCRT (`pthread_exit`, `ExitThread`, `pthread_testcancel`
+  with a cancellation pending): the node of the wait stays in the table, on a stack that is gone. A waker that cannot
+  open the thread to alert it (`THREAD_ALERT` denied, as to a token it impersonates) waits for the release, which
+  deadlocks if the APC waits for the waker. A cancelled thread passes on a signal or a post it was woken by, runs its
+  cleanup handlers (`pthread_cleanup_push`) with cancellation disabled and its key destructors; the stack is not
+  unwound (no C++ destructors run). `PTHREAD_CANCEL_ASYNCHRONOUS` is kept and acts as deferred.
 - Priorities are those of Windows as in winpthreads: `sched_priority` from `THREAD_PRIORITY_IDLE` (-15) to
   `THREAD_PRIORITY_TIME_CRITICAL` (15), between the levels toward normal; `SCHED_OTHER` only (`ENOTSUP` for
   `SCHED_FIFO` and `SCHED_RR`). `PTHREAD_INHERIT_SCHED` gives a thread the priority of its creator.

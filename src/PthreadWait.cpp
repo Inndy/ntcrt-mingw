@@ -58,12 +58,13 @@ _NtCRT_Wait(
     NTCRT_WAIT_BUCKET* Bucket = WaitBucket(Address);
     NTCRT_WAIT_NODE Node = { NULL, Address, _Inline_GetCurrentThreadId(), NTCRT_WAIT_QUEUED, Alertable };
     NTCRT_WAIT_NODE** Link;
-    ULONG_PTR Current = 0;
+    ULONG_PTR Current;
     NTSTATUS Status;
 
     RtlAcquireSRWLockExclusive(&Bucket->Lock);
-    /* The lock orders the read, memcpy reads any object */
-    memcpy(&Current, (const void*)Address, Size);
+    /* The lock orders the read of the word, 32 or 64 bits */
+    Current = Size == sizeof(LONG) ? (ULONG)__atomic_load_n((const volatile LONG*)Address, __ATOMIC_RELAXED)
+                                   : (ULONG_PTR)__atomic_load_n((const volatile LONG_PTR*)Address, __ATOMIC_RELAXED);
     if (Current != Value)
     {
         RtlReleaseSRWLockExclusive(&Bucket->Lock);

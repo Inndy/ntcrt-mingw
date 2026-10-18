@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <windows.h>
 
 #define THREADS 8
@@ -515,6 +516,68 @@ static void* BarrierHelper(void* Arg)
     return NULL;
 }
 
+/*
+ * A barrier of 2 for 3 threads on CPU 0: one released from a round does not run (idle priority) while the others
+ * (time critical) would complete 2^20 - 1 rounds, which brought the generation of the word back to its own
+ */
+static sem_t g_LateGate;
+static volatile long g_LateDone;
+
+static void* BarrierLate(void* Arg)
+{
+    SetThreadAffinityMask(GetCurrentThread(), 1);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+    pthread_barrier_wait(&g_Pairs);
+    g_LateDone = 1;
+    return Arg;
+}
+
+static void* BarrierRounds(void* Arg)
+{
+    SetThreadAffinityMask(GetCurrentThread(), 1);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    if (Arg != NULL)
+    {
+        /* The round of BarrierLate */
+        pthread_barrier_wait(&g_Pairs);
+        sem_post(&g_LateGate);
+    } else
+    {
+        sem_wait(&g_LateGate);
+    }
+    for (int i = 0; i < (1 << 20) - 1; i++)
+    {
+        pthread_barrier_wait(&g_Pairs);
+    }
+    return NULL;
+}
+
+/* The serial thread destroys and initializes the barrier again while the others may not have looked yet */
+static pthread_barrier_t g_Reuse;
+static pthread_barrier_t g_Fence;
+static volatile long g_ReuseBad;
+
+static void* BarrierReuse(void* Arg)
+{
+    for (int i = 0; i < 1000; i++)
+    {
+        int Result = pthread_barrier_wait(&g_Reuse);
+
+        if (Result == PTHREAD_BARRIER_SERIAL_THREAD)
+        {
+            if (pthread_barrier_destroy(&g_Reuse) != 0 || pthread_barrier_init(&g_Reuse, NULL, THREADS) != 0)
+            {
+                g_ReuseBad = 1;
+            }
+        } else if (Result != 0)
+        {
+            g_ReuseBad = 1;
+        }
+        pthread_barrier_wait(&g_Fence);
+    }
+    return Arg;
+}
+
 /* An APC that posts the semaphore its thread waits for */
 NTSTATUS NTAPI NtQueueApcThread(HANDLE Thread, void(NTAPI* Routine)(void*, void*, void*), void* Arg1, void* Arg2,
                                 void* Arg3);
@@ -570,6 +633,9 @@ static void TestSync(void)
     }
     CHECK(g_Serial == 1000 && g_BarrierBad == 0);
     CHECK(pthread_barrier_destroy(&g_Barrier) == 0);
+    /* Destroyed: no barrier, as one of count 0 */
+    CHECK(pthread_barrier_destroy(&g_Barrier) == EINVAL);
+    CHECK(pthread_barrier_wait(&g_Barrier) == EINVAL);
     CHECK(pthread_barrier_init(&g_Pairs, NULL, 2) == 0);
     for (int i = 0; i < 3; i++)
     {
@@ -602,6 +668,23 @@ static void TestSync(void)
         }
         CHECK(Joined == 3);
     }
+    CHECK(pthread_barrier_init(&g_Pairs, NULL, 2) == 0 && sem_init(&g_LateGate, 0, 0) == 0);
+    CHECK(pthread_create(&Threads[0], NULL, BarrierRounds, NULL) == 0);
+    CHECK(pthread_create(&Threads[1], NULL, BarrierLate, NULL) == 0);
+    while ((uintptr_t)__atomic_load_n(&g_Pairs, __ATOMIC_RELAXED) == 2)
+    {
+        SleepMs(1);
+    }
+    SleepMs(100);
+    CHECK(pthread_create(&Threads[2], NULL, BarrierRounds, (void*)1) == 0);
+    for (int i = 0; i < 3; i++)
+    {
+        CHECK(pthread_join(Threads[i], NULL) == 0);
+    }
+    CHECK(g_LateDone);
+    CHECK(pthread_barrier_init(&g_Reuse, NULL, THREADS) == 0 && pthread_barrier_init(&g_Fence, NULL, THREADS) == 0);
+    RunThreads(BarrierReuse, NULL);
+    CHECK(g_ReuseBad == 0);
 
     CHECK(sem_init(&g_Sem, 0, 0) == 0);
     CHECK(sem_trywait(&g_Sem) == -1 && errno == EAGAIN);
@@ -682,6 +765,40 @@ static void* KeyReturn(void* Arg)
     return NULL;
 }
 
+/* A destructor runs with cancellation disabled and deferred, a pending cancellation does not act in it */
+static pthread_key_t g_KeyCancel;
+static volatile long g_CancelOff;
+
+static void KeyCancelDestructor(void* Value)
+{
+    int State, Type;
+
+    (void)Value;
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &State) == 0 && State == PTHREAD_CANCEL_DISABLE);
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &Type) == 0 && Type == PTHREAD_CANCEL_DEFERRED);
+    CHECK(pthread_setcancelstate(State, NULL) == 0);
+    pthread_testcancel();
+    __sync_fetch_and_add(&g_CancelOff, 1);
+}
+
+static void* KeyCancel(void* Arg)
+{
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+    CHECK(pthread_setspecific(g_KeyCancel, &g_KeyValue) == 0);
+    if (Arg == (void*)1)
+    {
+        pthread_exit(Arg);
+    }
+    if (Arg == (void*)2)
+    {
+        /* Pending, with no cancellation point before the return */
+        CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0);
+        CHECK(pthread_cancel(pthread_self()) == 0);
+        CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0);
+    }
+    return Arg;
+}
+
 static unsigned __stdcall KeyBeginThread(void* Arg)
 {
     KeyReturn(NULL);
@@ -720,6 +837,15 @@ static void TestKeys(void)
     CHECK(WaitForSingleObject((HANDLE)Handle, INFINITE) == WAIT_OBJECT_0);
     CHECK(g_Destroyed == 4 && g_DestroyedAgain == 12);
     CloseHandle((HANDLE)Handle);
+    /* Return, pthread_exit, return with a cancellation pending */
+    CHECK(pthread_key_create(&g_KeyCancel, KeyCancelDestructor) == 0);
+    for (intptr_t i = 0; i < 3; i++)
+    {
+        CHECK(pthread_create(&Thread, NULL, KeyCancel, (void*)i) == 0);
+        CHECK(pthread_join(Thread, &Result) == 0 && Result == (void*)i);
+    }
+    CHECK(g_CancelOff == 3);
+    CHECK(pthread_key_delete(g_KeyCancel) == 0);
     /* The main thread keeps its value, a deleted key runs no destructor */
     CHECK(pthread_setspecific(g_Key, &g_KeyValue) == 0);
     CHECK(pthread_key_delete(g_Key) == 0);
@@ -843,12 +969,42 @@ static void* CancelCondWait(void* Arg)
     return NULL;
 }
 
+/* nanosleep, sleep or usleep of 10 s */
 static void* CancelSleep(void* Arg)
 {
     struct timespec Time = { 10, 0 };
 
+    if (Arg == NULL)
+    {
+        nanosleep(&Time, NULL);
+    } else if (Arg == (void*)1)
+    {
+        sleep(10);
+    } else
+    {
+        usleep(10000000);
+    }
+    return NULL;
+}
+
+/* Detached, ends at the request of pthread_cancel while the call still runs */
+static volatile long g_SpinsEnded;
+
+static void SpinEnded(void* Arg)
+{
     (void)Arg;
-    nanosleep(&Time, NULL);
+    __sync_fetch_and_add(&g_SpinsEnded, 1);
+}
+
+static void* CancelSpin(void* Arg)
+{
+    (void)Arg;
+    pthread_cleanup_push(SpinEnded, NULL);
+    for (;;)
+    {
+        pthread_testcancel();
+    }
+    pthread_cleanup_pop(0);
     return NULL;
 }
 
@@ -932,10 +1088,13 @@ static void TestThreads(void)
     {
         long long Start = NowMs();
 
-        CHECK(pthread_create(&Thread, NULL, CancelSleep, NULL) == 0);
-        SleepMs(50);
-        CHECK(pthread_cancel(Thread) == 0);
-        CHECK(pthread_join(Thread, &Result) == 0 && Result == PTHREAD_CANCELED);
+        for (intptr_t i = 0; i < 3; i++)
+        {
+            CHECK(pthread_create(&Thread, NULL, CancelSleep, (void*)i) == 0);
+            SleepMs(50);
+            CHECK(pthread_cancel(Thread) == 0);
+            CHECK(pthread_join(Thread, &Result) == 0 && Result == PTHREAD_CANCELED);
+        }
         CHECK(NowMs() - Start < 5000);
         Start = NowMs();
         CHECK(pthread_create(&Thread, NULL, CancelDisabled, NULL) == 0);
@@ -944,12 +1103,39 @@ static void TestThreads(void)
         CHECK(pthread_join(Thread, &Result) == 0 && Result == PTHREAD_CANCELED);
         CHECK(NowMs() - Start >= 90);
     }
+    {
+        pthread_attr_t Detached;
+
+        CHECK(pthread_attr_init(&Detached) == 0);
+        CHECK(pthread_attr_setdetachstate(&Detached, PTHREAD_CREATE_DETACHED) == 0);
+        for (int i = 0; i < 200; i++)
+        {
+            CHECK(pthread_create(&Thread, &Detached, CancelSpin, NULL) == 0);
+            CHECK(pthread_cancel(Thread) == 0);
+        }
+        CHECK(pthread_attr_destroy(&Detached) == 0);
+        for (long long Start = NowMs(); g_SpinsEnded != 200 && NowMs() - Start < 10000;)
+        {
+            SleepMs(1);
+        }
+        CHECK(g_SpinsEnded == 200);
+    }
 
     /* Names (Windows 10 1607 and later) */
     if (pthread_setname_np(pthread_self(), "main thread") == 0)
     {
         CHECK(pthread_getname_np(pthread_self(), Name, sizeof(Name)) == 0 && strcmp(Name, "main thread") == 0);
         CHECK(pthread_getname_np(pthread_self(), Name, 4) == ERANGE);
+        /* Longer than the buffer on the stack */
+        {
+            char Long[301], Back[400];
+
+            memset(Long, 'n', 300);
+            Long[300] = 0;
+            CHECK(pthread_setname_np(pthread_self(), Long) == 0);
+            CHECK(pthread_getname_np(pthread_self(), Back, sizeof(Back)) == 0 && strcmp(Back, Long) == 0);
+            CHECK(pthread_getname_np(pthread_self(), Back, 300) == ERANGE);
+        }
     }
     CHECK(pthread_num_processors_np() >= 1);
     {

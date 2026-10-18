@@ -31,7 +31,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
 
     for (;;)
     {
-        LONG_PTR Raw = *(volatile LONG_PTR*)m;
+        LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
         if (Raw <= 0)
         {
@@ -92,7 +92,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
 /* Unlock all levels, the count of the levels above one in *Count */
 static int MutexUnlock(pthread_mutex_t* m, LONG_PTR* Count)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)m;
+    LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
     if (Raw <= 0)
     {
@@ -146,7 +146,7 @@ NTCRT_API int pthread_mutex_init(pthread_mutex_t* m, const pthread_mutexattr_t* 
 
 NTCRT_API int pthread_mutex_destroy(pthread_mutex_t* m)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)m;
+    LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
     if (Raw > 0)
     {
@@ -167,7 +167,7 @@ NTCRT_API int pthread_mutex_timedlock(pthread_mutex_t* m, const struct timespec*
 
 NTCRT_API int pthread_mutex_trylock(pthread_mutex_t* m)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)m;
+    LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
     LONG_PTR Self = MutexSelf();
 
     if (Raw <= 0)

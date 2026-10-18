@@ -29,7 +29,7 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
 
     for (;;)
     {
-        LONG_PTR Raw = *(volatile LONG_PTR*)l;
+        LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
         LONG_PTR Next;
 
         if (Raw <= 0)
@@ -91,7 +91,7 @@ NTCRT_API int pthread_rwlock_init(pthread_rwlock_t* rwlock_, const pthread_rwloc
 
 NTCRT_API int pthread_rwlock_destroy(pthread_rwlock_t* l)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)l;
+    LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
 
     if (Raw > 0)
     {
@@ -132,7 +132,7 @@ NTCRT_API int pthread_rwlock_trywrlock(pthread_rwlock_t* l)
 
 NTCRT_API int pthread_rwlock_unlock(pthread_rwlock_t* l)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)l;
+    LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
     LONG_PTR Old;
 
     if (Raw <= 0)

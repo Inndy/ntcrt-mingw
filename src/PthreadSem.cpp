@@ -52,10 +52,7 @@ static int SemWait(sem_t* sem, const struct timespec* Time)
     ULONG_PTR Raw;
     NTSTATUS Status;
 
-    if (_NtCRT_TestCancel != NULL)
-    {
-        _NtCRT_TestCancel(NULL, NULL);
-    }
+    _NtCRT_CancelPoint(NULL, NULL);
     if (SemTake(sem, &Raw))
     {
         return 0;
@@ -81,10 +78,7 @@ static int SemWait(sem_t* sem, const struct timespec* Time)
         }
         Status = _NtCRT_Wait(sem, Raw + SEM_WAITER, sizeof(*sem), Wait, TRUE);
         SemUpdate(sem, &Raw, -(LONG_PTR)SEM_WAITER, [](ULONG_PTR) { return true; });
-        if (_NtCRT_TestCancel != NULL)
-        {
-            _NtCRT_TestCancel(SemPass, sem);
-        }
+        _NtCRT_CancelPoint(SemPass, sem);
         if (SemTake(sem, &Raw))
         {
             return 0;

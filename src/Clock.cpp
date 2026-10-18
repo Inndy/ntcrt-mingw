@@ -138,10 +138,7 @@ static int ClockSleep(LONGLONG Units, int Clock)
     PLARGE_INTEGER Wait;
     NTSTATUS Status;
 
-    if (_NtCRT_TestCancel != NULL)
-    {
-        _NtCRT_TestCancel(NULL, NULL);
-    }
+    _NtCRT_CancelPoint(NULL, NULL);
     if (Clock == -1)
     {
         LONGLONG Now = _NtCRT_MonotonicTime();
@@ -162,10 +159,7 @@ static int ClockSleep(LONGLONG Units, int Clock)
         {
             return 0;
         }
-        if (_NtCRT_TestCancel != NULL)
-        {
-            _NtCRT_TestCancel(NULL, NULL);
-        }
+        _NtCRT_CancelPoint(NULL, NULL);
     }
 }
 
@@ -214,3 +208,23 @@ NTCRT_API int pthread_delay_np(const struct timespec* interval)
 {
     return nanosleep(interval, NULL) == 0 ? 0 : EINVAL;
 }
+
+/*
+ * sleep and usleep, cancellation points: those of libmingwex wait by Sleep, which is not. The specs wrap them to
+ * these, lld takes "sleep" and "usleep" of libntcrt, which precedes libmingwex in ntcrt.cfg, before it applies --wrap.
+ */
+EXTERN_C unsigned int __cdecl __wrap_sleep(unsigned int seconds)
+{
+    ClockSleep((LONGLONG)seconds * 10000000, -1);
+    return 0;
+}
+
+EXTERN_C unsigned int __cdecl sleep(unsigned int seconds) __attribute__((alias("__wrap_sleep")));
+
+EXTERN_C int __cdecl __wrap_usleep(unsigned int useconds)
+{
+    ClockSleep((LONGLONG)useconds * 10, -1);
+    return 0;
+}
+
+EXTERN_C int __cdecl usleep(unsigned int useconds) __attribute__((alias("__wrap_usleep")));

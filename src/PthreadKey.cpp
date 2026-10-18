@@ -13,7 +13,7 @@
 #define KEY_SLOTS (TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
 
 static void (*g_KeyDestructors[KEY_SLOTS])(void*);
-static volatile ULONG g_KeyLimit; /* Above the keys with a destructor */
+static ULONG g_KeyLimit; /* Above the keys with a destructor */
 static RTL_SRWLOCK g_KeyLock;
 
 extern "C"
@@ -27,7 +27,7 @@ EXTERN_C void _NtCRT_KeyExit(void)
     {
         bool Called = false;
 
-        for (ULONG Index = 0; Index < g_KeyLimit; Index++)
+        for (ULONG Index = 0; Index < __atomic_load_n(&g_KeyLimit, __ATOMIC_RELAXED); Index++)
         {
             void (*Destructor)(void*);
             PVOID Value = NULL;
@@ -75,10 +75,10 @@ NTCRT_API int pthread_key_create(pthread_key_t* key, void (*dest)(void*))
         g_KeyDestructors[Index] = dest;
         if (Index >= g_KeyLimit)
         {
-            g_KeyLimit = Index + 1;
+            __atomic_store_n(&g_KeyLimit, Index + 1, __ATOMIC_RELAXED);
         }
         RtlReleaseSRWLockExclusive(&g_KeyLock);
-        _NtCRT_ThreadExit = _NtCRT_KeyExit;
+        __atomic_store_n(&_NtCRT_ThreadExit, &_NtCRT_KeyExit, __ATOMIC_RELEASE);
     }
     *key = Index;
     return 0;

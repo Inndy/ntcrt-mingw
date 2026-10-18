@@ -20,7 +20,7 @@ static int CondClock(LONG_PTR Raw)
 
 static int CondWake(pthread_cond_t* c, BOOL All)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)c;
+    LONG_PTR Raw = __atomic_load_n(c, __ATOMIC_RELAXED);
     LONG_PTR Old;
 
     while ((Old = InterlockedCompareExchange64(c, (Raw & ~COND_COUNT) | (LONG_PTR)(((ULONG_PTR)Raw + 1) & COND_COUNT),
@@ -40,17 +40,14 @@ static void CondPass(void* Object)
 /* Wait until Time (absolute, of the clock of the condition, or relative), a cancellation point */
 static int CondWait(pthread_cond_t* c, pthread_mutex_t* m, const struct timespec* Time, bool Relative)
 {
-    LONG_PTR Raw = *(volatile LONG_PTR*)c;
+    LONG_PTR Raw = __atomic_load_n(c, __ATOMIC_RELAXED);
     LONG_PTR Count;
     LARGE_INTEGER Timeout;
     PLARGE_INTEGER Wait = NULL;
     NTSTATUS Status;
     int Error;
 
-    if (_NtCRT_TestCancel != NULL)
-    {
-        _NtCRT_TestCancel(NULL, NULL);
-    }
+    _NtCRT_CancelPoint(NULL, NULL);
     if (Time != NULL)
     {
         if (!NTCRT_TIMESPEC_VALID(Time))
@@ -68,10 +65,7 @@ static int CondWait(pthread_cond_t* c, pthread_mutex_t* m, const struct timespec
     Status = _NtCRT_Wait(c, (ULONG_PTR)Raw, sizeof(*c), Wait, TRUE);
     _NtCRT_MutexRelock(m, Count);
     /* A cancelled thread takes no signal from another */
-    if (_NtCRT_TestCancel != NULL)
-    {
-        _NtCRT_TestCancel(Status == STATUS_SUCCESS ? CondPass : NULL, c);
-    }
+    _NtCRT_CancelPoint(Status == STATUS_SUCCESS ? CondPass : NULL, c);
     return Status == STATUS_TIMEOUT ? ETIMEDOUT : 0;
 }
 
