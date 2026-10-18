@@ -246,13 +246,19 @@ _NtCRT_StrModifyS(
         switch (Op)
         {
             case NtCRTStrOp::Lower:
-                if (Str[i] >= 'A' && Str[i] <= 'Z')
+                if (sizeof(TChar) == sizeof(wchar_t))
+                {
+                    Str[i] = (TChar)towlower((wchar_t)Str[i]);
+                } else if (Str[i] >= 'A' && Str[i] <= 'Z')
                 {
                     Str[i] += 'a' - 'A';
                 }
                 break;
             case NtCRTStrOp::Upper:
-                if (Str[i] >= 'a' && Str[i] <= 'z')
+                if (sizeof(TChar) == sizeof(wchar_t))
+                {
+                    Str[i] = (TChar)towupper((wchar_t)Str[i]);
+                } else if (Str[i] >= 'a' && Str[i] <= 'z')
                 {
                     Str[i] -= 'a' - 'A';
                 }

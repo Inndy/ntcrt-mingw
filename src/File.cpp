@@ -4,18 +4,26 @@
 
 /* String helpers */
 
-EXTERN_C
+static
 PWSTR
-_NtCRT_AnsiToWide(
+_NtCRT_ToWide(
+    _In_ UINT CodePage,
+    _In_ DWORD Flags,
     _In_z_ const char* Str)
 {
     int Length;
     PWSTR Buffer;
 
-    Length = _NtCRT_MultiByteToWideChar(_NtCRT_CodePage(), 0, Str, -1, NULL, 0);
+    Length = _NtCRT_MultiByteToWideChar(CodePage, Flags, Str, -1, NULL, 0);
     if (Length <= 0)
     {
-        _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
+        ULONG Error = _Inline_GetLastError();
+
+        _NtCRT_SetErrnoFromWin32(Error);
+        if (Error == ERROR_NO_UNICODE_TRANSLATION)
+        {
+            NTCRT_ERRNO = EILSEQ;
+        }
         return NULL;
     }
     Buffer = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Length * sizeof(WCHAR));
@@ -25,19 +33,20 @@ _NtCRT_AnsiToWide(
         NTCRT_ERRNO = ENOMEM;
         return NULL;
     }
-    _NtCRT_MultiByteToWideChar(_NtCRT_CodePage(), 0, Str, -1, Buffer, Length);
+    _NtCRT_MultiByteToWideChar(CodePage, Flags, Str, -1, Buffer, Length);
     return Buffer;
 }
 
-EXTERN_C
+static
 char*
-_NtCRT_WideToAnsi(
+_NtCRT_ToNarrow(
+    _In_ UINT CodePage,
     _In_z_ const wchar_t* Str)
 {
     int Length;
     char* Buffer;
 
-    Length = _NtCRT_WideCharToMultiByte(_NtCRT_CodePage(), 0, Str, -1, NULL, 0, NULL, NULL);
+    Length = _NtCRT_WideCharToMultiByte(CodePage, 0, Str, -1, NULL, 0, NULL, NULL);
     if (Length <= 0)
     {
         _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
@@ -50,8 +59,29 @@ _NtCRT_WideToAnsi(
         NTCRT_ERRNO = ENOMEM;
         return NULL;
     }
-    _NtCRT_WideCharToMultiByte(_NtCRT_CodePage(), 0, Str, -1, Buffer, Length, NULL, NULL);
+    _NtCRT_WideCharToMultiByte(CodePage, 0, Str, -1, Buffer, Length, NULL, NULL);
     return Buffer;
+}
+
+EXTERN_C PWSTR _NtCRT_AnsiToWide(const char* Str)
+{
+    return _NtCRT_ToWide(_NtCRT_CodePage(), 0, Str);
+}
+
+EXTERN_C char* _NtCRT_WideToAnsi(const wchar_t* Str)
+{
+    return _NtCRT_ToNarrow(_NtCRT_CodePage(), Str);
+}
+
+/* An invalid multibyte character fails with EILSEQ, instead of a default character naming another file */
+EXTERN_C PWSTR _NtCRT_FileToWide(const char* Str)
+{
+    return _NtCRT_ToWide(_NtCRT_FileCodePage(), MB_ERR_INVALID_CHARS, Str);
+}
+
+EXTERN_C char* _NtCRT_WideToFile(const wchar_t* Str)
+{
+    return _NtCRT_ToNarrow(_NtCRT_FileCodePage(), Str);
 }
 
 /* NT path helpers */

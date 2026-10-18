@@ -58,6 +58,7 @@ typedef struct _NTCRT_PTD
     int Fpecode;
     void* PxcptInfoPtrs;
     RTL_HEAP_WALK_ENTRY HeapWalkEntry; /* Last entry returned by _heapwalk */
+    unsigned int LocaleCodePage;       /* LC_CTYPE code page + 1 of the "_l" function running, 0 if none */
     char StrerrorBuffer[128];
 } NTCRT_PTD, *PNTCRT_PTD;
 
@@ -76,8 +77,32 @@ extern "C" int _NtCRT_InvalidParameter(int Errno);
 /* Heap */
 #define NTCRT_HEAP RtlProcessHeap()
 
-/* Code page of the C runtime ("C" locale uses ACP, as msvcrt does) */
+/* The ANSI code page of the process */
 extern "C" UINT _NtCRT_CodePage(void);
+
+/*
+ * Locale, see Locale.cpp. A category is either the "C" locale or "C.UTF-8", the "C" locale with UTF-8 multibyte
+ * characters. The LC_CTYPE code page is 0 for "C", where a byte is the character of the same code point, and
+ * CP_UTF8 for "C.UTF-8".
+ */
+extern "C" UINT _NtCRT_CurrentCodePage(void);
+extern "C" UINT _NtCRT_LocaleCodePage(_locale_t Locale);
+/* Code page of narrow file names and other strings exchanged with the system: CP_UTF8 or the ANSI code page */
+extern "C" UINT _NtCRT_FileCodePage(void);
+/* Count the multibyte characters of the locale in at most MaxBytes bytes, (size_t)-1 with EILSEQ if invalid */
+extern "C" size_t _NtCRT_MbsLength(const char* Str, size_t MaxBytes);
+
+/* Run the body of a "_l" function by the LC_CTYPE code page of the locale, the current locale if NULL */
+class NTCRT_LOCALE_SCOPE
+{
+public:
+    NTCRT_LOCALE_SCOPE(_locale_t Locale);
+    ~NTCRT_LOCALE_SCOPE();
+
+private:
+    PNTCRT_PTD m_Ptd;
+    unsigned int m_Saved;
+};
 
 /* Kernel32 replacements used internally */
 extern "C" int WINAPI _NtCRT_MultiByteToWideChar(
@@ -98,10 +123,13 @@ extern "C" BOOL WINAPI _NtCRT_WriteConsoleW(HANDLE hConsoleOutput,
                                             DWORD nNumberOfCharsToWrite,
                                             LPDWORD lpNumberOfCharsWritten);
 
-/* Allocate a NUL-terminated wide string converted from a narrow string in CRT code page, free by RtlFreeHeap */
+/* Allocate a NUL-terminated wide string converted from a narrow string in ANSI code page, free by RtlFreeHeap */
 extern "C" PWSTR _NtCRT_AnsiToWide(const char* Str);
-/* Allocate a NUL-terminated narrow string converted from a wide string in CRT code page, free by RtlFreeHeap */
+/* Allocate a NUL-terminated narrow string converted from a wide string in ANSI code page, free by RtlFreeHeap */
 extern "C" char* _NtCRT_WideToAnsi(const wchar_t* Str);
+/* As _NtCRT_AnsiToWide and _NtCRT_WideToAnsi in the file code page, for file names and commands of the CRT */
+extern "C" PWSTR _NtCRT_FileToWide(const char* Str);
+extern "C" char* _NtCRT_WideToFile(const wchar_t* Str);
 
 /* Open a file by DOS path with NtCreateFile, returns Win32 error */
 extern "C" ULONG _NtCRT_CreateFile(
@@ -136,10 +164,36 @@ extern "C" int __cdecl _NtCRT_isatty(int fd);
 extern "C" int __cdecl _NtCRT_fd_textmode(int fd);
 extern "C" int __cdecl _NtCRT_fd_narrow_invalid(int fd);
 extern "C" int __cdecl _NtCRT_fd_crlf(int fd);
+/* Bytes in the file of the units read ahead by a Unicode text mode fd */
+extern "C" long long __cdecl _NtCRT_fd_pending_bytes(int fd);
+/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF, see Stdio.cpp */
+extern "C" int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8);
 extern "C" void _NtCRT_InitLowIO(void);
 extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _In_ DWORD Count);
 
 /* stdio, see Stdio.cpp */
+
+/*
+ * The arguments of printf with the strings and characters of the other width than the format converted by the
+ * locale, see Format.cpp. The wide format is the C99 one translated by Stdio.cpp. Pass Format and Args to the
+ * printf of mingw-w64, unless Failed for an encoding error or no memory, where errno is set.
+ */
+class NTCRT_FORMAT_ARGS
+{
+public:
+    NTCRT_FORMAT_ARGS(const char* Format, va_list ap);
+    NTCRT_FORMAT_ARGS(const wchar_t* Format, va_list ap);
+    ~NTCRT_FORMAT_ARGS();
+
+    BOOL Failed;
+    const void* Format;
+    va_list Args;
+
+    PVOID m_Format;
+    ULONG64* m_Slots;
+    PVOID* m_Strings;
+    int m_StringCount;
+};
 extern "C" void _NtCRT_FlushAll(void);
 extern "C" void _NtCRT_CloseAll(void);
 
@@ -165,6 +219,7 @@ extern "C" int _NtCRT_commode;
 #define _ENV_LOCK       12
 #define _EXIT_LOCK1     13
 #define _LOCKTAB_LOCK   15
+#define _SETLOCALE_LOCK 19
 #define _MB_CP_LOCK     25
 
 /* threadmbcinfostruct of msvcrt, incomplete in the headers of MinGW-w64, see Mbcs.cpp */

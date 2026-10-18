@@ -1396,40 +1396,11 @@ EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthread(void)
     _NtCRT__endthreadex(0);
 }
 
-/* Locale, only the "C" locale is supported */
+/* The locale information of the "C" locale, see Locale.cpp for setlocale */
 
-static char g_LocaleC[] = "C";
 static char g_EmptyString[] = "";
 static char g_DecimalPoint[] = ".";
 static struct lconv g_Lconv;
-
-EXTERN_C char* __cdecl _NtCRT_setlocale(int category, const char* locale)
-{
-    if (category < LC_ALL || category > LC_MAX)
-    {
-        return NULL;
-    }
-    if (locale == NULL || locale[0] == '\0' || strcmp(locale, "C") == 0 || strcmp(locale, "POSIX") == 0)
-    {
-        return g_LocaleC;
-    }
-    return NULL;
-}
-
-EXTERN_C wchar_t* __cdecl _NtCRT__wsetlocale(int category, const wchar_t* locale)
-{
-    static wchar_t LocaleC[] = L"C";
-
-    if (category < LC_ALL || category > LC_MAX)
-    {
-        return NULL;
-    }
-    if (locale == NULL || locale[0] == L'\0' || wcscmp(locale, L"C") == 0 || wcscmp(locale, L"POSIX") == 0)
-    {
-        return LocaleC;
-    }
-    return NULL;
-}
 
 EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void)
 {
@@ -1552,8 +1523,6 @@ NTCRT_IMPORT(_beginthreadex, _NtCRT__beginthreadex);
 NTCRT_IMPORT(_beginthread, _NtCRT__beginthread);
 NTCRT_IMPORT(_endthreadex, _NtCRT__endthreadex);
 NTCRT_IMPORT(_endthread, _NtCRT__endthread);
-NTCRT_IMPORT(setlocale, _NtCRT_setlocale);
-NTCRT_IMPORT(_wsetlocale, _NtCRT__wsetlocale);
 NTCRT_IMPORT(localeconv, _NtCRT_localeconv);
 NTCRT_IMPORT(__lconv_init, _NtCRT___lconv_init);
 NTCRT_IMPORT(_configthreadlocale, _NtCRT__configthreadlocale);

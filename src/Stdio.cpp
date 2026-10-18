@@ -24,10 +24,19 @@
 /* Internal: stream is opened by tmpfile, for _rmtmp */
 #define NTCRT_IOTMPFILE 0x20000
 
+/* Multibyte state of the wide character I/O of a text stream in "C.UTF-8" */
+typedef struct _NTCRT_STREAM_MB
+{
+    mbstate_t PutState;
+    mbstate_t GetState;
+    wchar_t Pushed; /* A character pushed back by ungetwc that is not a byte, 0 if none */
+} NTCRT_STREAM_MB, *PNTCRT_STREAM_MB;
+
 typedef struct _NTCRT_FILEX
 {
     FILE File;
     RTL_CRITICAL_SECTION Lock;
+    NTCRT_STREAM_MB Mb;
 } NTCRT_FILEX, *PNTCRT_FILEX;
 
 extern "C"
@@ -40,6 +49,7 @@ extern "C"
 }
 
 static RTL_CRITICAL_SECTION g_IobLocks[NTCRT_IOB_ENTRIES];
+static NTCRT_STREAM_MB g_IobMb[NTCRT_IOB_ENTRIES];
 static PNTCRT_FILEX g_Streams[NTCRT_NSTREAM - NTCRT_IOB_ENTRIES];
 static volatile LONG g_StdioState;
 
@@ -81,6 +91,18 @@ _NtCRT_StreamLock(
         return &g_IobLocks[Stream - _NtCRT_iob];
     }
     return &CONTAINING_RECORD(Stream, NTCRT_FILEX, File)->Lock;
+}
+
+static
+PNTCRT_STREAM_MB
+_NtCRT_StreamMb(
+    _In_ FILE* Stream)
+{
+    if (Stream >= _NtCRT_iob && Stream < _NtCRT_iob + NTCRT_IOB_ENTRIES)
+    {
+        return &g_IobMb[Stream - _NtCRT_iob];
+    }
+    return &CONTAINING_RECORD(Stream, NTCRT_FILEX, File)->Mb;
 }
 
 static
@@ -484,15 +506,58 @@ EXTERN_C int __cdecl _NtCRT__ungetc_nolock(int ch, FILE* stream)
     return _NtCRT_ungetc_nolock(ch, stream);
 }
 
-/* Wide character I/O, text mode streams convert as the "C" locale, a byte for each character up to 0xFF */
+/*
+ * Wide character I/O, text mode streams convert by the multibyte characters of the locale: a byte for each
+ * character up to 0xFF in the "C" locale, UTF-8 with surrogate pairs in "C.UTF-8".
+ */
 
 static
 wint_t
 _NtCRT_getwc_nolock(
     _In_ FILE* Stream)
 {
+    PNTCRT_STREAM_MB Mb;
     int Lo, Hi;
 
+    if (_NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_ANSI && _NtCRT_CurrentCodePage() == CP_UTF8)
+    {
+        Mb = _NtCRT_StreamMb(Stream);
+        if (Mb->Pushed != 0)
+        {
+            wchar_t Ch = Mb->Pushed;
+
+            Mb->Pushed = 0;
+            return Ch;
+        }
+        for (;;)
+        {
+            char Byte;
+            wchar_t Ch;
+            size_t Ret;
+
+            Lo = _NtCRT_getc_nolock(Stream);
+            if (Lo == EOF)
+            {
+                if (!mbsinit(&Mb->GetState))
+                {
+                    Mb->GetState = 0;
+                    NTCRT_ERRNO = EILSEQ;
+                }
+                return WEOF;
+            }
+            Byte = (char)Lo;
+            Ret = mbrtowc(&Ch, &Byte, 1, &Mb->GetState);
+            if (Ret == (size_t)-1)
+            {
+                Stream->_flag |= _IOERR;
+                return WEOF;
+            }
+            if (Ret != (size_t)-2)
+            {
+                return Ch;
+            }
+        }
+    }
     Lo = _NtCRT_getc_nolock(Stream);
     if (Lo == EOF)
     {
@@ -518,12 +583,32 @@ _NtCRT_putwc_nolock(
 {
     if (_NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_ANSI)
     {
-        if (Ch > 0xFF)
+        char Bytes[MB_LEN_MAX];
+        size_t Length;
+
+        if (_NtCRT_CurrentCodePage() != CP_UTF8)
         {
-            NTCRT_ERRNO = EILSEQ;
+            if (Ch > 0xFF)
+            {
+                NTCRT_ERRNO = EILSEQ;
+                return WEOF;
+            }
+            return _NtCRT_putc_nolock(Ch, Stream) == EOF ? WEOF : Ch;
+        }
+        Length = wcrtomb(Bytes, Ch, &_NtCRT_StreamMb(Stream)->PutState);
+        if (Length == (size_t)-1)
+        {
+            Stream->_flag |= _IOERR;
             return WEOF;
         }
-        return _NtCRT_putc_nolock(Ch, Stream) == EOF ? WEOF : Ch;
+        for (size_t i = 0; i < Length; i++)
+        {
+            if (_NtCRT_putc_nolock((unsigned char)Bytes[i], Stream) == EOF)
+            {
+                return WEOF;
+            }
+        }
+        return Ch;
     }
 
     /* Both bytes at once, a Unicode text mode fd rejects a write of an odd count */
@@ -549,6 +634,18 @@ _NtCRT_ungetwc_nolock(
     }
     if (_NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_ANSI)
     {
+        if (_NtCRT_CurrentCodePage() == CP_UTF8 && Ch >= 0x80)
+        {
+            PNTCRT_STREAM_MB Mb = _NtCRT_StreamMb(Stream);
+
+            if (Mb->Pushed != 0)
+            {
+                return WEOF;
+            }
+            Mb->Pushed = (wchar_t)Ch;
+            Stream->_flag &= ~_IOEOF;
+            return Ch;
+        }
         if (Ch > 0xFF)
         {
             return WEOF;
@@ -1056,6 +1153,21 @@ EXTERN_C int __cdecl _NtCRT__fflush_nolock(FILE* stream)
     return _NtCRT_flush_nolock(stream);
 }
 
+/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF */
+EXTERN_C int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8)
+{
+    int Bytes;
+
+    if (!Utf8)
+    {
+        Bytes = sizeof(wchar_t);
+    } else
+    {
+        Bytes = Unit < 0x80 ? 1 : Unit < 0x800 || (Unit >= 0xD800 && Unit <= 0xDFFF) ? 2 : 3;
+    }
+    return Unit == L'\n' ? Bytes * 2 : Bytes;
+}
+
 static
 long long
 _NtCRT_ftell_nolock(
@@ -1091,48 +1203,22 @@ _NtCRT_ftell_nolock(
         }
     } else if ((Stream->_flag & _IOREAD) && _NtCRT_fd_textmode(Stream->_file) >= NTCRT_FD_UTF8)
     {
-        /*
-         * As msvcrt, the buffer is taken as the bytes read, a full buffer unless at the end of the file, and each
-         * newline byte in it as CRLF
-         */
-        long long Offset = Stream->_ptr - Stream->_base, Read;
+        /* The bytes of the unread units in the file, a newline was CRLF */
+        BOOL Utf8 = _NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_UTF8;
+        const char* p = Stream->_ptr;
 
-        for (char* p = Stream->_base; p < Stream->_ptr; p++)
+        Position -= _NtCRT_fd_pending_bytes(Stream->_file);
+        for (int i = 0; i + (int)sizeof(wchar_t) <= Stream->_cnt; i += sizeof(wchar_t))
         {
-            if (*p == '\n')
-            {
-                Offset++;
-            }
+            wchar_t c;
+
+            memcpy(&c, p + i, sizeof(wchar_t));
+            Position -= _NtCRT_UnitBytes(c, Utf8);
         }
-        if (Position == 0)
+        if (Position < 0)
         {
-            return Offset;
+            Position = 0;
         }
-        if (Stream->_cnt == 0)
-        {
-            return Position;
-        }
-        Read = Stream->_cnt + (Stream->_ptr - Stream->_base);
-        if (_NtCRT_lseeki64(Stream->_file, 0, SEEK_END) == Position)
-        {
-            for (char* p = Stream->_base, *End = Stream->_base + Read; p < End; p++)
-            {
-                if (*p == '\n')
-                {
-                    Read++;
-                }
-            }
-        } else
-        {
-            _NtCRT_lseeki64(Stream->_file, Position, SEEK_SET);
-            Read = Read <= NTCRT_SMALL_BUFSIZ && (Stream->_flag & _IOMYBUF) && !(Stream->_flag & NTCRT_IOSETVBUF) ?
-                   NTCRT_SMALL_BUFSIZ : Stream->_bufsiz;
-            if (_NtCRT_fd_crlf(Stream->_file))
-            {
-                Read++;
-            }
-        }
-        return Position - Read + Offset;
     } else if (Stream->_flag & _IOREAD)
     {
         /* Unread data, a text mode newline is assumed to be CRLF in the file */
@@ -1190,6 +1276,7 @@ EXTERN_C int __cdecl _NtCRT_fseeki64(FILE* stream, long long offset, int origin)
     }
     _NtCRT_lock_file(stream);
     stream->_flag &= ~_IOEOF;
+    memset(_NtCRT_StreamMb(stream), 0, sizeof(NTCRT_STREAM_MB));
     if (origin == SEEK_CUR)
     {
         long long Current = _NtCRT_ftell_nolock(stream);
@@ -1516,12 +1603,12 @@ _NtCRT_OpenStreamA(
         NTCRT_ERRNO = EINVAL;
         return NULL;
     }
-    WidePath = _NtCRT_AnsiToWide(Path);
+    WidePath = _NtCRT_FileToWide(Path);
     if (WidePath == NULL)
     {
         return NULL;
     }
-    WideMode = _NtCRT_AnsiToWide(Mode);
+    WideMode = _NtCRT_FileToWide(Mode);
     if (WideMode != NULL)
     {
         Stream = _NtCRT_OpenStream(WidePath, WideMode, ShFlag, Reuse);
@@ -1651,6 +1738,7 @@ _NtCRT_fclose_nolock(
     }
     Stream->_flag = 0;
     Stream->_file = -1;
+    memset(_NtCRT_StreamMb(Stream), 0, sizeof(NTCRT_STREAM_MB));
     return Ret;
 }
 
@@ -1852,7 +1940,7 @@ EXTERN_C int __cdecl _NtCRT_remove(const char* path)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WidePath = _NtCRT_AnsiToWide(path);
+    WidePath = _NtCRT_FileToWide(path);
     if (WidePath == NULL)
     {
         return -1;
@@ -1887,12 +1975,12 @@ EXTERN_C int __cdecl _NtCRT_rename(const char* oldname, const char* newname)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WideOld = _NtCRT_AnsiToWide(oldname);
+    WideOld = _NtCRT_FileToWide(oldname);
     if (WideOld == NULL)
     {
         return -1;
     }
-    WideNew = _NtCRT_AnsiToWide(newname);
+    WideNew = _NtCRT_FileToWide(newname);
     if (WideNew != NULL)
     {
         Ret = _NtCRT__wrename(WideOld, WideNew);
@@ -2044,18 +2132,18 @@ EXTERN_C char* __cdecl _NtCRT_tempnam(const char* dir, const char* prefix)
     PWSTR WideDir = NULL, WidePrefix = NULL, Name = NULL;
     char* Ret = NULL;
 
-    if (dir != NULL && (WideDir = _NtCRT_AnsiToWide(dir)) == NULL)
+    if (dir != NULL && (WideDir = _NtCRT_FileToWide(dir)) == NULL)
     {
         goto _Exit;
     }
-    if (prefix != NULL && (WidePrefix = _NtCRT_AnsiToWide(prefix)) == NULL)
+    if (prefix != NULL && (WidePrefix = _NtCRT_FileToWide(prefix)) == NULL)
     {
         goto _Exit;
     }
     Name = _NtCRT_MakeTempName(WideDir, WidePrefix);
     if (Name != NULL)
     {
-        Ret = _NtCRT_WideToAnsi(Name);
+        Ret = _NtCRT_WideToFile(Name);
     }
 
 _Exit:
@@ -2190,14 +2278,14 @@ EXTERN_C void __cdecl _NtCRT_perror(const char* str)
     _NtCRT_unlock_file(Stream);
 }
 
-/* The prefix is converted to the CRT code page */
+/* The prefix is converted to the file code page */
 EXTERN_C void __cdecl _NtCRT__wperror(const wchar_t* str)
 {
     char* Narrow = NULL;
 
     if (str != NULL && *str != L'\0')
     {
-        Narrow = _NtCRT_WideToAnsi(str);
+        Narrow = _NtCRT_WideToFile(str);
     }
     _NtCRT_perror(Narrow);
     RtlFreeHeap(NTCRT_HEAP, 0, Narrow);
@@ -2741,18 +2829,12 @@ EXTERN_C int __cdecl _NtCRT__scwprintf(const wchar_t* format, ...)
  * mingw-w64 wide pformat writes strings to a FILE with __ms_fwprintf and "%[-]*.*s" / "%[-]*.*S",
  * so it must not call back into pformat. Only string and character conversions are supported.
  */
-/* As msvcrt, a character that the "C" locale cannot write to a text mode stream is dropped and still counted */
 static
 bool
 _NtCRT_MsPutWideChar(
     _In_ FILE* Stream,
     _In_ wchar_t Ch)
 {
-    if (Ch > 0xFF && _NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_ANSI)
-    {
-        NTCRT_ERRNO = EILSEQ;
-        return true;
-    }
     return _NtCRT_putwc_nolock(Ch, Stream) != WEOF;
 }
 

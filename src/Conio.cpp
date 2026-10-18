@@ -93,11 +93,17 @@ _NtCRT_ConsoleInput(void)
     return _NtCRT_ResolveConsoleApi() ? _NtCRT_OpenConsole(&g_ConsoleInput, L"CONIN$") : INVALID_HANDLE_VALUE;
 }
 
+/* Narrow characters of the console are UTF-8 in "C.UTF-8", else of the code page of the console */
 static
 UINT
 _NtCRT_ConsoleInputCP(void)
 {
     UINT CodePage = g_ConsoleApi.GetConsoleCP != NULL ? g_ConsoleApi.GetConsoleCP() : 0;
+
+    if (_NtCRT_CurrentCodePage() == CP_UTF8)
+    {
+        return CP_UTF8;
+    }
     return CodePage != 0 ? CodePage : _NtCRT_CodePage();
 }
 
@@ -152,6 +158,10 @@ EXTERN_C int __cdecl _NtCRT__cputws(const wchar_t* str)
     return Ret;
 }
 
+/* The start of a UTF-8 character written by _putch in "C.UTF-8" */
+static char g_PutCarry[4];
+static int g_PutCarryLength;
+
 static
 int
 _NtCRT_ConsoleWriteA(
@@ -161,11 +171,47 @@ _NtCRT_ConsoleWriteA(
     WCHAR Stack[256];
     PWSTR Wide = Stack;
     UINT CodePage = _CRT_GetConsoleOutputCP();
+    char Joined[8];
     int Count, Ret;
 
     if (CodePage == 0)
     {
         CodePage = _NtCRT_CodePage();
+    }
+    if (_NtCRT_CurrentCodePage() == CP_UTF8)
+    {
+        int Tail = 0;
+
+        CodePage = CP_UTF8;
+        if (g_PutCarryLength != 0 && Length <= 4)
+        {
+            /* Continue a character written a byte at a time */
+            memcpy(Joined, g_PutCarry, g_PutCarryLength);
+            memcpy(Joined + g_PutCarryLength, Str, Length);
+            Length += g_PutCarryLength;
+            Str = Joined;
+            g_PutCarryLength = 0;
+        }
+        while (Tail < 3 && Tail < Length && ((unsigned char)Str[Length - 1 - Tail] & 0xC0) == 0x80)
+        {
+            Tail++;
+        }
+        if (Tail < Length)
+        {
+            unsigned char Lead = (unsigned char)Str[Length - 1 - Tail];
+            int Need = Lead >= 0xF0 && Lead <= 0xF4 ? 4 : Lead >= 0xE0 ? 3 : Lead >= 0xC2 ? 2 : 1;
+
+            if (Lead >= 0xC2 && Lead <= 0xF4 && Need > Tail + 1)
+            {
+                g_PutCarryLength = Tail + 1;
+                memcpy(g_PutCarry, Str + Length - g_PutCarryLength, g_PutCarryLength);
+                Length -= g_PutCarryLength;
+                if (Length == 0)
+                {
+                    return 0;
+                }
+            }
+        }
     }
     Count = _NtCRT_MultiByteToWideChar(CodePage, 0, Str, Length, NULL, 0);
     if (Count <= 0)
@@ -390,8 +436,11 @@ _NtCRT_ExtendedKey(
     return FALSE;
 }
 
-/* Character pending for the next _getch (trail byte, extended key code or _ungetch), or EOF */
+/* Character pending for the next _getch (extended key code or _ungetch), or EOF */
 static int g_PendingChar = EOF;
+/* Bytes of a multibyte character pending for the next _getch after g_PendingChar */
+static unsigned char g_PendingBytes[3];
+static int g_PendingCount;
 static wint_t g_PendingWideChar = WEOF;
 
 /* Wait for a key, returns the character or the lead byte of an extended key with Code set */
@@ -466,13 +515,20 @@ int
 _NtCRT_getch_nolock(void)
 {
     wint_t Char;
-    int Code, Length;
-    char Bytes[4];
+    int Code, Length, Units = 1;
+    WCHAR Pair[2];
+    char Bytes[8];
 
     if (g_PendingChar != EOF)
     {
         Code = g_PendingChar;
         g_PendingChar = EOF;
+        return Code;
+    }
+    if (g_PendingCount != 0)
+    {
+        Code = g_PendingBytes[0];
+        memmove(g_PendingBytes, g_PendingBytes + 1, --g_PendingCount);
         return Code;
     }
     Char = _NtCRT_ReadKey(&Code);
@@ -485,15 +541,24 @@ _NtCRT_getch_nolock(void)
         g_PendingChar = Code;
         return (int)Char;
     }
-    Length = _NtCRT_WideCharToMultiByte(_NtCRT_ConsoleInputCP(), 0, (LPCWCH)&Char, 1, Bytes, sizeof(Bytes), NULL, NULL);
+    Pair[0] = (WCHAR)Char;
+    if (IS_HIGH_SURROGATE(Pair[0]))
+    {
+        /* The low surrogate is the next key */
+        wint_t Low = _NtCRT_ReadKey(&Code);
+
+        if (Low != WEOF && Code == EOF && IS_LOW_SURROGATE(Low))
+        {
+            Pair[Units++] = (WCHAR)Low;
+        }
+    }
+    Length = _NtCRT_WideCharToMultiByte(_NtCRT_ConsoleInputCP(), 0, Pair, Units, Bytes, sizeof(Bytes), NULL, NULL);
     if (Length <= 0)
     {
         return '?';
     }
-    if (Length > 1)
-    {
-        g_PendingChar = (unsigned char)Bytes[1];
-    }
+    g_PendingCount = Length - 1;
+    memcpy(g_PendingBytes, Bytes + 1, g_PendingCount);
     return (unsigned char)Bytes[0];
 }
 
@@ -596,7 +661,7 @@ EXTERN_C int __cdecl _NtCRT__kbhit(void)
     int Ret = 0;
 
     _NtCRT_lock(_CONIO_LOCK);
-    if (g_PendingChar != EOF)
+    if (g_PendingChar != EOF || g_PendingCount != 0)
     {
         Ret = 1;
         goto _Exit;

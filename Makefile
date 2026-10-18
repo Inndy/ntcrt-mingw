@@ -59,9 +59,15 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	rm -f $@
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
-# Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them
+# printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp
+WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
+                     vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
+         --wrap=btowc --wrap=wctob
+
+# Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
+# libntcrt, the math functions libntcrt calls are of ntdll.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
-	printf '*link:\n+ -L%s\n\n' "$(CURDIR)/$(BUILD)" > $@
+	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" > $@
 	printf '*libgcc:\n--start-group -lmingw32 -lgcc -lmingwex -lpthread -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
@@ -74,7 +80,11 @@ test: $(BUILD)/Test.exe
 	objdump -p $< | grep 'DLL Name'
 	./$<
 
+# Compare with UCRT, needs cl of Visual Studio
+compare: $(LIBS) $(BUILD)/ntcrt.specs
+	sh test/compare/run.sh
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test clean
+.PHONY: all test compare clean

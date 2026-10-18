@@ -703,7 +703,7 @@ _NtCRT_CtypeOf(
     return 0;
 }
 
-/* Latin-1 classes of the wide table, a tab is blank in the wide table only */
+/* Latin-1 classes of the wide table, a tab is blank in the wide table only. _ALPHA includes _UPPER and _LOWER. */
 static
 constexpr
 unsigned short
@@ -724,10 +724,10 @@ _NtCRT_WctypeOf(
         return _SPACE | _BLANK;
     } else if (c == 0xAA || c == 0xB5 || c == 0xBA || c == 0xDF || (c >= 0xE0 && c != 0xF7))
     {
-        return _LOWER | _ALPHA;
+        return _LOWER | C1_ALPHA;
     } else if (c >= 0xC0 && c != 0xD7 && c <= 0xDE)
     {
-        return _UPPER | _ALPHA;
+        return _UPPER | C1_ALPHA;
     } else if (c == 0xB2 || c == 0xB3 || c == 0xB9)
     {
         return _DIGIT | _PUNCT;
@@ -849,16 +849,6 @@ EXTERN_C int __cdecl _NtCRT__toupper(int c)
     return c - 'a' + 'A';
 }
 
-/* As msvcrt, a single byte valid in the ANSI code page, even if mbtowc of the "C" locale takes any byte */
-EXTERN_C int __cdecl _NtCRT_mblen(const char* s, size_t n)
-{
-    if (s == NULL || n == 0 || *s == '\0')
-    {
-        return 0;
-    }
-    return _NtCRT_MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED | MB_ERR_INVALID_CHARS, s, 1, NULL, 0) == 0 ? -1 : 1;
-}
-
 /* String manipulation, byte or wchar_t wise as msvcrt */
 
 template<typename TChar>
@@ -941,8 +931,9 @@ EXTERN_C void __cdecl _NtCRT__swab(char* src, char* dest, int n)
 }
 
 /*
- * Case mapping and character classes of the "C" locale. ntdll maps case by the ANSI code page and classifies
- * wide characters up to 0xFF only, msvcrt maps ASCII only and classifies the others by GetStringTypeW.
+ * Case mapping and character classes. ntdll maps case by the ANSI code page and classifies wide characters up
+ * to 0xFF only. The "C" locale maps ASCII only as msvcrt, "C.UTF-8" maps wide characters by Unicode simple case
+ * mapping, both classify wide characters by GetStringTypeW.
  */
 
 EXTERN_C BOOL WINAPI _CRT_GetStringTypeW(DWORD dwInfoType, LPCWCH lpSrcStr, int cchSrc, LPWORD lpCharType);
@@ -959,12 +950,57 @@ EXTERN_C int __cdecl _NtCRT_tolower(int c)
 
 EXTERN_C wint_t __cdecl _NtCRT_towupper(wint_t c)
 {
-    return c >= L'a' && c <= L'z' ? c - (L'a' - L'A') : c;
+    if (c < 0x80)
+    {
+        return c >= L'a' && c <= L'z' ? c - (L'a' - L'A') : c;
+    }
+    return c != WEOF && _NtCRT_CurrentCodePage() == CP_UTF8 ? RtlUpcaseUnicodeChar((WCHAR)c) : c;
 }
 
 EXTERN_C wint_t __cdecl _NtCRT_towlower(wint_t c)
 {
-    return c >= L'A' && c <= L'Z' ? c + (L'a' - L'A') : c;
+    if (c < 0x80)
+    {
+        return c >= L'A' && c <= L'Z' ? c + (L'a' - L'A') : c;
+    }
+    return c != WEOF && _NtCRT_CurrentCodePage() == CP_UTF8 ? RtlDowncaseUnicodeChar((WCHAR)c) : c;
+}
+
+EXTERN_C wchar_t* __cdecl _NtCRT__wcsupr(wchar_t* str)
+{
+    for (wchar_t* p = str; *p != L'\0'; p++)
+    {
+        *p = (wchar_t)_NtCRT_towupper(*p);
+    }
+    return str;
+}
+
+EXTERN_C wchar_t* __cdecl _NtCRT__wcslwr(wchar_t* str)
+{
+    for (wchar_t* p = str; *p != L'\0'; p++)
+    {
+        *p = (wchar_t)_NtCRT_towlower(*p);
+    }
+    return str;
+}
+
+EXTERN_C int __cdecl _NtCRT__wcsnicmp(const wchar_t* s1, const wchar_t* s2, size_t n)
+{
+    for (; n > 0; n--, s1++, s2++)
+    {
+        int Diff = (int)_NtCRT_towlower(*s1) - (int)_NtCRT_towlower(*s2);
+
+        if (Diff != 0 || *s1 == L'\0')
+        {
+            return Diff;
+        }
+    }
+    return 0;
+}
+
+EXTERN_C int __cdecl _NtCRT__wcsicmp(const wchar_t* s1, const wchar_t* s2)
+{
+    return _NtCRT__wcsnicmp(s1, s2, SIZE_MAX);
 }
 
 EXTERN_C int __cdecl _NtCRT_iswctype(wint_t c, wctype_t mask)
@@ -1045,132 +1081,6 @@ EXTERN_C int __cdecl _NtCRT_iswascii(wint_t c)
 EXTERN_C int __cdecl _NtCRT_isleadbyte(int c)
 {
     return _NtCRT_pctype[(unsigned char)c] & _LEADBYTE;
-}
-
-/* Multibyte characters of the "C" locale are bytes, as msvcrt */
-
-EXTERN_C int __cdecl _NtCRT_mbtowc(wchar_t* pwc, const char* s, size_t n)
-{
-    if (s == NULL || n == 0)
-    {
-        return 0;
-    }
-    if (pwc != NULL)
-    {
-        *pwc = (unsigned char)*s;
-    }
-    return *s != '\0';
-}
-
-EXTERN_C int __cdecl _NtCRT_wctomb(char* s, wchar_t wc)
-{
-    if (s == NULL)
-    {
-        return 0;
-    }
-    if (wc > 0xFF)
-    {
-        NTCRT_ERRNO = EILSEQ;
-        return -1;
-    }
-    *s = (char)wc;
-    return 1;
-}
-
-EXTERN_C size_t __cdecl _NtCRT_mbstowcs(wchar_t* dest, const char* src, size_t count)
-{
-    size_t i;
-
-    if (src == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return (size_t)-1;
-    }
-    if (dest == NULL)
-    {
-        return strlen(src);
-    }
-    for (i = 0; i < count; i++)
-    {
-        dest[i] = (unsigned char)src[i];
-        if (src[i] == 0)
-        {
-            break;
-        }
-    }
-    return i;
-}
-
-EXTERN_C size_t __cdecl _NtCRT_wcstombs(char* dest, const wchar_t* src, size_t count)
-{
-    size_t i;
-
-    if (src == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return (size_t)-1;
-    }
-    for (i = 0; dest == NULL || i < count; i++)
-    {
-        if (src[i] > 0xFF)
-        {
-            NTCRT_ERRNO = EILSEQ;
-            return (size_t)-1;
-        }
-        if (dest != NULL)
-        {
-            dest[i] = (char)src[i];
-        }
-        if (src[i] == 0)
-        {
-            break;
-        }
-    }
-    return i;
-}
-
-EXTERN_C errno_t __cdecl _NtCRT_wctomb_s(int* pRetValue, char* mbchar, size_t sizeInBytes, wchar_t wchar)
-{
-    if (mbchar == NULL && sizeInBytes > 0)
-    {
-        if (pRetValue != NULL)
-        {
-            *pRetValue = -1;
-        }
-        return _NtCRT_InvalidParameter(EINVAL);
-    }
-    if (mbchar == NULL)
-    {
-        if (pRetValue != NULL)
-        {
-            *pRetValue = 0;
-        }
-        return 0;
-    }
-    if (wchar > 0xFF)
-    {
-        *mbchar = '\0';
-        if (pRetValue != NULL)
-        {
-            *pRetValue = -1;
-        }
-        NTCRT_ERRNO = EILSEQ;
-        return EILSEQ;
-    }
-    if (sizeInBytes < 1)
-    {
-        if (pRetValue != NULL)
-        {
-            *pRetValue = -1;
-        }
-        return _NtCRT_InvalidParameter(ERANGE);
-    }
-    *mbchar = (char)wchar;
-    if (pRetValue != NULL)
-    {
-        *pRetValue = 1;
-    }
-    return 0;
 }
 
 /* <inttypes.h> */
@@ -1403,7 +1313,6 @@ NTCRT_IMPORT(__iscsym, _NtCRT___iscsym);
 NTCRT_IMPORT(__iscsymf, _NtCRT___iscsymf);
 NTCRT_IMPORT(_tolower, _NtCRT__tolower);
 NTCRT_IMPORT(_toupper, _NtCRT__toupper);
-NTCRT_IMPORT(mblen, _NtCRT_mblen);
 NTCRT_IMPORT(srand, _NtCRT_srand);
 NTCRT_IMPORT(rand, _NtCRT_rand);
 NTCRT_IMPORT(rand_s, _NtCRT_rand_s);
@@ -1417,6 +1326,10 @@ NTCRT_IMPORT(_swab, _NtCRT__swab);
 NTCRT_IMPORT(toupper, _NtCRT_toupper);
 NTCRT_IMPORT(tolower, _NtCRT_tolower);
 NTCRT_IMPORT(towupper, _NtCRT_towupper);
+NTCRT_IMPORT(_wcsupr, _NtCRT__wcsupr);
+NTCRT_IMPORT(_wcslwr, _NtCRT__wcslwr);
+NTCRT_IMPORT(_wcsicmp, _NtCRT__wcsicmp);
+NTCRT_IMPORT(_wcsnicmp, _NtCRT__wcsnicmp);
 NTCRT_IMPORT(towlower, _NtCRT_towlower);
 NTCRT_IMPORT(iswctype, _NtCRT_iswctype);
 NTCRT_IMPORT(iswalpha, _NtCRT_iswalpha);
@@ -1432,11 +1345,6 @@ NTCRT_IMPORT(iswgraph, _NtCRT_iswgraph);
 NTCRT_IMPORT(iswprint, _NtCRT_iswprint);
 NTCRT_IMPORT(iswascii, _NtCRT_iswascii);
 NTCRT_IMPORT(isleadbyte, _NtCRT_isleadbyte);
-NTCRT_IMPORT(mbtowc, _NtCRT_mbtowc);
-NTCRT_IMPORT(mbstowcs, _NtCRT_mbstowcs);
-NTCRT_IMPORT(wcstombs, _NtCRT_wcstombs);
-NTCRT_IMPORT(wctomb, _NtCRT_wctomb);
-NTCRT_IMPORT(wctomb_s, _NtCRT_wctomb_s);
 NTCRT_IMPORT(strtoimax, _NtCRT_strtoimax);
 NTCRT_IMPORT(strtoumax, _NtCRT_strtoumax);
 NTCRT_IMPORT(imaxabs, _NtCRT_imaxabs);

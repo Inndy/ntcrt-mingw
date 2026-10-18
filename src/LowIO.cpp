@@ -42,6 +42,15 @@ typedef struct _NTCRT_FD
     WCHAR PipeWide;         /* A UTF-16 unit read ahead */
     UCHAR CarryLength;
     UCHAR Carry[4];         /* Bytes read ahead from a pipe, the start of a UTF-16 unit or UTF-8 character */
+    UCHAR PendingCount;
+    WCHAR Pending[4];       /* UTF-16 units read from a UTF-8 fd beyond the buffer */
+    WCHAR WriteHigh;        /* A high surrogate written to a console or UTF-8 fd, waiting for its low surrogate */
+    UCHAR WriteCarryLength;
+    UCHAR WriteCarry[4];    /* The start of a UTF-8 character written to a console in "C.UTF-8" */
+    BOOLEAN ConsoleEof;     /* Ctrl+Z was read from a console in "C.UTF-8" after ConsoleText */
+    char* ConsoleText;      /* UTF-8 read from a console in "C.UTF-8" and not returned yet */
+    ULONG ConsoleTextLength;
+    ULONG ConsoleTextPos;
     RTL_CRITICAL_SECTION Lock;
 } NTCRT_FD, *PNTCRT_FD;
 
@@ -109,6 +118,11 @@ _NtCRT_InitFdState(
     Entry->WideOnly = FALSE;
     Entry->HasPipeWide = FALSE;
     Entry->CarryLength = 0;
+    Entry->PendingCount = 0;
+    Entry->WriteHigh = 0;
+    Entry->WriteCarryLength = 0;
+    Entry->ConsoleEof = FALSE;
+    Entry->ConsoleTextLength = Entry->ConsoleTextPos = 0;
 }
 
 static
@@ -458,13 +472,26 @@ _NtCRT_SeekHandle(
 
 /* Unicode text modes */
 
+/* By the device type, GetConsoleMode needs read access the handles opened for writing do not have */
 static
 BOOL
 _NtCRT_IsConsoleFd(
     _In_ PNTCRT_FD Entry)
 {
+    IO_STATUS_BLOCK IoStatusBlock;
+    FILE_FS_DEVICE_INFORMATION Info;
     DWORD Mode;
-    return (Entry->Flags & FDEV) && _CRT_GetConsoleMode(Entry->Handle, &Mode);
+
+    if (!(Entry->Flags & FDEV))
+    {
+        return FALSE;
+    }
+    if (NT_SUCCESS(NtQueryVolumeInformationFile(
+            Entry->Handle, &IoStatusBlock, &Info, sizeof(Info), FileFsDeviceInformation)))
+    {
+        return Info.DeviceType == 0x50; /* FILE_DEVICE_CONSOLE */
+    }
+    return _CRT_GetConsoleMode(Entry->Handle, &Mode);
 }
 
 /* Read the bytes kept for a pipe first, returns bytes read, 0 for EOF, -1 for failure with errno set */
@@ -546,7 +573,10 @@ _NtCRT_CrAtEnd(
     return IsLf ? 0 : L'\r';
 }
 
-/* Write UTF-16 to a Unicode text mode fd, a newline is written as CRLF. Returns the bytes taken or -1 */
+/*
+ * Write UTF-16 to a Unicode text mode fd, a newline is written as CRLF. A high surrogate at the end is kept for
+ * the low surrogate written next if the fd converts the text. Returns the bytes taken or -1.
+ */
 static
 int
 _NtCRT_WriteUnicode(
@@ -555,16 +585,21 @@ _NtCRT_WriteUnicode(
     _In_ unsigned int Count)
 {
     BOOL Console = _NtCRT_IsConsoleFd(Entry);
+    BOOL Convert = Console || Entry->TextMode == NTCRT_TM_UTF8;
     unsigned int Chars = Count / sizeof(WCHAR), Done = 0;
 
     while (Done < Chars)
     {
-        /* As msvcrt, UTF-8 is converted in pieces of 852 units and a surrogate pair may be split */
-        WCHAR Line[853];
+        WCHAR Line[1024];
         char Utf8[ARRAYSIZE(Line) * 3];
         unsigned int Used = 0, Taken = 0;
-        BOOL Success;
+        BOOL Success = TRUE;
 
+        if (Entry->WriteHigh != 0)
+        {
+            Line[Used++] = Entry->WriteHigh;
+            Entry->WriteHigh = 0;
+        }
         while (Done + Taken < Chars && Used < ARRAYSIZE(Line) - 1)
         {
             WCHAR c;
@@ -577,23 +612,18 @@ _NtCRT_WriteUnicode(
             Line[Used++] = c;
             Taken++;
         }
-        if (Console)
+        if (Convert && Used > 0 && IS_HIGH_SURROGATE(Line[Used - 1]))
         {
-            /*
-             * As msvcrt, the text goes to the console by _putwch rather than the handle of the fd, a unit at a time,
-             * so the halves of a surrogate pair are written separately
-             */
-            unsigned int Start = 0;
+            Entry->WriteHigh = Line[--Used];
+        }
+        if (Used == 0)
+        {
+            /* Only a high surrogate */
+        } else if (Console)
+        {
+            DWORD Written;
 
-            Success = TRUE;
-            for (unsigned int i = 0; Success && i < Used; i++)
-            {
-                if (IS_HIGH_SURROGATE(Line[i]) || i + 1 == Used)
-                {
-                    Success = _NtCRT_ConsoleWriteW(Line + Start, i + 1 - Start);
-                    Start = i + 1;
-                }
-            }
+            Success = _NtCRT_WriteConsoleW(Entry->Handle, Line, Used, &Written) && Written == Used;
             if (!Success)
             {
                 _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
@@ -616,6 +646,164 @@ _NtCRT_WriteUnicode(
     return Done != 0 ? (int)(Done * sizeof(WCHAR)) : -1;
 }
 
+/* Bytes of an incomplete UTF-8 character at the end of a buffer */
+static
+unsigned int
+_NtCRT_Utf8Tail(
+    _In_reads_(Length) const UCHAR* Bytes,
+    _In_ unsigned int Length)
+{
+    for (unsigned int n = 1; n <= 3 && n <= Length; n++)
+    {
+        UCHAR c = Bytes[Length - n];
+
+        if ((c & 0xC0) != 0x80)
+        {
+            unsigned int Need = c >= 0xF0 && c <= 0xF4 ? 4 : c >= 0xE0 ? 3 : c >= 0xC2 ? 2 : 1;
+
+            return c >= 0xC2 && c <= 0xF4 && Need > n ? n : 0;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Write UTF-8 of "C.UTF-8" to a text mode console by its characters, a newline is written as CRLF and an
+ * incomplete character at the end is kept for the next write. Returns the bytes taken or -1.
+ */
+static
+int
+_NtCRT_WriteConsoleUtf8(
+    _In_ PNTCRT_FD Entry,
+    _In_reads_bytes_(Count) const char* Buffer,
+    _In_ unsigned int Count)
+{
+    unsigned int Consumed = 0;
+
+    while (Consumed < Count)
+    {
+        UCHAR Bytes[1024];
+        WCHAR Wide[ARRAYSIZE(Bytes)];
+        unsigned int Used = Entry->WriteCarryLength, Taken = 0, Tail;
+        int Length;
+        DWORD Written;
+
+        memcpy(Bytes, Entry->WriteCarry, Used);
+        Entry->WriteCarryLength = 0;
+        while (Consumed + Taken < Count && Used < sizeof(Bytes) - 1)
+        {
+            char c = Buffer[Consumed + Taken];
+
+            if (c == '\n')
+            {
+                Bytes[Used++] = '\r';
+            }
+            Bytes[Used++] = (UCHAR)c;
+            Taken++;
+        }
+        Tail = _NtCRT_Utf8Tail(Bytes, Used);
+        Used -= Tail;
+        memcpy(Entry->WriteCarry, Bytes + Used, Tail);
+        Entry->WriteCarryLength = (UCHAR)Tail;
+        Length = Used != 0 ? _NtCRT_MultiByteToWideChar(CP_UTF8, 0, (LPCCH)Bytes, (int)Used, Wide, ARRAYSIZE(Wide)) : 0;
+        if (Length > 0 && (!_NtCRT_WriteConsoleW(Entry->Handle, Wide, (DWORD)Length, &Written) ||
+                           Written != (DWORD)Length))
+        {
+            _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
+            break;
+        }
+        Consumed += Taken;
+    }
+    return Consumed != 0 ? (int)Consumed : -1;
+}
+
+/*
+ * Read UTF-8 of "C.UTF-8" from a text mode console by its characters, CRLF is read as a newline and Ctrl+Z ends
+ * the input. Returns the bytes stored, 0 for EOF or -1.
+ */
+static
+int
+_NtCRT_ReadConsoleUtf8(
+    _In_ PNTCRT_FD Entry,
+    _Out_writes_bytes_(Count) char* Buffer,
+    _In_ unsigned int Count)
+{
+    typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
+    unsigned int Length;
+
+    while (Entry->ConsoleTextPos == Entry->ConsoleTextLength)
+    {
+        auto const ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
+        WCHAR Wide[1024];
+        DWORD Units = 0, Got = 0, Kept = 0;
+        int Size;
+
+        if (Entry->ConsoleEof)
+        {
+            Entry->ConsoleEof = FALSE;
+            Entry->Flags |= FEOFLAG;
+            return 0;
+        }
+        if (Entry->HasPipeWide)
+        {
+            Wide[Units++] = Entry->PipeWide;
+            Entry->HasPipeWide = FALSE;
+        }
+        if (ReadConsoleW == NULL || !ReadConsoleW(Entry->Handle, Wide + Units, ARRAYSIZE(Wide) - Units, &Got, NULL))
+        {
+            _NtCRT_SetErrnoFromWin32(ReadConsoleW == NULL ? ERROR_INVALID_HANDLE : _Inline_GetLastError());
+            return -1;
+        }
+        Units += Got;
+        if (Units == 0)
+        {
+            return 0;
+        }
+        for (DWORD i = 0; i < Units; i++)
+        {
+            if (Wide[i] == 0x1A)
+            {
+                Entry->ConsoleEof = TRUE;
+                break;
+            }
+            if (Wide[i] == L'\r' && i + 1 < Units && Wide[i + 1] == L'\n')
+            {
+                continue;
+            }
+            Wide[Kept++] = Wide[i];
+        }
+        if (!Entry->ConsoleEof && Kept > 0 && IS_HIGH_SURROGATE(Wide[Kept - 1]))
+        {
+            Entry->PipeWide = Wide[--Kept];
+            Entry->HasPipeWide = TRUE;
+        }
+        Size = Kept != 0 ? _NtCRT_WideCharToMultiByte(CP_UTF8, 0, Wide, (int)Kept, NULL, 0, NULL, NULL) : 0;
+        if (Size > 0)
+        {
+            char* Text = (char*)(Entry->ConsoleText == NULL
+                                     ? RtlAllocateHeap(NTCRT_HEAP, 0, ARRAYSIZE(Wide) * 3)
+                                     : Entry->ConsoleText);
+            if (Text == NULL)
+            {
+                NTCRT_ERRNO = ENOMEM;
+                return -1;
+            }
+            Entry->ConsoleText = Text;
+            _NtCRT_WideCharToMultiByte(CP_UTF8, 0, Wide, (int)Kept, Text, ARRAYSIZE(Wide) * 3, NULL, NULL);
+        }
+        Entry->ConsoleTextLength = Size > 0 ? (ULONG)Size : 0;
+        Entry->ConsoleTextPos = 0;
+    }
+    Length = Entry->ConsoleTextLength - Entry->ConsoleTextPos;
+    if (Length > Count)
+    {
+        Length = Count;
+    }
+    memcpy(Buffer, Entry->ConsoleText + Entry->ConsoleTextPos, Length);
+    Entry->ConsoleTextPos += Length;
+    return (int)Length;
+}
+
 /*
  * Read UTF-16 from a Unicode text mode fd, CRLF is read as a newline and Ctrl+Z ends a file. Returns the bytes
  * stored, 0 for EOF or -1.
@@ -633,7 +821,7 @@ _NtCRT_ReadUnicode(
     ULONG RawCount;
     int Read;
 
-    if (Entry->TextMode == NTCRT_TM_UTF16LE && _NtCRT_IsConsoleFd(Entry))
+    if (_NtCRT_IsConsoleFd(Entry))
     {
         typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
         PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
@@ -746,116 +934,124 @@ _NtCRT_ReadUnicode(
     }
 
     /*
-     * UTF-8, as msvcrt, Count / 2 bytes but at least 4 are read, and it fails if they convert to more than
-     * Count / 2 units
+     * UTF-8, at most as many bytes as the units of the buffer are read, an incomplete character at the end is read
+     * next time and invalid bytes are U+FFFD. The units beyond the buffer are kept for the next read.
      */
-    RawCount = Units < 4 ? 4 : Units;
-    Raw = (UCHAR*)RtlAllocateHeap(NTCRT_HEAP, 0, RawCount);
-    if (Raw == NULL)
+    while (Kept < Units && Entry->PendingCount != 0)
     {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
+        Out[Kept++] = Entry->Pending[0];
+        memmove(Entry->Pending, Entry->Pending + 1, --Entry->PendingCount * sizeof(WCHAR));
     }
-    /* The bytes kept from a pipe are dropped if the pipe ends */
-    memcpy(Raw, Entry->Carry, Entry->CarryLength);
-    Read = _NtCRT_RawRead(Entry->Handle, Raw + Entry->CarryLength, RawCount - Entry->CarryLength);
-    if (Read <= 0)
+    for (ULONG Want = Units; Kept == 0;)
     {
-        RtlFreeHeap(NTCRT_HEAP, 0, Raw);
-        return Read;
-    }
-    RawCount = Entry->CarryLength + (ULONG)Read;
-    Entry->CarryLength = 0;
-    {
-        UCHAR* Src = Raw;
-        UCHAR* Dst = Raw;
-        UCHAR* End = Raw + RawCount;
+        ULONG Tail;
+        WCHAR* Wide;
+        int Length;
+        BOOL Eof;
 
-        while (Src < End)
+        Raw = (UCHAR*)RtlAllocateHeap(NTCRT_HEAP, 0, Entry->CarryLength + Want);
+        if (Raw == NULL)
         {
-            if (*Src == 0x1A)
+            NTCRT_ERRNO = ENOMEM;
+            return -1;
+        }
+        RawCount = Entry->CarryLength;
+        memcpy(Raw, Entry->Carry, RawCount);
+        Entry->CarryLength = 0;
+        Read = _NtCRT_RawRead(Entry->Handle, Raw + RawCount, Want);
+        if (Read < 0)
+        {
+            RtlFreeHeap(NTCRT_HEAP, 0, Raw);
+            return -1;
+        }
+        /* A short read of a file is its end */
+        Eof = Read == 0 || ((ULONG)Read < Want && !(Entry->Flags & (FPIPE | FDEV)));
+        RawCount += (ULONG)Read;
+        {
+            UCHAR* Src = Raw;
+            UCHAR* Dst = Raw;
+            UCHAR* End = Raw + RawCount;
+
+            while (Src < End)
             {
-                /* As msvcrt, Ctrl+Z ends a file, it is read from a device */
-                if (!(Entry->Flags & FDEV))
+                if (*Src == 0x1A)
                 {
-                    Entry->Flags |= FEOFLAG;
+                    /* Ctrl+Z ends a file, it is read from a device */
+                    if (!(Entry->Flags & FDEV))
+                    {
+                        Entry->Flags |= FEOFLAG;
+                        Eof = TRUE;
+                    } else
+                    {
+                        *Dst++ = *Src;
+                    }
+                    break;
+                }
+                if (*Src != '\r')
+                {
+                    *Dst++ = *Src++;
+                } else if (Src + 1 < End)
+                {
+                    if (Src[1] == '\n')
+                    {
+                        Src++;
+                    }
+                    *Dst++ = *Src++;
                 } else
                 {
-                    *Dst++ = *Src;
+                    UCHAR Peek;
+                    WCHAR c;
+
+                    Src++;
+                    Read = _NtCRT_ReadAhead(Entry, &Peek, 1);
+                    c = _NtCRT_CrAtEnd(Entry, &Peek, Read > 0 ? (ULONG)Read : 0, 1, Dst == Raw && Kept == 0);
+                    if (c != 0)
+                    {
+                        *Dst++ = (UCHAR)c;
+                    }
                 }
+            }
+            RawCount = (ULONG)(Dst - Raw);
+        }
+        Tail = Eof ? 0 : _NtCRT_Utf8Tail(Raw, RawCount);
+        if (Tail != 0)
+        {
+            RawCount -= Tail;
+            _NtCRT_PutBack(Entry, Raw + RawCount, Tail);
+        }
+        if (RawCount == 0)
+        {
+            RtlFreeHeap(NTCRT_HEAP, 0, Raw);
+            if (Eof)
+            {
                 break;
             }
-            if (*Src != '\r')
+            /* Only the start of a character, read it whole next time */
+            Want = Want < 4 ? 4 : Want;
+            continue;
+        }
+        Wide = (WCHAR*)RtlAllocateHeap(NTCRT_HEAP, 0, RawCount * sizeof(WCHAR));
+        Length = Wide != NULL ? _NtCRT_MultiByteToWideChar(CP_UTF8, 0, (LPCCH)Raw, (int)RawCount, Wide, (int)RawCount)
+                              : 0;
+        RtlFreeHeap(NTCRT_HEAP, 0, Raw);
+        if (Length <= 0)
+        {
+            RtlFreeHeap(NTCRT_HEAP, 0, Wide);
+            NTCRT_ERRNO = ENOMEM;
+            return -1;
+        }
+        for (int i = 0; i < Length; i++)
+        {
+            if (Kept < Units)
             {
-                *Dst++ = *Src++;
-            } else if (Src + 1 < End)
-            {
-                if (Src[1] == '\n')
-                {
-                    Src++;
-                }
-                *Dst++ = *Src++;
+                Out[Kept++] = Wide[i];
             } else
             {
-                UCHAR Peek;
-                WCHAR c;
-
-                Src++;
-                Read = _NtCRT_ReadAhead(Entry, &Peek, 1);
-                c = _NtCRT_CrAtEnd(Entry, &Peek, Read > 0 ? (ULONG)Read : 0, 1, Dst == Raw);
-                if (c != 0)
-                {
-                    *Dst++ = (UCHAR)c;
-                }
+                Entry->Pending[Entry->PendingCount++] = Wide[i];
             }
         }
-        RawCount = (ULONG)(Dst - Raw);
+        RtlFreeHeap(NTCRT_HEAP, 0, Wide);
     }
-    if (RawCount == 0)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Raw);
-        return 0;
-    }
-    if (Raw[RawCount - 1] & 0x80)
-    {
-        /*
-         * As msvcrt, the character at the end is not read if it is larger than the buffer or incomplete at the end
-         * of the file, and it fails without a lead byte
-         */
-        UCHAR* p = Raw + RawCount - 1;
-        ULONG Extra = 1, Trail;
-
-        while ((*p & 0xC0) == 0x80 && Extra < 4 && p > Raw)
-        {
-            p--;
-            Extra++;
-        }
-        Trail = *p >= 0xF0 && *p <= 0xF7 ? 3 : *p >= 0xE0 && *p <= 0xEF ? 2 : *p >= 0xC0 && *p <= 0xDF ? 1 : 0;
-        if (Trail == 0)
-        {
-            RtlFreeHeap(NTCRT_HEAP, 0, Raw);
-            NTCRT_ERRNO = EILSEQ;
-            return -1;
-        }
-        if (Trail + 1 != Extra)
-        {
-            _NtCRT_PutBack(Entry, p, Extra);
-            RawCount -= Extra;
-        }
-    }
-    {
-        Kept = RawCount == 0 ? 0 :
-               (unsigned int)_NtCRT_MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)Raw, (int)RawCount, Out, (int)Units);
-        if (Kept == 0)
-        {
-            /* Nothing complete was read, or too many units */
-            RtlFreeHeap(NTCRT_HEAP, 0, Raw);
-            _NtCRT_GetPtd()->Doserrno = RawCount == 0 ? ERROR_INVALID_PARAMETER : ERROR_INSUFFICIENT_BUFFER;
-            NTCRT_ERRNO = EINVAL;
-            return -1;
-        }
-    }
-    RtlFreeHeap(NTCRT_HEAP, 0, Raw);
     return (int)(Kept * sizeof(WCHAR));
 }
 
@@ -892,6 +1088,11 @@ EXTERN_C int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count)
     if ((Entry->Flags & FTEXT) && Entry->TextMode != NTCRT_TM_ANSI)
     {
         Total = _NtCRT_ReadUnicode(Entry, Buffer, count);
+        goto _Exit;
+    }
+    if ((Entry->Flags & FTEXT) && _NtCRT_CurrentCodePage() == CP_UTF8 && _NtCRT_IsConsoleFd(Entry))
+    {
+        Total = _NtCRT_ReadConsoleUtf8(Entry, Buffer, count);
         goto _Exit;
     }
 
@@ -1050,6 +1251,9 @@ EXTERN_C int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count
             Done += Written;
         }
         Result = Done != 0 || count == 0 ? (int)Done : -1;
+    } else if (_NtCRT_CurrentCodePage() == CP_UTF8 && _NtCRT_IsConsoleFd(Entry))
+    {
+        Result = _NtCRT_WriteConsoleUtf8(Entry, Src, count);
     } else
     {
         char Line[1024];
@@ -1106,6 +1310,11 @@ EXTERN_C int __cdecl _NtCRT_close(int fd)
     Handle = Entry->Handle;
     Entry->Handle = INVALID_HANDLE_VALUE;
     Entry->Flags = 0;
+    if (Entry->ConsoleText != NULL)
+    {
+        RtlFreeHeap(NTCRT_HEAP, 0, Entry->ConsoleText);
+        Entry->ConsoleText = NULL;
+    }
     if (fd <= 2)
     {
         _Inline_SetStdHandle(fd == 0 ? STD_INPUT_HANDLE : fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, NULL);
@@ -1139,6 +1348,7 @@ EXTERN_C long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origin)
         Entry->HasPipeChar = FALSE;
         Entry->HasPipeWide = FALSE;
         Entry->CarryLength = 0;
+        Entry->PendingCount = 0;
     }
     _NtCRT_UnlockFd(Entry);
     return Result;
@@ -1322,6 +1532,23 @@ EXTERN_C int __cdecl _NtCRT_fd_textmode(int fd)
 }
 
 /* The last read of a text mode fd started with a newline, which was CRLF */
+EXTERN_C long long __cdecl _NtCRT_fd_pending_bytes(int fd)
+{
+    PNTCRT_FD Entry = _NtCRT_LockFd(fd);
+    long long Bytes = 0;
+
+    if (Entry == NULL)
+    {
+        return 0;
+    }
+    for (int i = 0; i < Entry->PendingCount; i++)
+    {
+        Bytes += _NtCRT_UnitBytes(Entry->Pending[i], Entry->TextMode == NTCRT_TM_UTF8);
+    }
+    _NtCRT_UnlockFd(Entry);
+    return Bytes;
+}
+
 EXTERN_C int __cdecl _NtCRT_fd_crlf(int fd)
 {
     PNTCRT_FD Entry = _NtCRT_FdEntry(fd);
@@ -1764,7 +1991,7 @@ EXTERN_C int __cdecl _NtCRT_sopen(const char* path, int oflag, int shflag, ...)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WidePath = _NtCRT_AnsiToWide(path);
+    WidePath = _NtCRT_FileToWide(path);
     if (WidePath == NULL)
     {
         return -1;
@@ -1993,7 +2220,7 @@ EXTERN_C int __cdecl _NtCRT_stat64(const char* path, struct _stat64* buffer)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WidePath = _NtCRT_AnsiToWide(path);
+    WidePath = _NtCRT_FileToWide(path);
     if (WidePath == NULL)
     {
         return -1;

@@ -34,7 +34,7 @@ EXTERN_C HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
             NTCRT_ERRNO = EINVAL; \
             return -1; \
         } \
-        WidePath = _NtCRT_AnsiToWide(Path); \
+        WidePath = _NtCRT_FileToWide(Path); \
         if (WidePath == NULL) \
         { \
             return -1; \
@@ -161,7 +161,7 @@ EXTERN_C char* __cdecl _NtCRT__getcwd(char* buffer, int maxlen)
     {
         return NULL;
     }
-    Narrow = _NtCRT_WideToAnsi(Wide);
+    Narrow = _NtCRT_WideToFile(Wide);
     RtlFreeHeap(NTCRT_HEAP, 0, Wide);
     if (Narrow == NULL)
     {
@@ -230,7 +230,7 @@ EXTERN_C char* __cdecl _NtCRT__fullpath(char* absPath, const char* relPath, size
 
     if (relPath != NULL && *relPath != '\0')
     {
-        WideRel = _NtCRT_AnsiToWide(relPath);
+        WideRel = _NtCRT_FileToWide(relPath);
         if (WideRel == NULL)
         {
             return NULL;
@@ -242,7 +242,7 @@ EXTERN_C char* __cdecl _NtCRT__fullpath(char* absPath, const char* relPath, size
     {
         return NULL;
     }
-    Narrow = _NtCRT_WideToAnsi(WideAbs);
+    Narrow = _NtCRT_WideToFile(WideAbs);
     RtlFreeHeap(NTCRT_HEAP, 0, WideAbs);
     if (Narrow == NULL || absPath == NULL)
     {
@@ -718,7 +718,7 @@ _NtCRT_FillFindDataA(
     FindData->time_access = Data->AccessTime;
     FindData->time_write = Data->WriteTime;
     FindData->size = (decltype(FindData->size))Data->Size;
-    Length = _NtCRT_WideCharToMultiByte(_NtCRT_CodePage(),
+    Length = _NtCRT_WideCharToMultiByte(_NtCRT_FileCodePage(),
                                         0,
                                         Data->Name,
                                         (int)Data->NameLength,
@@ -769,7 +769,7 @@ _NtCRT_FindFirstA(
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WidePattern = _NtCRT_AnsiToWide(Pattern);
+    WidePattern = _NtCRT_FileToWide(Pattern);
     if (WidePattern == NULL)
     {
         return -1;

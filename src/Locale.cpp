@@ -1,6 +1,7 @@
 /*
- * msvcrt locale objects, the "_l" functions and the locale services of the runtime.
- * Only the "C" locale is supported, the "_l" functions ignore their locale and call the functions without it.
+ * setlocale, msvcrt locale objects, the "_l" functions and the locale services of the runtime.
+ * The locales are "C" and "C.UTF-8", see NtCRT.h. The "_l" functions call the functions without it, those
+ * depending on the multibyte characters run by the code page of the locale with NTCRT_LOCALE_SCOPE.
  */
 
 #include "NtCRT.h"
@@ -148,72 +149,362 @@ EXTERN_C unsigned long long __cdecl _NtCRT_wcstoull(const wchar_t*, wchar_t**, i
 EXTERN_C wint_t __cdecl _NtCRT_towlower(wint_t);
 EXTERN_C wint_t __cdecl _NtCRT_towupper(wint_t);
 
-#pragma region Locale objects
+#pragma region Locale state
 
-static char g_LocaleName[] = "C";
+static char g_NameC[] = "C";
+static char g_NameUtf8[] = "C.UTF-8";
+static const char* const g_CategoryNames[LC_MAX + 1] = {
+    "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME",
+};
+
+/* Whether each category of the current locale is "C.UTF-8", LC_ALL is unused */
+static BOOL g_Utf8[LC_MAX + 1];
+static char g_AllName[96];
+static wchar_t g_WideName[96];
+static unsigned short g_CtypeUtf8[257];
 static unsigned char g_LowerMap[256];
 static unsigned char g_UpperMap[256];
-static threadlocinfo g_LocInfo;
+static volatile LONG g_LocaleScopes;
 
-/* A locale object and its multibyte code page, the locale information is always the "C" locale */
+extern "C" int _NtCRT_mb_cur_max;
+extern "C" unsigned short _NtCRT_ctype[257];
+
+EXTERN_C UINT _NtCRT_CurrentCodePage(void)
+{
+    if (g_LocaleScopes != 0)
+    {
+        unsigned int CodePage = _NtCRT_GetPtd()->LocaleCodePage;
+
+        if (CodePage != 0)
+        {
+            return CodePage - 1;
+        }
+    }
+    return _NtCRT_lc_codepage;
+}
+
+EXTERN_C UINT _NtCRT_LocaleCodePage(_locale_t Locale)
+{
+    return Locale != NULL ? Locale->locinfo->lc_codepage : _NtCRT_CurrentCodePage();
+}
+
+EXTERN_C UINT _NtCRT_FileCodePage(void)
+{
+    return _NtCRT_lc_codepage == CP_UTF8 ? CP_UTF8 : _NtCRT_CodePage();
+}
+
+NTCRT_LOCALE_SCOPE::NTCRT_LOCALE_SCOPE(_locale_t Locale)
+{
+    m_Ptd = NULL;
+    if (Locale != NULL)
+    {
+        m_Ptd = _NtCRT_GetPtd();
+        m_Saved = m_Ptd->LocaleCodePage;
+        _InterlockedIncrement(&g_LocaleScopes);
+        m_Ptd->LocaleCodePage = Locale->locinfo->lc_codepage + 1;
+    }
+}
+
+NTCRT_LOCALE_SCOPE::~NTCRT_LOCALE_SCOPE()
+{
+    if (m_Ptd != NULL)
+    {
+        m_Ptd->LocaleCodePage = m_Saved;
+        _InterlockedDecrement(&g_LocaleScopes);
+    }
+}
+
+/*
+ * Parse the locale name of one category: 1 for "C.UTF-8", 0 for "C", -1 if not supported.
+ * "" is "C.UTF-8" if the ANSI code page is UTF-8, else "C". Only "C" and "POSIX" can have a code set, as
+ * ".UTF-8" and "C.UTF-8", other language names are not supported.
+ */
+static
+int
+_NtCRT_ParseLocaleName(
+    _In_reads_(Length) const char* Name,
+    _In_ size_t Length)
+{
+    const char* Dot = (const char*)memchr(Name, '.', Length);
+    size_t Base = Dot != NULL ? (size_t)(Dot - Name) : Length;
+    size_t SetLength;
+
+    if (Length == 0)
+    {
+        return _NtCRT_CodePage() == CP_UTF8;
+    }
+    if (!(Base == 0 || (Base == 1 && Name[0] == 'C') || (Base == 5 && memcmp(Name, "POSIX", 5) == 0)))
+    {
+        return -1;
+    }
+    if (Dot == NULL)
+    {
+        return 0;
+    }
+    Dot++;
+    SetLength = Length - Base - 1;
+    if ((SetLength == 5 && _strnicmp(Dot, "UTF-8", 5) == 0) || (SetLength == 4 && _strnicmp(Dot, "UTF8", 4) == 0) ||
+        (SetLength == 5 && memcmp(Dot, "65001", 5) == 0))
+    {
+        return 1;
+    }
+    return -1;
+}
+
+/* Parse a locale name of setlocale or _create_locale into Utf8, FALSE if not supported */
+static
+BOOL
+_NtCRT_ParseLocale(
+    _In_ int Category,
+    _In_z_ const char* Name,
+    _Inout_updates_(LC_MAX + 1) BOOL* Utf8)
+{
+    BOOL New[LC_MAX + 1];
+    int Value;
+
+    memcpy(New, Utf8, sizeof(New));
+    if (Category == LC_ALL && strncmp(Name, "LC_", 3) == 0)
+    {
+        /* "LC_COLLATE=C;LC_CTYPE=C.UTF-8;...", as setlocale(LC_ALL, NULL) returns for mixed categories */
+        while (*Name != '\0')
+        {
+            const char* Equal = strchr(Name, '=');
+            const char* End;
+            int i;
+
+            if (Equal == NULL)
+            {
+                return FALSE;
+            }
+            for (i = LC_COLLATE; i <= LC_MAX; i++)
+            {
+                size_t Length = strlen(g_CategoryNames[i]);
+
+                if ((size_t)(Equal - Name) == Length && memcmp(Name, g_CategoryNames[i], Length) == 0)
+                {
+                    break;
+                }
+            }
+            if (i > LC_MAX)
+            {
+                return FALSE;
+            }
+            End = strchr(Equal + 1, ';');
+            if (End == NULL)
+            {
+                End = Equal + 1 + strlen(Equal + 1);
+            }
+            Value = _NtCRT_ParseLocaleName(Equal + 1, (size_t)(End - Equal - 1));
+            if (Value < 0)
+            {
+                return FALSE;
+            }
+            New[i] = Value;
+            Name = *End == ';' ? End + 1 : End;
+        }
+    } else
+    {
+        Value = _NtCRT_ParseLocaleName(Name, strlen(Name));
+        if (Value < 0)
+        {
+            return FALSE;
+        }
+        for (int i = LC_COLLATE; i <= LC_MAX; i++)
+        {
+            if (Category == LC_ALL || Category == i)
+            {
+                New[i] = Value;
+            }
+        }
+    }
+    memcpy(Utf8, New, sizeof(New));
+    return TRUE;
+}
+
+/* The name of a category, or of all categories in the format accepted by _NtCRT_ParseLocale */
+static
+char*
+_NtCRT_LocaleName(
+    _In_ int Category,
+    _In_reads_(LC_MAX + 1) const BOOL* Utf8,
+    _Out_writes_(96) char* Buffer)
+{
+    BOOL Same = TRUE;
+
+    if (Category != LC_ALL)
+    {
+        return Utf8[Category] ? g_NameUtf8 : g_NameC;
+    }
+    for (int i = LC_COLLATE + 1; i <= LC_MAX; i++)
+    {
+        Same &= Utf8[i] == Utf8[LC_COLLATE];
+    }
+    if (Same)
+    {
+        return Utf8[LC_COLLATE] ? g_NameUtf8 : g_NameC;
+    }
+    Buffer[0] = '\0';
+    for (int i = LC_COLLATE; i <= LC_MAX; i++)
+    {
+        strcat(Buffer, g_CategoryNames[i]);
+        strcat(Buffer, "=");
+        strcat(Buffer, Utf8[i] ? g_NameUtf8 : g_NameC);
+        if (i != LC_MAX)
+        {
+            strcat(Buffer, ";");
+        }
+    }
+    return Buffer;
+}
+
+/* The ctype table of "C.UTF-8", bytes that can start a multibyte character are lead bytes */
+static
+unsigned short*
+_NtCRT_CtypeUtf8(void)
+{
+    if (g_CtypeUtf8['A' + 1] == 0)
+    {
+        g_CtypeUtf8[0] = 0;
+        for (int i = 0; i < 256; i++)
+        {
+            g_CtypeUtf8[i + 1] = i < 0x80 ? _NtCRT_ctype[i + 1] : (i >= 0xC2 && i <= 0xF4 ? _LEADBYTE : 0);
+        }
+    }
+    return g_CtypeUtf8 + 1;
+}
+
+EXTERN_C char* __cdecl _NtCRT_setlocale(int category, const char* locale)
+{
+    char* Name = NULL;
+
+    if (category < LC_ALL || category > LC_MAX)
+    {
+        return NULL;
+    }
+    _NtCRT_lock(_SETLOCALE_LOCK);
+    if (locale != NULL)
+    {
+        if (!_NtCRT_ParseLocale(category, locale, g_Utf8))
+        {
+            goto _Exit;
+        }
+        _NtCRT_lc_codepage = g_Utf8[LC_CTYPE] ? CP_UTF8 : 0;
+        _NtCRT_mb_cur_max = g_Utf8[LC_CTYPE] ? 4 : 1;
+        _NtCRT_pctype = g_Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype + 1;
+    }
+    Name = _NtCRT_LocaleName(category, g_Utf8, g_AllName);
+_Exit:
+    _NtCRT_unlock(_SETLOCALE_LOCK);
+    return Name;
+}
+
+EXTERN_C wchar_t* __cdecl _NtCRT__wsetlocale(int category, const wchar_t* locale)
+{
+    char Locale[96], *Name;
+    size_t i;
+
+    if (locale != NULL)
+    {
+        for (i = 0; locale[i] != L'\0'; i++)
+        {
+            if (locale[i] >= 0x80 || i + 1 >= sizeof(Locale))
+            {
+                return NULL;
+            }
+            Locale[i] = (char)locale[i];
+        }
+        Locale[i] = '\0';
+    }
+    Name = _NtCRT_setlocale(category, locale != NULL ? Locale : NULL);
+    if (Name == NULL)
+    {
+        return NULL;
+    }
+    for (i = 0; Name[i] != '\0'; i++)
+    {
+        g_WideName[i] = (unsigned char)Name[i];
+    }
+    g_WideName[i] = L'\0';
+    return g_WideName;
+}
+
+#pragma endregion
+
+#pragma region Locale objects
+
+/* A locale object with its own locale information and multibyte code page */
 typedef struct _NTCRT_LOCALE
 {
     _locale_tstruct Locale;
+    threadlocinfo LocInfo;
     NTCRT_MBCINFO MbcInfo;
+    char AllName[96];
 } NTCRT_LOCALE, *PNTCRT_LOCALE;
 
 static
 _locale_t
 _NtCRT_NewLocale(
+    _In_reads_(LC_MAX + 1) const BOOL* Utf8,
     _In_ BOOL CurrentMbcs)
 {
     PNTCRT_LOCALE Locale;
 
-    if (g_LocInfo.refcount == 0)
+    if (g_LowerMap['A'] == 0)
     {
         for (int i = 0; i < 256; i++)
         {
             g_LowerMap[i] = (unsigned char)(i >= 'A' && i <= 'Z' ? i - 'A' + 'a' : i);
             g_UpperMap[i] = (unsigned char)(i >= 'a' && i <= 'z' ? i - 'a' + 'A' : i);
         }
-        for (int i = LC_MIN; i <= LC_MAX; i++)
-        {
-            g_LocInfo.lc_category[i].locale = g_LocaleName;
-        }
-        g_LocInfo.lc_clike = 1;
-        g_LocInfo.mb_cur_max = 1;
-        g_LocInfo.lconv = _NtCRT_localeconv();
-        g_LocInfo.pctype = _NtCRT_pctype;
-        g_LocInfo.pclmap = g_LowerMap;
-        g_LocInfo.pcumap = g_UpperMap;
-        g_LocInfo.refcount = 1;
     }
-    Locale = (PNTCRT_LOCALE)RtlAllocateHeap(NTCRT_HEAP, 0, sizeof(*Locale));
+    Locale = (PNTCRT_LOCALE)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, sizeof(*Locale));
     if (Locale == NULL)
     {
         NTCRT_ERRNO = ENOMEM;
         return NULL;
     }
+    for (int i = LC_COLLATE; i <= LC_MAX; i++)
+    {
+        Locale->LocInfo.lc_category[i].locale = _NtCRT_LocaleName(i, Utf8, NULL);
+    }
+    Locale->LocInfo.lc_category[LC_ALL].locale = _NtCRT_LocaleName(LC_ALL, Utf8, Locale->AllName);
+    Locale->LocInfo.refcount = 1;
+    Locale->LocInfo.lc_codepage = Utf8[LC_CTYPE] ? CP_UTF8 : 0;
+    Locale->LocInfo.lc_clike = 1;
+    Locale->LocInfo.mb_cur_max = Utf8[LC_CTYPE] ? 4 : 1;
+    Locale->LocInfo.lconv = _NtCRT_localeconv();
+    Locale->LocInfo.pctype = Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype + 1;
+    Locale->LocInfo.pclmap = g_LowerMap;
+    Locale->LocInfo.pcumap = g_UpperMap;
     _NtCRT_GetMbcInfo(&Locale->MbcInfo, CurrentMbcs);
-    Locale->Locale.locinfo = &g_LocInfo;
+    Locale->Locale.locinfo = &Locale->LocInfo;
     Locale->Locale.mbcinfo = (pthreadmbcinfo)&Locale->MbcInfo;
     return &Locale->Locale;
 }
 
-/* A locale name is accepted as setlocale does, the multibyte code page of the "C" locale is single-byte */
+/* The categories not specified are the "C" locale, the multibyte code page of the "C" locale is single-byte */
 EXTERN_C _locale_t __cdecl _NtCRT__create_locale(int category, const char* locale)
 {
-    if (locale == NULL || _NtCRT_setlocale(category, locale) == NULL)
+    BOOL Utf8[LC_MAX + 1] = { FALSE };
+
+    if (category < LC_ALL || category > LC_MAX || locale == NULL || !_NtCRT_ParseLocale(category, locale, Utf8))
     {
         return NULL;
     }
-    return _NtCRT_NewLocale(FALSE);
+    return _NtCRT_NewLocale(Utf8, FALSE);
 }
 
-/* The multibyte code page set by _setmbcp */
+/* The current locale and the multibyte code page set by _setmbcp */
 EXTERN_C _locale_t __cdecl _NtCRT__get_current_locale(void)
 {
-    return _NtCRT_NewLocale(TRUE);
+    BOOL Utf8[LC_MAX + 1];
+    _locale_t Locale;
+
+    _NtCRT_lock(_SETLOCALE_LOCK);
+    memcpy(Utf8, g_Utf8, sizeof(Utf8));
+    _NtCRT_unlock(_SETLOCALE_LOCK);
+    Locale = _NtCRT_NewLocale(Utf8, TRUE);
+    return Locale;
 }
 
 EXTERN_C void __cdecl _NtCRT__free_locale(_locale_t locale)
@@ -344,526 +635,526 @@ EXTERN_C int __cdecl _NtCRT_ConsoleVScanWS(const wchar_t* format, va_list ap)
 
 EXTERN_C double __cdecl _NtCRT__atof_l(const char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_atof(str);
 }
 
 EXTERN_C int __cdecl _NtCRT__atoi_l(const char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return atoi(str);
 }
 
 EXTERN_C long __cdecl _NtCRT__atol_l(const char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return atol(str);
 }
 
 EXTERN_C __int64 __cdecl _NtCRT__atoi64_l(const char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _atoi64(str);
 }
 
 EXTERN_C long long __cdecl _NtCRT__atoll_l(const char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_atoll(str);
 }
 
 EXTERN_C double __cdecl _NtCRT__wtof_l(const wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wtof(str);
 }
 
 EXTERN_C int __cdecl _NtCRT__wtoi_l(const wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wtoi(str);
 }
 
 EXTERN_C long __cdecl _NtCRT__wtol_l(const wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wtol(str);
 }
 
 EXTERN_C __int64 __cdecl _NtCRT__wtoi64_l(const wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wtoi64(str);
 }
 
 EXTERN_C int __cdecl _NtCRT__atodbl_l(_CRT_DOUBLE* value, char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__atodbl(value, str);
 }
 
 EXTERN_C int __cdecl _NtCRT__atoldbl_l(_LDOUBLE* value, char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__atoldbl(value, str);
 }
 
 EXTERN_C int __cdecl _NtCRT__atoflt_l(_CRT_FLOAT* value, char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__atoflt(value, str);
 }
 
 EXTERN_C double __cdecl _NtCRT__strtod_l(const char* str, char** end, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtod(str, end);
 }
 
 EXTERN_C double __cdecl _NtCRT__wcstod_l(const wchar_t* str, wchar_t** end, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstod(str, end);
 }
 
 EXTERN_C long __cdecl _NtCRT__strtol_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtol(str, end, base);
 }
 
 EXTERN_C unsigned long __cdecl _NtCRT__strtoul_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoul(str, end, base);
 }
 
 EXTERN_C long long __cdecl _NtCRT__strtoll_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoll(str, end, base);
 }
 
 EXTERN_C long long __cdecl _NtCRT__strtoi64_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoll(str, end, base);
 }
 
 EXTERN_C unsigned long long __cdecl _NtCRT__strtoull_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoull(str, end, base);
 }
 
 EXTERN_C unsigned long long __cdecl _NtCRT__strtoui64_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoull(str, end, base);
 }
 
 EXTERN_C intmax_t __cdecl _NtCRT__strtoimax_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoimax(str, end, base);
 }
 
 EXTERN_C uintmax_t __cdecl _NtCRT__strtoumax_l(const char* str, char** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strtoumax(str, end, base);
 }
 
 EXTERN_C long __cdecl _NtCRT__wcstol_l(const wchar_t* str, wchar_t** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstol(str, end, base);
 }
 
 EXTERN_C unsigned long __cdecl _NtCRT__wcstoul_l(const wchar_t* str, wchar_t** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstoul(str, end, base);
 }
 
 EXTERN_C long long __cdecl _NtCRT__wcstoi64_l(const wchar_t* str, wchar_t** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstoll(str, end, base);
 }
 
 EXTERN_C unsigned long long __cdecl _NtCRT__wcstoui64_l(const wchar_t* str, wchar_t** end, int base, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstoull(str, end, base);
 }
 
 EXTERN_C int __cdecl _NtCRT__isalnum_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isalnum(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isalpha_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isalpha(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iscntrl_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return iscntrl(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isdigit_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isdigit(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isgraph_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isgraph(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__islower_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return islower(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isprint_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isprint(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__ispunct_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return ispunct(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isspace_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isspace(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isupper_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isupper(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isxdigit_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return isxdigit(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswalnum_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswalnum(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswalpha_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswalpha(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswcntrl_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswcntrl(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswdigit_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswdigit(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswgraph_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswgraph(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswlower_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswlower(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswprint_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswprint(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswpunct_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswpunct(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswspace_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswspace(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswupper_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswupper(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswxdigit_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswxdigit(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__isctype_l(int c, int mask, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__isctype(c, mask);
 }
 
 EXTERN_C int __cdecl _NtCRT__iswctype_l(wint_t c, wctype_t mask, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_iswctype(c, mask);
 }
 
 EXTERN_C int __cdecl _NtCRT__isleadbyte_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_isleadbyte(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__tolower_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_tolower(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__toupper_l(int c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_toupper(c);
 }
 
 EXTERN_C wint_t __cdecl _NtCRT__towlower_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_towlower(c);
 }
 
 EXTERN_C wint_t __cdecl _NtCRT__towupper_l(wint_t c, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_towupper(c);
 }
 
 EXTERN_C int __cdecl _NtCRT__strcoll_l(const char* s1, const char* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strcoll(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__stricoll_l(const char* s1, const char* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__stricoll(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__strncoll_l(const char* s1, const char* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__strncoll(s1, s2, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__strnicoll_l(const char* s1, const char* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__strnicoll(s1, s2, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__stricmp_l(const char* s1, const char* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _stricmp(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__strnicmp_l(const char* s1, const char* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _strnicmp(s1, s2, count);
 }
 
 EXTERN_C char* __cdecl _NtCRT__strlwr_l(char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _strlwr(str);
 }
 
 EXTERN_C char* __cdecl _NtCRT__strupr_l(char* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _strupr(str);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__strlwr_s_l(char* str, size_t size, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__strlwr_s(str, size);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__strupr_s_l(char* str, size_t size, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__strupr_s(str, size);
 }
 
 EXTERN_C size_t __cdecl _NtCRT__strxfrm_l(char* dst, const char* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_strxfrm(dst, src, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcscoll_l(const wchar_t* s1, const wchar_t* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcscoll(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcsicoll_l(const wchar_t* s1, const wchar_t* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wcsicoll(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcsncoll_l(const wchar_t* s1, const wchar_t* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wcsncoll(s1, s2, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcsnicoll_l(const wchar_t* s1, const wchar_t* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wcsnicoll(s1, s2, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcsicmp_l(const wchar_t* s1, const wchar_t* s2, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wcsicmp(s1, s2);
 }
 
 EXTERN_C int __cdecl _NtCRT__wcsnicmp_l(const wchar_t* s1, const wchar_t* s2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wcsnicmp(s1, s2, count);
 }
 
 EXTERN_C wchar_t* __cdecl _NtCRT__wcslwr_l(wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wcslwr(str);
 }
 
 EXTERN_C wchar_t* __cdecl _NtCRT__wcsupr_l(wchar_t* str, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _wcsupr(str);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wcslwr_s_l(wchar_t* str, size_t size, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wcslwr_s(str, size);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wcsupr_s_l(wchar_t* str, size_t size, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__wcsupr_s(str, size);
 }
 
 EXTERN_C size_t __cdecl _NtCRT__wcsxfrm_l(wchar_t* dst, const wchar_t* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcsxfrm(dst, src, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__memicmp_l(const void* buf1, const void* buf2, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _memicmp(buf1, buf2, count);
 }
 
 EXTERN_C size_t __cdecl _NtCRT__wcsftime_l(
     wchar_t* buffer, size_t size, const wchar_t* format, const struct tm* tm, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcsftime(buffer, size, format, tm);
 }
 
 EXTERN_C int __cdecl _NtCRT__mblen_l(const char* s, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_mblen(s, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__mbtowc_l(wchar_t* pwc, const char* s, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_mbtowc(pwc, s, count);
 }
 
 EXTERN_C size_t __cdecl _NtCRT__mbstowcs_l(wchar_t* dst, const char* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_mbstowcs(dst, src, count);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__mbstowcs_s_l(
     size_t* converted, wchar_t* dst, size_t size, const char* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_mbstowcs_s(converted, dst, size, src, count);
 }
 
 EXTERN_C size_t __cdecl _NtCRT__wcstombs_l(char* dst, const wchar_t* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstombs(dst, src, count);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wcstombs_s_l(
     size_t* converted, char* dst, size_t size, const wchar_t* src, size_t count, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wcstombs_s(converted, dst, size, src, count);
 }
 
 EXTERN_C int __cdecl _NtCRT__wctomb_l(char* s, wchar_t wc, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wctomb(s, wc);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wctomb_s_l(int* size, char* s, size_t max, wchar_t wc, _locale_t locale)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_wctomb_s(size, s, max, wc);
 }
 
@@ -872,7 +1163,7 @@ EXTERN_C int __cdecl _NtCRT__printf_l(const char* format, _locale_t locale, ...)
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vprintf(format, ap);
     va_end(ap);
@@ -881,7 +1172,7 @@ EXTERN_C int __cdecl _NtCRT__printf_l(const char* format, _locale_t locale, ...)
 
 EXTERN_C int __cdecl _NtCRT__vprintf_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vprintf(format, ap);
 }
 
@@ -890,7 +1181,7 @@ EXTERN_C int __cdecl _NtCRT__printf_p_l(const char* format, _locale_t locale, ..
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vprintf_p(format, ap);
     va_end(ap);
@@ -899,7 +1190,7 @@ EXTERN_C int __cdecl _NtCRT__printf_p_l(const char* format, _locale_t locale, ..
 
 EXTERN_C int __cdecl _NtCRT__vprintf_p_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vprintf_p(format, ap);
 }
 
@@ -908,7 +1199,7 @@ EXTERN_C int __cdecl _NtCRT__printf_s_l(const char* format, _locale_t locale, ..
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vprintf_s(format, ap);
     va_end(ap);
@@ -917,7 +1208,7 @@ EXTERN_C int __cdecl _NtCRT__printf_s_l(const char* format, _locale_t locale, ..
 
 EXTERN_C int __cdecl _NtCRT__vprintf_s_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vprintf_s(format, ap);
 }
 
@@ -926,7 +1217,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_l(FILE* stream, const char* format, _locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfprintf(stream, format, ap);
     va_end(ap);
@@ -935,7 +1226,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_l(FILE* stream, const char* format, _locale
 
 EXTERN_C int __cdecl _NtCRT__vfprintf_l(FILE* stream, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vfprintf(stream, format, ap);
 }
 
@@ -944,7 +1235,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_p_l(FILE* stream, const char* format, _loca
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vfprintf_p(stream, format, ap);
     va_end(ap);
@@ -953,7 +1244,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_p_l(FILE* stream, const char* format, _loca
 
 EXTERN_C int __cdecl _NtCRT__vfprintf_p_l(FILE* stream, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vfprintf_p(stream, format, ap);
 }
 
@@ -962,7 +1253,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_s_l(FILE* stream, const char* format, _loca
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfprintf_s(stream, format, ap);
     va_end(ap);
@@ -971,7 +1262,7 @@ EXTERN_C int __cdecl _NtCRT__fprintf_s_l(FILE* stream, const char* format, _loca
 
 EXTERN_C int __cdecl _NtCRT__vfprintf_s_l(FILE* stream, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vfprintf_s(stream, format, ap);
 }
 
@@ -980,7 +1271,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_l(const char* format, _locale_t locale, ...
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcprintf(format, ap);
     va_end(ap);
@@ -989,7 +1280,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_l(const char* format, _locale_t locale, ...
 
 EXTERN_C int __cdecl _NtCRT__vcprintf_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcprintf(format, ap);
 }
 
@@ -998,7 +1289,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_p_l(const char* format, _locale_t locale, .
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcprintf_p(format, ap);
     va_end(ap);
@@ -1007,7 +1298,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_p_l(const char* format, _locale_t locale, .
 
 EXTERN_C int __cdecl _NtCRT__vcprintf_p_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcprintf_p(format, ap);
 }
 
@@ -1016,7 +1307,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_s_l(const char* format, _locale_t locale, .
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcprintf_s(format, ap);
     va_end(ap);
@@ -1025,7 +1316,7 @@ EXTERN_C int __cdecl _NtCRT__cprintf_s_l(const char* format, _locale_t locale, .
 
 EXTERN_C int __cdecl _NtCRT__vcprintf_s_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcprintf_s(format, ap);
 }
 
@@ -1034,7 +1325,7 @@ EXTERN_C int __cdecl _NtCRT__scprintf_l(const char* format, _locale_t locale, ..
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vscprintf(format, ap);
     va_end(ap);
@@ -1043,7 +1334,7 @@ EXTERN_C int __cdecl _NtCRT__scprintf_l(const char* format, _locale_t locale, ..
 
 EXTERN_C int __cdecl _NtCRT__vscprintf_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vscprintf(format, ap);
 }
 
@@ -1052,7 +1343,7 @@ EXTERN_C int __cdecl _NtCRT__scprintf_p_l(const char* format, _locale_t locale, 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vscprintf_p(format, ap);
     va_end(ap);
@@ -1061,7 +1352,7 @@ EXTERN_C int __cdecl _NtCRT__scprintf_p_l(const char* format, _locale_t locale, 
 
 EXTERN_C int __cdecl _NtCRT__vscprintf_p_l(const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vscprintf_p(format, ap);
 }
 
@@ -1070,7 +1361,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_l(const wchar_t* format, _locale_t locale, 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vwprintf(format, ap);
     va_end(ap);
@@ -1079,7 +1370,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_l(const wchar_t* format, _locale_t locale, 
 
 EXTERN_C int __cdecl _NtCRT__vwprintf_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vwprintf(format, ap);
 }
 
@@ -1088,7 +1379,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_p_l(const wchar_t* format, _locale_t locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vwprintf_p(format, ap);
     va_end(ap);
@@ -1097,7 +1388,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_p_l(const wchar_t* format, _locale_t locale
 
 EXTERN_C int __cdecl _NtCRT__vwprintf_p_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vwprintf_p(format, ap);
 }
 
@@ -1106,7 +1397,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_s_l(const wchar_t* format, _locale_t locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vwprintf_s(format, ap);
     va_end(ap);
@@ -1115,7 +1406,7 @@ EXTERN_C int __cdecl _NtCRT__wprintf_s_l(const wchar_t* format, _locale_t locale
 
 EXTERN_C int __cdecl _NtCRT__vwprintf_s_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vwprintf_s(format, ap);
 }
 
@@ -1124,7 +1415,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_l(FILE* stream, const wchar_t* format, _lo
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfwprintf(stream, format, ap);
     va_end(ap);
@@ -1133,7 +1424,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_l(FILE* stream, const wchar_t* format, _lo
 
 EXTERN_C int __cdecl _NtCRT__vfwprintf_l(FILE* stream, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vfwprintf(stream, format, ap);
 }
 
@@ -1142,7 +1433,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_p_l(FILE* stream, const wchar_t* format, _
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vfwprintf_p(stream, format, ap);
     va_end(ap);
@@ -1151,7 +1442,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_p_l(FILE* stream, const wchar_t* format, _
 
 EXTERN_C int __cdecl _NtCRT__vfwprintf_p_l(FILE* stream, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vfwprintf_p(stream, format, ap);
 }
 
@@ -1160,7 +1451,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_s_l(FILE* stream, const wchar_t* format, _
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfwprintf_s(stream, format, ap);
     va_end(ap);
@@ -1169,7 +1460,7 @@ EXTERN_C int __cdecl _NtCRT__fwprintf_s_l(FILE* stream, const wchar_t* format, _
 
 EXTERN_C int __cdecl _NtCRT__vfwprintf_s_l(FILE* stream, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vfwprintf_s(stream, format, ap);
 }
 
@@ -1178,7 +1469,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_l(const wchar_t* format, _locale_t locale,
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcwprintf(format, ap);
     va_end(ap);
@@ -1187,7 +1478,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_l(const wchar_t* format, _locale_t locale,
 
 EXTERN_C int __cdecl _NtCRT__vcwprintf_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcwprintf(format, ap);
 }
 
@@ -1196,7 +1487,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_p_l(const wchar_t* format, _locale_t local
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcwprintf_p(format, ap);
     va_end(ap);
@@ -1205,7 +1496,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_p_l(const wchar_t* format, _locale_t local
 
 EXTERN_C int __cdecl _NtCRT__vcwprintf_p_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcwprintf_p(format, ap);
 }
 
@@ -1214,7 +1505,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_s_l(const wchar_t* format, _locale_t local
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vcwprintf_s(format, ap);
     va_end(ap);
@@ -1223,7 +1514,7 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_s_l(const wchar_t* format, _locale_t local
 
 EXTERN_C int __cdecl _NtCRT__vcwprintf_s_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vcwprintf_s(format, ap);
 }
 
@@ -1232,7 +1523,7 @@ EXTERN_C int __cdecl _NtCRT__scwprintf_l(const wchar_t* format, _locale_t locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vscwprintf(format, ap);
     va_end(ap);
@@ -1241,7 +1532,7 @@ EXTERN_C int __cdecl _NtCRT__scwprintf_l(const wchar_t* format, _locale_t locale
 
 EXTERN_C int __cdecl _NtCRT__vscwprintf_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vscwprintf(format, ap);
 }
 
@@ -1250,7 +1541,7 @@ EXTERN_C int __cdecl _NtCRT__scwprintf_p_l(const wchar_t* format, _locale_t loca
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vscwprintf_p(format, ap);
     va_end(ap);
@@ -1259,7 +1550,7 @@ EXTERN_C int __cdecl _NtCRT__scwprintf_p_l(const wchar_t* format, _locale_t loca
 
 EXTERN_C int __cdecl _NtCRT__vscwprintf_p_l(const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vscwprintf_p(format, ap);
 }
 
@@ -1268,7 +1559,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_l(char* buffer, const char* format, _locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vsprintf(buffer, format, ap);
     va_end(ap);
@@ -1277,7 +1568,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_l(char* buffer, const char* format, _locale
 
 EXTERN_C int __cdecl _NtCRT__vsprintf_l(char* buffer, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vsprintf(buffer, format, ap);
 }
 
@@ -1286,7 +1577,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_p_l(char* buffer, size_t size, const char* 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsprintf_p(buffer, size, format, ap);
     va_end(ap);
@@ -1295,7 +1586,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_p_l(char* buffer, size_t size, const char* 
 
 EXTERN_C int __cdecl _NtCRT__vsprintf_p_l(char* buffer, size_t size, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsprintf_p(buffer, size, format, ap);
 }
 
@@ -1304,7 +1595,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_s_l(char* buffer, size_t size, const char* 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vsprintf_s(buffer, size, format, ap);
     va_end(ap);
@@ -1313,7 +1604,7 @@ EXTERN_C int __cdecl _NtCRT__sprintf_s_l(char* buffer, size_t size, const char* 
 
 EXTERN_C int __cdecl _NtCRT__vsprintf_s_l(char* buffer, size_t size, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vsprintf_s(buffer, size, format, ap);
 }
 
@@ -1322,7 +1613,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_l(char* buffer, size_t count, const char* 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsnprintf(buffer, count, format, ap);
     va_end(ap);
@@ -1331,7 +1622,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_l(char* buffer, size_t count, const char* 
 
 EXTERN_C int __cdecl _NtCRT__vsnprintf_l(char* buffer, size_t count, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsnprintf(buffer, count, format, ap);
 }
 
@@ -1340,7 +1631,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_c_l(char* buffer, size_t count, const char
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsnprintf_c(buffer, count, format, ap);
     va_end(ap);
@@ -1349,7 +1640,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_c_l(char* buffer, size_t count, const char
 
 EXTERN_C int __cdecl _NtCRT__vsnprintf_c_l(char* buffer, size_t count, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsnprintf_c(buffer, count, format, ap);
 }
 
@@ -1359,7 +1650,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_s_l(
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsnprintf_s(buffer, size, count, format, ap);
     va_end(ap);
@@ -1369,7 +1660,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf_s_l(
 EXTERN_C int __cdecl _NtCRT__vsnprintf_s_l(
     char* buffer, size_t size, size_t count, const char* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsnprintf_s(buffer, size, count, format, ap);
 }
 
@@ -1378,7 +1669,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_l(wchar_t* buffer, size_t count, const wch
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vswprintf_c(buffer, count, format, ap);
     va_end(ap);
@@ -1388,7 +1679,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_l(wchar_t* buffer, size_t count, const wch
 EXTERN_C int __cdecl _NtCRT__vswprintf_l(
     wchar_t* buffer, size_t count, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vswprintf_c(buffer, count, format, ap);
 }
 
@@ -1397,7 +1688,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_c_l(wchar_t* buffer, size_t count, const w
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vswprintf_c(buffer, count, format, ap);
     va_end(ap);
@@ -1407,7 +1698,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_c_l(wchar_t* buffer, size_t count, const w
 EXTERN_C int __cdecl _NtCRT__vswprintf_c_l(
     wchar_t* buffer, size_t count, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vswprintf_c(buffer, count, format, ap);
 }
 
@@ -1416,7 +1707,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_p_l(wchar_t* buffer, size_t size, const wc
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vswprintf_p(buffer, size, format, ap);
     va_end(ap);
@@ -1426,7 +1717,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_p_l(wchar_t* buffer, size_t size, const wc
 EXTERN_C int __cdecl _NtCRT__vswprintf_p_l(
     wchar_t* buffer, size_t size, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vswprintf_p(buffer, size, format, ap);
 }
 
@@ -1435,7 +1726,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_s_l(wchar_t* buffer, size_t size, const wc
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vswprintf_s(buffer, size, format, ap);
     va_end(ap);
@@ -1445,7 +1736,7 @@ EXTERN_C int __cdecl _NtCRT__swprintf_s_l(wchar_t* buffer, size_t size, const wc
 EXTERN_C int __cdecl _NtCRT__vswprintf_s_l(
     wchar_t* buffer, size_t size, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT_vswprintf_s(buffer, size, format, ap);
 }
 
@@ -1454,7 +1745,7 @@ EXTERN_C int __cdecl _NtCRT__snwprintf_l(wchar_t* buffer, size_t count, const wc
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsnwprintf(buffer, count, format, ap);
     va_end(ap);
@@ -1464,7 +1755,7 @@ EXTERN_C int __cdecl _NtCRT__snwprintf_l(wchar_t* buffer, size_t count, const wc
 EXTERN_C int __cdecl _NtCRT__vsnwprintf_l(
     wchar_t* buffer, size_t count, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsnwprintf(buffer, count, format, ap);
 }
 
@@ -1474,7 +1765,7 @@ EXTERN_C int __cdecl _NtCRT__snwprintf_s_l(
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT__vsnwprintf_s(buffer, size, count, format, ap);
     va_end(ap);
@@ -1484,7 +1775,7 @@ EXTERN_C int __cdecl _NtCRT__snwprintf_s_l(
 EXTERN_C int __cdecl _NtCRT__vsnwprintf_s_l(
     wchar_t* buffer, size_t size, size_t count, const wchar_t* format, _locale_t locale, va_list ap)
 {
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     return _NtCRT__vsnwprintf_s(buffer, size, count, format, ap);
 }
 
@@ -1493,7 +1784,7 @@ EXTERN_C int __cdecl _NtCRT__scanf_l(const char* format, _locale_t locale, ...)
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vscanf(format, ap);
     va_end(ap);
@@ -1505,7 +1796,7 @@ EXTERN_C int __cdecl _NtCRT__fscanf_l(FILE* stream, const char* format, _locale_
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfscanf(stream, format, ap);
     va_end(ap);
@@ -1517,7 +1808,7 @@ EXTERN_C int __cdecl _NtCRT__sscanf_l(const char* buffer, const char* format, _l
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vsscanf(buffer, format, ap);
     va_end(ap);
@@ -1529,7 +1820,7 @@ EXTERN_C int __cdecl _NtCRT__cscanf_l(const char* format, _locale_t locale, ...)
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_ConsoleVScanA(format, ap);
     va_end(ap);
@@ -1541,7 +1832,7 @@ EXTERN_C int __cdecl _NtCRT__scanf_s_l(const char* format, _locale_t locale, ...
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vscanf_s(format, ap);
     va_end(ap);
@@ -1553,7 +1844,7 @@ EXTERN_C int __cdecl _NtCRT__fscanf_s_l(FILE* stream, const char* format, _local
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfscanf_s(stream, format, ap);
     va_end(ap);
@@ -1565,7 +1856,7 @@ EXTERN_C int __cdecl _NtCRT__sscanf_s_l(const char* buffer, const char* format, 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vsscanf_s(buffer, format, ap);
     va_end(ap);
@@ -1577,7 +1868,7 @@ EXTERN_C int __cdecl _NtCRT__cscanf_s_l(const char* format, _locale_t locale, ..
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_ConsoleVScanAS(format, ap);
     va_end(ap);
@@ -1589,7 +1880,7 @@ EXTERN_C int __cdecl _NtCRT__wscanf_l(const wchar_t* format, _locale_t locale, .
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vwscanf(format, ap);
     va_end(ap);
@@ -1601,7 +1892,7 @@ EXTERN_C int __cdecl _NtCRT__fwscanf_l(FILE* stream, const wchar_t* format, _loc
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfwscanf(stream, format, ap);
     va_end(ap);
@@ -1613,7 +1904,7 @@ EXTERN_C int __cdecl _NtCRT__swscanf_l(const wchar_t* buffer, const wchar_t* for
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vswscanf(buffer, format, ap);
     va_end(ap);
@@ -1625,7 +1916,7 @@ EXTERN_C int __cdecl _NtCRT__cwscanf_l(const wchar_t* format, _locale_t locale, 
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_ConsoleVScanW(format, ap);
     va_end(ap);
@@ -1637,7 +1928,7 @@ EXTERN_C int __cdecl _NtCRT__wscanf_s_l(const wchar_t* format, _locale_t locale,
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vwscanf_s(format, ap);
     va_end(ap);
@@ -1649,7 +1940,7 @@ EXTERN_C int __cdecl _NtCRT__fwscanf_s_l(FILE* stream, const wchar_t* format, _l
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vfwscanf_s(stream, format, ap);
     va_end(ap);
@@ -1661,7 +1952,7 @@ EXTERN_C int __cdecl _NtCRT__swscanf_s_l(const wchar_t* buffer, const wchar_t* f
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_vswscanf_s(buffer, format, ap);
     va_end(ap);
@@ -1673,7 +1964,7 @@ EXTERN_C int __cdecl _NtCRT__cwscanf_s_l(const wchar_t* format, _locale_t locale
     va_list ap;
     int Ret;
 
-    UNREFERENCED_PARAMETER(locale);
+    NTCRT_LOCALE_SCOPE Scope(locale);
     va_start(ap, locale);
     Ret = _NtCRT_ConsoleVScanWS(format, ap);
     va_end(ap);
@@ -2063,6 +2354,8 @@ NTCRT_IMPORT(_memicmp_l, _NtCRT__memicmp_l);
 NTCRT_IMPORT(_wcsftime_l, _NtCRT__wcsftime_l);
 NTCRT_IMPORT(_mblen_l, _NtCRT__mblen_l);
 NTCRT_IMPORT(_mbtowc_l, _NtCRT__mbtowc_l);
+NTCRT_IMPORT(setlocale, _NtCRT_setlocale);
+NTCRT_IMPORT(_wsetlocale, _NtCRT__wsetlocale);
 NTCRT_IMPORT(_mbstowcs_l, _NtCRT__mbstowcs_l);
 NTCRT_IMPORT(_mbstowcs_s_l, _NtCRT__mbstowcs_s_l);
 NTCRT_IMPORT(_wcstombs_l, _NtCRT__wcstombs_l);

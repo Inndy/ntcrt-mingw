@@ -140,7 +140,7 @@ _NtCRT_SetTzName(
         g_TzNameW[Index][i] = Name[i];
     }
     g_TzNameW[Index][i] = L'\0';
-    if (_NtCRT_WideCharToMultiByte(_NtCRT_CodePage(),
+    if (_NtCRT_WideCharToMultiByte(_NtCRT_FileCodePage(),
                                    0,
                                    g_TzNameW[Index],
                                    -1,

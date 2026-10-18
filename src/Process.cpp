@@ -422,7 +422,7 @@ _NtCRT_WideArray(
     }
     for (size_t i = 0; i < Count; i++)
     {
-        Result[i] = _NtCRT_AnsiToWide(Array[i]);
+        Result[i] = _NtCRT_FileToWide(Array[i]);
         if (Result[i] == NULL)
         {
             _NtCRT_FreeWideArray(Result);
@@ -451,7 +451,7 @@ _NtCRT_SpawnA(
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    WideName = _NtCRT_AnsiToWide(Name);
+    WideName = _NtCRT_FileToWide(Name);
     WideArgv = _NtCRT_WideArray(argv);
     if (envp != NULL)
     {
@@ -791,7 +791,7 @@ EXTERN_C int __cdecl _NtCRT_system(const char* command)
     {
         return _NtCRT__wsystem(NULL);
     }
-    WideCommand = _NtCRT_AnsiToWide(command);
+    WideCommand = _NtCRT_FileToWide(command);
     if (WideCommand == NULL)
     {
         NTCRT_ERRNO = ENOMEM;
@@ -1044,8 +1044,8 @@ EXTERN_C FILE* __cdecl _NtCRT__popen(const char* command, const char* mode)
         NTCRT_ERRNO = EINVAL;
         return NULL;
     }
-    WideCommand = _NtCRT_AnsiToWide(command);
-    WideMode = _NtCRT_AnsiToWide(mode);
+    WideCommand = _NtCRT_FileToWide(command);
+    WideMode = _NtCRT_FileToWide(mode);
     if (WideCommand == NULL || WideMode == NULL)
     {
         NTCRT_ERRNO = ENOMEM;

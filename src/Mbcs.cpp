@@ -936,20 +936,20 @@ static size_t _NtCRT_Mbcs_mbsnlen(const NTCRT_MBC& M, const UCHAR_T* s, size_t m
     return size >= maxsize ? maxsize : n;
 }
 
-/* The multibyte code page of the locale (LC_CTYPE), single-byte in the "C" locale */
+/* The multibyte characters of the locale (LC_CTYPE) instead of the multibyte code page */
 
 static size_t _NtCRT_Mbcs_mbstrlen(const NTCRT_MBC& M, const char* s)
 {
     (void)M;
     NTCRT_VALIDATE(s != NULL, (size_t)-1);
-    return strlen(s);
+    return _NtCRT_MbsLength(s, SIZE_MAX);
 }
 
 static size_t _NtCRT_Mbcs_mbstrnlen(const NTCRT_MBC& M, const char* s, size_t maxsize)
 {
     (void)M;
     NTCRT_VALIDATE(s != NULL && maxsize <= INT_MAX, (size_t)-1);
-    return strnlen(s, maxsize);
+    return _NtCRT_MbsLength(s, maxsize);
 }
 
 static void _NtCRT_Mbcs_mbccpy(const NTCRT_MBC& M, UCHAR_T* dst, const UCHAR_T* src)
@@ -3434,6 +3434,8 @@ EXTERN_C size_t __cdecl _NtCRT__mbstrlen(const char* s)
 
 EXTERN_C size_t __cdecl _NtCRT__mbstrlen_l(const char* s, _locale_t locale)
 {
+    NTCRT_LOCALE_SCOPE Scope(locale);
+
     return _NtCRT_Mbcs_mbstrlen(_NtCRT_Mbc(locale), s);
 }
 
@@ -3444,6 +3446,8 @@ EXTERN_C size_t __cdecl _NtCRT__mbstrnlen(const char* s, size_t maxsize)
 
 EXTERN_C size_t __cdecl _NtCRT__mbstrnlen_l(const char* s, size_t maxsize, _locale_t locale)
 {
+    NTCRT_LOCALE_SCOPE Scope(locale);
+
     return _NtCRT_Mbcs_mbstrnlen(_NtCRT_Mbc(locale), s, maxsize);
 }
 
