@@ -668,7 +668,7 @@ static size_t _NtCRT_Atof64(const TChar* s, double* Value, BOOL* Range)
         }
     }
     memcpy(Value, &Bits, sizeof(Bits));
-    *Range = Overflow || (t.Mantissa != 0 && (Bits & 0x7FF0000000000000ull) == 0);
+    *Range = Overflow || (t.Mantissa != 0 && (Bits & 0x7FFFFFFFFFFFFFFFull) == 0);
     return n;
 }
 
@@ -729,7 +729,7 @@ static size_t _NtCRT_Atof32(const TChar* s, float* Value, BOOL* Range)
         }
     }
     memcpy(Value, &Bits, sizeof(Bits));
-    *Range = Overflow || (t.Mantissa != 0 && (Bits & 0x7F800000u) == 0);
+    *Range = Overflow || (t.Mantissa != 0 && (Bits & 0x7FFFFFFFu) == 0);
     return n;
 }
 
@@ -1123,7 +1123,7 @@ static size_t _NtCRT_AtofLong(const TChar* s, long double* Value, BOOL* Range)
     Bits.SignExp = (USHORT)((t.Neg ? 0x8000 : 0) | BiasedExp);
     *Value = 0;
     memcpy(Value, &Bits, 10);
-    *Range = t.Special == 0 && (Overflow || (t.Mantissa != 0 && BiasedExp == 0));
+    *Range = t.Special == 0 && (Overflow || (t.Mantissa != 0 && BiasedExp == 0 && Mant == 0));
     return n;
 }
 
@@ -1177,7 +1177,7 @@ static size_t _NtCRT_Parse(const wchar_t* s, long double* Value, BOOL* Range)
     return _NtCRT_AtofLong(s, Value, Range);
 }
 
-/* strtod, strtof and strtold: ERANGE on overflow and on underflow to zero or a denormal */
+/* strtod, strtof and strtold: ERANGE on overflow and on underflow to zero, not for a denormal as UCRT */
 template<typename TChar, typename TFloat>
 static
 TFloat

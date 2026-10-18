@@ -35,8 +35,8 @@ EXTERN_C unsigned long long __cdecl _NtCRT_wcstoull(const wchar_t*, wchar_t**, i
 
 /*
  * The conversions of msvcrt without "_l". Returns _OVERFLOW of <math.h> for an infinity and _UNDERFLOW for zero or a
- * denormal, which strtod reports by ERANGE alike. Not in String.cpp: lld loads it for its __wrap_ functions, and the
- * gdtoa of libmingwex with it for __mingw_strtold.
+ * denormal as msvcrt, strtod sets ERANGE for zero only. Not in String.cpp: lld loads it for its __wrap_ functions,
+ * and the gdtoa of libmingwex with it for __mingw_strtold.
  */
 EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE* value, char* str)
 {
@@ -44,7 +44,7 @@ EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE* value, char* str)
 
     NTCRT_ERRNO = 0;
     value->x = _NtCRT_strtod(str, NULL);
-    if (NTCRT_ERRNO == ERANGE)
+    if (NTCRT_ERRNO == ERANGE || fpclassify(value->x) == FP_SUBNORMAL)
     {
         Ret = isinf(value->x) ? _OVERFLOW : _UNDERFLOW;
     }
@@ -59,7 +59,7 @@ EXTERN_C int __cdecl _NtCRT__atoldbl(_LDOUBLE* value, char* str)
 
     NTCRT_ERRNO = 0;
     x = __mingw_strtold(str, NULL);
-    if (NTCRT_ERRNO == ERANGE)
+    if (NTCRT_ERRNO == ERANGE || fpclassify(x) == FP_SUBNORMAL)
     {
         Ret = isinf(x) ? _OVERFLOW : _UNDERFLOW;
     }
@@ -89,8 +89,8 @@ EXTERN_C unsigned int __cdecl _NtCRT___STRINGTOLD(_LDOUBLE* pld, char** end, con
         Ret = NTCRT_SLD_NODIGITS;
     } else if (NTCRT_ERRNO == ERANGE)
     {
-        /* msvcrt: no flag for a denormal */
-        Ret = isinf(x) ? NTCRT_SLD_OVERFLOW : x == 0 ? NTCRT_SLD_UNDERFLOW : 0;
+        /* As msvcrt, no flag for a denormal, for which strtold sets no ERANGE */
+        Ret = isinf(x) ? NTCRT_SLD_OVERFLOW : NTCRT_SLD_UNDERFLOW;
     }
     memcpy(pld->ld, &x, sizeof(pld->ld));
     if (end != NULL)

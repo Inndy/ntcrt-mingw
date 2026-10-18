@@ -181,7 +181,7 @@ func refStrtold(s string, wide bool) (x ld80, end int, errno int, nan bool) {
 		x = ldInf
 	default:
 		x = c.num.long()
-		if x.exp() == 0x7FFF || (c.nonzero && x.exp() == 0) {
+		if x.exp() == 0x7FFF || (c.nonzero && x.exp() == 0 && x.mant == 0) {
 			errno = erange
 		}
 	}
@@ -223,7 +223,7 @@ func wantLongErrno(s string, x ld80) int {
 	if x.isInf() && !hasPrefixFold(strings.TrimLeft(s, "+-"), "inf") {
 		return erange
 	}
-	if x.exp() == 0 && nonzeroDigits(s) {
+	if x.exp() == 0 && x.mant == 0 && nonzeroDigits(s) {
 		return erange
 	}
 	return 0

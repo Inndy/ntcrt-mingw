@@ -642,11 +642,9 @@ static void check_strtod(void)
     {
         r = m.Want;
         we = s + strlen(s);
-        werr = 0;
+        werr = r == 0 ? ERANGE : 0;
     }
     g_Checks++;
-    if (g == r && fabs(g) < DBL_MIN)
-        werr = gerr;
     if (memcmp(&g, &r, 8) != 0 && !(isnan(g) && isnan(r)) || ge - s != we - s || gerr != werr)
         fail("strtod", "\"%s\": %a end %d errno %d, UCRT %a end %d errno %d", show(s, (int)strlen(s)), g,
              (int)(ge - s), gerr, r, (int)(we - s), werr);
@@ -661,11 +659,8 @@ static void check_strtod(void)
     {
         rf = (float)m.Want;
         we = s + strlen(s);
-        werr = 0;
+        werr = rf == 0 ? ERANGE : 0;
     }
-    /* Whether an underflow sets ERANGE is implementation-defined */
-    if (gf == rf && fabsf(gf) < FLT_MIN)
-        werr = gerr;
     if (memcmp(&gf, &rf, 4) != 0 && !(isnan(gf) && isnan(rf)) || ge - s != we - s || gerr != werr)
         fail("strtof", "\"%s\": %a end %d errno %d, UCRT %a end %d errno %d", show(s, (int)strlen(s)), (double)gf,
              (int)(ge - s), gerr, (double)rf, (int)(we - s), werr);
@@ -683,10 +678,8 @@ static void check_strtod(void)
     {
         r = m.Want;
         wwe = w + wcslen(w);
-        werr = 0;
+        werr = r == 0 ? ERANGE : 0;
     }
-    if (g == r && fabs(g) < DBL_MIN)
-        werr = gerr;
     if (memcmp(&g, &r, 8) != 0 && !(isnan(g) && isnan(r)) || gwe - w != wwe - w || gerr != werr)
         fail("wcstod", "\"%s\": %a end %d errno %d, UCRT %a end %d errno %d", show(s, (int)strlen(s)), g,
              (int)(gwe - w), gerr, r, (int)(wwe - w), werr);

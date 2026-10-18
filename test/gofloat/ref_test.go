@@ -144,11 +144,11 @@ func refConvert(s string, bitSize int, space func(byte) bool) (bits uint64, end 
 	bits = refBits(c, bitSize, false)
 	finite := !strings.HasSuffix(c.token, "Inf")
 	if bitSize == 32 {
-		if (finite && bits&0x7FFFFFFF == 0x7F800000) || (c.nonzero && bits&0x7F800000 == 0) {
+		if (finite && bits&0x7FFFFFFF == 0x7F800000) || (c.nonzero && bits&0x7FFFFFFF == 0) {
 			errno = erange
 		}
 	} else {
-		if (finite && bits&0x7FFFFFFFFFFFFFFF == 0x7FF0000000000000) || (c.nonzero && bits&0x7FF0000000000000 == 0) {
+		if (finite && bits&0x7FFFFFFFFFFFFFFF == 0x7FF0000000000000) || (c.nonzero && bits&0x7FFFFFFFFFFFFFFF == 0) {
 			errno = erange
 		}
 	}

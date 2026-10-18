@@ -2,7 +2,7 @@
  * Differential fuzz of strtold and wcstold against gdtoa of libmingwex (gdtoa.dll, see gdtoa.c), which NtCRT replaces:
  * decimal numbers of any length across the range of long double, the decimal and hex forms of random long doubles,
  * hex numbers halfway between two long doubles and a little off. gdtoa returns -0 when it converts nothing from a
- * string with a minus sign, NtCRT 0 (C); NtCRT sets ERANGE for every denormal result.
+ * string with a minus sign, NtCRT 0 (C); NtCRT sets ERANGE for an underflow to zero only, as UCRT.
  */
 
 #include <errno.h>
@@ -203,8 +203,8 @@ static void check(const char* s)
     g_Checks++;
     if (!same(Got, Want) || End != RefEnd)
         fail("strtold", s, Got, Want, (long)(End - s), (long)(RefEnd - s));
-    /* ERANGE for infinity from a finite number, never for a normal number */
-    if (isinf(Got) ? (Err == ERANGE) == (strpbrk(s, "iI") != NULL) : isnormal(Got) && Err != 0)
+    /* ERANGE for infinity from a finite number, never for a nonzero finite number */
+    if (isinf(Got) ? (Err == ERANGE) == (strpbrk(s, "iI") != NULL) : Got != 0 && Err != 0)
         fail("strtold errno", s, Got, (long double)Err, 0, 0);
 
     for (i = 0; s[i] != '\0'; i++)

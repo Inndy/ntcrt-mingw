@@ -69,6 +69,16 @@ static void TestConversions(void)
     CHECK(_atodbl(&Double, (char*)"1e-400") == _UNDERFLOW);
     CHECK(_atodbl(&Double, (char*)"1e400") == _OVERFLOW);
     CHECK(_atoflt_l(&Float, (char*)"1e-40", NULL) == _UNDERFLOW);
+
+    /* ERANGE for an underflow to zero only as UCRT and msvcrt, not for a denormal */
+    errno = 0;
+    CHECK(strtod("1e-310", NULL) != 0 && errno == 0);
+    CHECK(strtof("1e-40", NULL) != 0 && errno == 0);
+    CHECK(wcstod(L"0x1p-1074", NULL) != 0 && errno == 0);
+    CHECK(strtold("0x1p-16445", NULL) != 0 && errno == 0);
+    CHECK(strtod("2e-324", NULL) == 0 && errno == ERANGE);
+    errno = 0;
+    CHECK(strtof("1e-46", NULL) == 0 && errno == ERANGE);
 }
 
 static void TestTime(void)

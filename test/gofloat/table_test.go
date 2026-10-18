@@ -482,13 +482,13 @@ func nonzeroDigits(s string) bool {
 	return strings.ContainsAny(s, "123456789abcdefABCDEF")
 }
 
-// wantErrno is the errno of NtCRT for the number s converted to f: ERANGE on overflow, and on underflow to zero or a
-// denormal from a nonzero input
-func wantErrno(s string, f, minNormal float64) int {
+// wantErrno is the errno of NtCRT for the number s converted to f: ERANGE on overflow, and on underflow to zero from a
+// nonzero input as UCRT, not for a denormal
+func wantErrno(s string, f float64) int {
 	if math.IsInf(f, 0) && !hasPrefixFold(strings.TrimLeft(s, "+-"), "inf") {
 		return erange
 	}
-	if math.Abs(f) < minNormal && nonzeroDigits(s) {
+	if f == 0 && nonzeroDigits(s) {
 		return erange
 	}
 	return 0
@@ -507,7 +507,7 @@ func checkFloat64(t *testing.T, s string, want float64, end int) {
 	t.Helper()
 	nan := math.IsNaN(want)
 	wantBits := math.Float64bits(want)
-	wantErr := wantErrno(s[:end], want, 0x1p-1022)
+	wantErr := wantErrno(s[:end], want)
 	for _, c := range []struct {
 		name string
 		fn   func(string) (uint64, int, int)
@@ -524,7 +524,7 @@ func checkFloat32(t *testing.T, s string, want float32, end int) {
 	t.Helper()
 	nan := math.IsNaN(float64(want))
 	wantBits := math.Float32bits(want)
-	wantErr := wantErrno(s[:end], float64(want), 0x1p-126)
+	wantErr := wantErrno(s[:end], float64(want))
 	bits, n, errno := cStrtof(s)
 	if n != end || errno != wantErr || !sameFloat32(bits, wantBits, nan) {
 		t.Errorf("strtof(%s) = %x end %d errno %d, want %x end %d errno %d", short(s), bits, n, errno, wantBits, end, wantErr)

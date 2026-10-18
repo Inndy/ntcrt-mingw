@@ -330,7 +330,7 @@ NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 hea
 | printf `%05s`, `%05c` | undefined | zeros | zeros | spaces |
 | `strtod` `inf`, `nan`, `0x1p4` | C99 | not read | as C | as C |
 | `strtod` `1d5` | 1, ends at `d` | 100000 (Fortran exponent) | as C | as C |
-| `strtod` of a denormal | `ERANGE` impl. | no `ERANGE` | no `ERANGE` | `ERANGE` |
+| `strtod` of a denormal | `ERANGE` impl. | no `ERANGE` | no `ERANGE` | as UCRT, `ERANGE` for an underflow to zero only |
 | `strtol("0x", 16)` | 0, ends after `0` | converts nothing | converts nothing | as C |
 | `wcstol` of `L"\x661\x662"` | impl. (other locales) | 12 | 12 | converts nothing |
 | scanf `%[c-a]` | impl. | the range `a-c` | the range `a-c` | `c`, `-`, `a` |
@@ -369,7 +369,6 @@ Beside the table above:
 - `_set_output_format` only records its argument, the exponent of printf has two digits or more
 - The scanf functions of msvcrt are the C99 scanf of MinGW-w64 (see "printf and scanf"), `%Lf` stores an 80-bit
   long double
-- `_atodbl` reports a denormal as `_UNDERFLOW` as well as an underflow to zero, msvcrt the latter only
 - The wide integer conversions (`wcstol`, `wcstoul`, `_wtoi`, ...) read ASCII digits only, msvcrt also takes the
   other Unicode decimal digits (U+0660, U+FF10, ...)
 - `_winver`, `_winmajor`, `_winminor` and `_osver` are the version of Windows, msvcrt reports 6.2 to a program
@@ -410,6 +409,7 @@ Where NtCRT differs on purpose (UCRT behavior in parentheses):
 - `ftell` of a `ccs=UTF-8` read stream is exact except inside a surrogate pair (wrong for every position after a
   character above U+FFFF)
 - `_pctype` in "C.UTF-8" has the "C" classes and `_LEADBYTE` (UCRT adds `C1_DEFINED` to every class)
+- `_atodbl` returns `_UNDERFLOW` for a denormal as msvcrt (0)
 
 ## Origin and license
 
