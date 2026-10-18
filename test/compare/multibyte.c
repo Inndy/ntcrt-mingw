@@ -50,9 +50,10 @@ static void conv(void)
         printf(" mb%d", i);
         hexs(s, len);
         errno = 0;
-        printf(" mblen=%d/%d", mblen(s, len + 1), errno);
+        int r = mblen(s, len + 1);
+        printf(" mblen=%d/%d", r, errno);
         errno = 0;
-        int r = mbtowc(&w, s, len + 1);
+        r = mbtowc(&w, s, len + 1);
         printf(" mbtowc=%d/%d w=%04x", r, errno, w);
         errno = 0;
         r = mbtowc(&w, s, 1);
@@ -84,7 +85,8 @@ static void conv(void)
         if (m != (size_t)-1)
             hexw(ws, (int)m);
         errno = 0;
-        printf(" mbstowcs0=%d/%d", (int)mbstowcs(NULL, s, 0), errno);
+        m = mbstowcs(NULL, s, 0);
+        printf(" mbstowcs0=%d/%d", (int)m, errno);
         char16_t c16 = 0xCCCC;
         memset(&st, 0, sizeof(st));
         errno = 0;
@@ -155,7 +157,8 @@ static void conv(void)
             printf(" wcstombs%d=%d/%d", i, (int)q, errno);
             hexs(b, q == (size_t)-1 ? 0 : (int)q);
             errno = 0;
-            printf(" len=%d/%d", (int)wcstombs(NULL, ws[i], 0), errno);
+            q = wcstombs(NULL, ws[i], 0);
+            printf(" len=%d/%d", (int)q, errno);
             errno = 0;
             q = wcstombs(b, ws[i], 3);
             printf(" n3=%d/%d", (int)q, errno);
@@ -182,7 +185,8 @@ static void conv(void)
             q = mbsrtowcs(w, &p, 2, &st);
             printf(" n2=%d/%d p=%d", (int)q, errno, p ? (int)(p - ms[i]) : -1);
             errno = 0;
-            printf(" mbrlen=%d/%d\n", (int)mbrlen(ms[i] + 1, 3, &st), errno);
+            q = mbrlen(ms[i] + 1, 3, &st);
+            printf(" mbrlen=%d/%d\n", (int)q, errno);
         }
     }
 }

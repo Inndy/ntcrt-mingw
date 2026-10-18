@@ -6,7 +6,9 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #pragma GCC diagnostic ignored "-Warray-bounds"
+#ifndef __clang__
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #include "../polyfill/PolyFill.inl"
 #pragma GCC diagnostic pop
 

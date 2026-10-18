@@ -63,7 +63,6 @@ static unsigned short g_CtypeUtf8[257];
 static volatile LONG g_LocaleScopes;
 
 extern "C" int _NtCRT_mb_cur_max;
-extern "C" unsigned short _NtCRT_ctype[257];
 
 EXTERN_C UINT _NtCRT_CurrentCodePage(void)
 {
@@ -263,7 +262,7 @@ _NtCRT_CtypeUtf8(void)
         g_CtypeUtf8[0] = 0;
         for (int i = 0; i < 256; i++)
         {
-            g_CtypeUtf8[i + 1] = i < 0x80 ? _NtCRT_ctype[i + 1] : (i >= 0xC2 && i <= 0xF4 ? _LEADBYTE : 0);
+            g_CtypeUtf8[i + 1] = i < 0x80 ? _NtCRT_ctype.Table[i + 1] : (i >= 0xC2 && i <= 0xF4 ? _LEADBYTE : 0);
         }
     }
     return g_CtypeUtf8 + 1;
@@ -286,7 +285,7 @@ EXTERN_C char* __cdecl _NtCRT_setlocale(int category, const char* locale)
         }
         _NtCRT_lc_codepage = g_Utf8[LC_CTYPE] ? CP_UTF8 : 0;
         _NtCRT_mb_cur_max = g_Utf8[LC_CTYPE] ? 4 : 1;
-        _NtCRT_pctype = g_Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype + 1;
+        _NtCRT_pctype = g_Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype.Table + 1;
     }
     Name = _NtCRT_LocaleName(category, g_Utf8, g_AllName);
 _Exit:

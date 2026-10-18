@@ -911,7 +911,6 @@ EXTERN_C int __cdecl _NtCRT__initterm_e(_PIFV* pfbegin, _PIFV* pfend)
 static _onexit_t* g_OnExitTable = NULL;
 static size_t g_OnExitCount = 0;
 static size_t g_OnExitCapacity = 0;
-static volatile LONG g_Exiting = 0;
 
 EXTERN_C _onexit_t __cdecl _NtCRT__onexit(_onexit_t func)
 {
@@ -1089,7 +1088,7 @@ EXTERN_C void __cdecl _NtCRT_amsg_exit(int rterrnum)
 
     _NtCRT_AppendNumber(Buffer, sizeof(Buffer), (unsigned int)rterrnum, 2);
     _NtCRT_AppendText(Buffer, sizeof(Buffer), "\r\n");
-    _NtCRT_WriteStderr(Buffer);
+    _NtCRT_WriteStderrRaw(Buffer);
     _NtCRT__exit(255);
 }
 
@@ -1299,7 +1298,7 @@ EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT_abort(void)
 {
     if (g_SignalHandlers[SIGABRT] == SIG_DFL || g_SignalHandlers[SIGABRT] == SIG_IGN)
     {
-        _NtCRT_WriteStderr("\r\nThis application has requested the Runtime to terminate it in an unusual way.\r\n");
+        _NtCRT_WriteStderrRaw("\r\nThis application has requested the Runtime to terminate it in an unusual way.\r\n");
     }
     _NtCRT_raise(SIGABRT);
     _NtCRT__exit(3);

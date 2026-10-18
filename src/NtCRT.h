@@ -31,6 +31,7 @@
     __asm__(".globl " #Name "\n\t" \
             ".set " #Name ", " #Impl "\n\t" \
             ".section .rdata$__imp_" #Name ",\"dr\"\n\t" \
+            ".linkonce discard\n\t" \
             ".globl __imp_" #Name "\n\t" \
             ".p2align 3\n" \
             "__imp_" #Name ":\n\t" \
@@ -98,6 +99,13 @@ extern "C" char* _NtCRT_LocaleName(int Category, const BOOL* Utf8, char* Buffer)
 extern "C" unsigned short* _NtCRT_CtypeUtf8(void);
 extern "C" void _NtCRT_GetLocaleUtf8(BOOL* Utf8);
 
+/* _ctype, the character classes of "C" (Ctype.cpp) */
+struct NTCRT_CTYPE_TABLE
+{
+    unsigned short Table[257];
+};
+extern "C" NTCRT_CTYPE_TABLE _NtCRT_ctype;
+
 /* Run the body of a "_l" function by the LC_CTYPE code page of the locale, the current locale if NULL */
 class NTCRT_LOCALE_SCOPE
 {
@@ -161,6 +169,7 @@ extern "C" long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origi
 extern "C" int __cdecl _NtCRT_open_handle(HANDLE Handle, int flags);
 extern "C" int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, int pmode);
 extern "C" intptr_t __cdecl _NtCRT_get_osfhandle(int fd);
+extern "C" void __cdecl _NtCRT_WriteStderrRaw(const char* Text);
 extern "C" int __cdecl _NtCRT_isatty(int fd);
 /* Results of _NtCRT_fd_textmode */
 #define NTCRT_FD_BINARY 0

@@ -1452,12 +1452,15 @@ EXTERN_C int __cdecl _NtCRT_chsize(int fd, long size)
 
 /*
  * ftruncate64 of libmingwex (std::filesystem::resize_file, truncate) checks the free space of the volume by
- * kernel32 functions NtCRT does not have, the specs wrap it to this
+ * kernel32 functions NtCRT does not have. The specs wrap it to this, lld takes "ftruncate64" of libntcrt, which
+ * precedes libmingwex in ntcrt.cfg, before it applies --wrap.
  */
 EXTERN_C int __cdecl __wrap_ftruncate64(int fd, long long length)
 {
     return _NtCRT_chsize_s(fd, length) == 0 ? 0 : -1;
 }
+
+EXTERN_C int __cdecl ftruncate64(int fd, long long length) __attribute__((alias("__wrap_ftruncate64")));
 
 EXTERN_C int __cdecl _NtCRT_eof(int fd)
 {
@@ -1596,6 +1599,20 @@ EXTERN_C int __cdecl _NtCRT_isatty(int fd)
         return 0;
     }
     return (Entry->Flags & FDEV) ? FDEV : 0;
+}
+
+/*
+ * ASCII text of the runtime (_amsg_exit, abort, _matherr) to the handle of fd 2 as it is, like _NMSG_WRITE of
+ * msvcrt. _write would link the console and text mode conversions into every program.
+ */
+EXTERN_C void __cdecl _NtCRT_WriteStderrRaw(const char* Text)
+{
+    PNTCRT_FD Entry = _NtCRT_FdEntry(2);
+
+    if (Entry != NULL && (Entry->Flags & FOPEN))
+    {
+        _NtCRT_RawWrite(Entry->Handle, Text, (ULONG)strlen(Text));
+    }
 }
 
 EXTERN_C intptr_t __cdecl _NtCRT_get_osfhandle(int fd)

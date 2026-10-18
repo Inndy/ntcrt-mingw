@@ -9,7 +9,6 @@
 #include <string.h>
 
 EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void);
-extern "C" unsigned short _NtCRT_ctype[257];
 
 #pragma region Locale objects
 
@@ -57,7 +56,7 @@ _NtCRT_NewLocale(
     Locale->LocInfo.lc_clike = 1;
     Locale->LocInfo.mb_cur_max = Utf8[LC_CTYPE] ? 4 : 1;
     Locale->LocInfo.lconv = _NtCRT_localeconv();
-    Locale->LocInfo.pctype = Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype + 1;
+    Locale->LocInfo.pctype = Utf8[LC_CTYPE] ? _NtCRT_CtypeUtf8() : _NtCRT_ctype.Table + 1;
     Locale->LocInfo.pclmap = g_LowerMap;
     Locale->LocInfo.pcumap = g_UpperMap;
     _NtCRT_GetMbcInfo(&Locale->MbcInfo, CurrentMbcs);

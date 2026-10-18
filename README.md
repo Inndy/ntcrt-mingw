@@ -1,6 +1,6 @@
 # ntcrt-mingw
 
-A C runtime for MinGW-w64 (x64, GCC) that imports `ntdll.dll` only. C and C++ programs link the msvcrt
+A C runtime for MinGW-w64 (x64, GCC or clang) that imports `ntdll.dll` only. C and C++ programs link the msvcrt
 functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
@@ -9,6 +9,9 @@ make test       # build and run test/upstream, the fuzz, console, libstdc++ and 
 make size       # the size of the programs of test/size
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
+
+make LLVM=1     # the same with clang into build-llvm (LLVM=<dir>/ for clang in <dir>), make LLVM=1 test, ...
+clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 ```
 
 ## Layout
@@ -35,18 +38,43 @@ split so that the startup code links few of them: the `_l` functions are beside 
 and stdio is flushed at exit by a pointer that stdio sets. `libntcrt_start.a` replaces the pseudo relocator and
 `_matherr` of libmingw32, which report errors by `fprintf` and would link the printf family into every program.
 
-Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the split, and now:
+lld (`make LLVM=1`) drops the unused functions: clang makes the `.pdata` and `.xdata` of a function associative to
+it, so a program links the functions it reaches. The libraries of GCC (libmingwex, libstdc++) are still linked by
+object. What lld keeps is what the startup code reaches and the sections that are not COMDAT in the objects it
+loads, so:
 
-| Program | Before UTF-8 | Before split | Now | msvcrt.dll |
-|---|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 114688 | 14336 |
-| `puts` | 248832 | 445440 | 144384 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 210432 | 41984 |
-| `wprintf` | 248832 | 445440 | 214528 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1219584 | 1035776 |
+- the export stubs (`__imp_Name` and the jump `Name`) are COMDAT, lld loads objects for `--wrap` too
+- no `.CRT$XI*` initializer for data that can be constant, `_ctype` is initialized data
+- the functions the startup code refers to in every program (`_amsg_exit`, `abort`, `_matherr`) write their ASCII
+  messages to the handle of fd 2 as msvcrt does, `_write` would link the console and text mode conversions
 
-The msvcrt.dll column is the default MinGW-w64 runtime, which imports it. A program with printf links the C99
-printf of libmingwex (`pformat`, `gdtoa`).
+Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the split, now, and with lld:
+
+| Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
+|---|---:|---:|---:|---:|---:|
+| `return 0` | 248832 | 445440 | 114176 | 29696 | 14336 |
+| `puts` | 248832 | 445440 | 143872 | 40448 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 209408 | 89600 | 41984 |
+| `wprintf` | 248832 | 445440 | 213504 | 91648 | 41472 |
+| `std::cout` | 1257472 | 1420800 | 1218560 | 760320 | 1035776 |
+
+The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links the
+C99 printf of libmingwex (`pformat`, `gdtoa`).
+
+## LLVM
+
+`make LLVM=1` builds the runtime with clang and writes `build-llvm/ntcrt.cfg`, a clang configuration file that
+does what the specs do and links by lld. clang uses the headers and libraries of the GCC found by `g++`
+(libstdc++, libgcc and the msvcrt flavor of MinGW-w64), the msys2 CLANG64 toolchain works with
+`LLVM=<msys2>/clang64/bin/`. Its own MinGW-w64 is built for UCRT and is not used.
+
+- lld drops the unused functions of the runtime (`--gc-sections`), see "Size".
+- lld resolves a symbol to the first library that defines it, wherever the reference is. libntcrt precedes
+  libmingwex, so `btowc`, `wctob` and `ftruncate64` are those of NtCRT without `--wrap`. The math functions that
+  both libmingwex and ntdll define (`sin`, `cos`, `log`, `pow`, `sqrt`, ...) are those of libmingwex for NtCRT too:
+  `_j0`, `_y0` and the other Bessel functions may differ from the GCC build in the last bits.
+- The `__cpuidex` of MinGW-w64 headers before 12 clashes with `<cpuid.h>` of clang and is left out
+  (`-D__INTRINSIC_DEFINED___cpuidex`).
 
 ## Behavior
 

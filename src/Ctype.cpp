@@ -5,14 +5,8 @@
 #include "NtCRT.h"
 
 #include <ctype.h>
-#include <string.h>
 
 /* Character class tables of the "C" locale */
-
-struct NTCRT_CTYPE_TABLE
-{
-    unsigned short Table[257];
-};
 
 static
 constexpr
@@ -95,33 +89,18 @@ _NtCRT_MakeCtype(
 static constexpr NTCRT_CTYPE_TABLE g_Ctype = _NtCRT_MakeCtype(false);
 static constexpr NTCRT_CTYPE_TABLE g_Wctype = _NtCRT_MakeCtype(true);
 
+/* _ctype is writable data in msvcrt */
 extern "C"
 {
-    unsigned short _NtCRT_ctype[257];
-    unsigned short* _NtCRT_pctype = _NtCRT_ctype + 1;
+    NTCRT_CTYPE_TABLE _NtCRT_ctype = g_Ctype;
+    unsigned short* _NtCRT_pctype = _NtCRT_ctype.Table + 1;
     extern const NTCRT_CTYPE_TABLE _NtCRT_wctype;
     const NTCRT_CTYPE_TABLE _NtCRT_wctype = g_Wctype;
     unsigned short* _NtCRT_pwctype = (unsigned short*)_NtCRT_wctype.Table + 1;
 }
 
-/* _ctype is writable data in msvcrt, copy the constant table at startup */
-static
-void
-__cdecl
-_NtCRT_InitCtype(void)
-{
-    memcpy(_NtCRT_ctype, g_Ctype.Table, sizeof(_NtCRT_ctype));
-}
-
-extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_InitCtypeEntry)(void) =
-    _NtCRT_InitCtype;
-
 EXTERN_C unsigned short* __cdecl _NtCRT___pctype_func(void)
 {
-    if (_NtCRT_ctype['A' + 1] == 0)
-    {
-        _NtCRT_InitCtype();
-    }
     return _NtCRT_pctype;
 }
 
@@ -132,7 +111,6 @@ EXTERN_C unsigned short* __cdecl _NtCRT___pwctype_func(void)
 
 EXTERN_C unsigned short** __cdecl _NtCRT___p__pctype(void)
 {
-    _NtCRT___pctype_func();
     return &_NtCRT_pctype;
 }
 

@@ -1,9 +1,12 @@
 #!/bin/sh
 # Build the tests of test/compare with NtCRT and with UCRT (cl of Visual Studio), run them and show the differences.
-# Run from the repository root after make, a test name selects the tests to run.
+# Run from the repository root after make, a test name selects the tests to run. make compare sets BUILD and
+# NTCRT_CC for the LLVM build.
 set -e
 
-OUT=build/compare
+BUILD=${BUILD:-build}
+NTCRT_CC=${NTCRT_CC:-gcc -specs=$BUILD/ntcrt.specs}
+OUT=$BUILD/compare
 VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
 
 if [ -z "$VCVARS" ] && [ -x "$VSWHERE" ]; then
@@ -28,7 +31,7 @@ for t in $TESTS; do
         NTRES="$OUT/nt/$t.res.o"
         CLRES="/link /MANIFEST:EMBED /MANIFESTINPUT:..\\..\\..\\test\\compare\\$t.manifest"
     fi
-    gcc -std=c17 -O1 -w -static -specs=build/ntcrt.specs -o "$OUT/nt/$t.exe" "test/compare/$t.c" $NTRES
+    $NTCRT_CC -std=c17 -O1 -w -static -o "$OUT/nt/$t.exe" "test/compare/$t.c" $NTRES
     (cd "$OUT/ucrt" && cmd //c "..\\cl.bat ..\\..\\..\\test\\compare\\$t.c /Fe:$t.exe $CLRES" > /dev/null)
     for crt in nt ucrt; do
         (cd "$OUT/$crt" && "./$t.exe" "$(printf '\344\270\255\360\237\230\200')" > "$t.txt" 2>&1 || echo "exit=$?" >> "$t.txt")

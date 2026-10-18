@@ -1,24 +1,15 @@
 /*
  * The default _matherr of mingw-w64 (merr.c), installed by the startup code when the program sets
  * _MINGW_INSTALL_DEBUG_MATHERR to 1. libmingw32 prints the arguments by fprintf, which links the printf family
- * into every program; this one prints the error and the function name without the numbers.
+ * into every program; this one prints the error and the function name without the numbers. The startup code
+ * refers to it in every program, it writes to the handle of fd 2 without _write.
  *
  * A program defines its own _matherr to replace it, libntcrt_start.a precedes libmingw32.a in the link.
  */
 
 #include "../NtCRT.h"
 
-#include <io.h>
 #include <math.h>
-#include <string.h>
-
-static
-void
-_NtCRT_MathErrWrite(
-    _In_z_ const char* Text)
-{
-    _write(2, Text, (unsigned int)strlen(Text));
-}
 
 EXTERN_C int __cdecl _matherr(struct _exception* pexcept)
 {
@@ -48,10 +39,10 @@ EXTERN_C int __cdecl _matherr(struct _exception* pexcept)
         Type = "Unknown error";
         break;
     }
-    _NtCRT_MathErrWrite("_matherr(): ");
-    _NtCRT_MathErrWrite(Type);
-    _NtCRT_MathErrWrite(" in ");
-    _NtCRT_MathErrWrite(pexcept->name != NULL ? pexcept->name : "?");
-    _NtCRT_MathErrWrite("()\n");
+    _NtCRT_WriteStderrRaw("_matherr(): ");
+    _NtCRT_WriteStderrRaw(Type);
+    _NtCRT_WriteStderrRaw(" in ");
+    _NtCRT_WriteStderrRaw(pexcept->name != NULL ? pexcept->name : "?");
+    _NtCRT_WriteStderrRaw("()\r\n");
     return 0;
 }

@@ -32,7 +32,8 @@ static void run(void)
     }
     struct _stat st;
     errno = 0;
-    printf(" stat=%d/%d", _stat(f, &st), errno);
+    r = _stat(f, &st);
+    printf(" stat=%d/%d", r, errno);
     wchar_t wf[] = L"u5_\x4e2d\xd83d\xde00/\xe9.txt";
     printf(" wstat=%d", _wstat(wf, &st));
     errno = 0;
@@ -40,7 +41,8 @@ static void run(void)
     char cwd[260], buf[260];
     _getcwd(cwd, sizeof(cwd));
     errno = 0;
-    printf(" chdir=%d/%d", _chdir(d), errno);
+    r = _chdir(d);
+    printf(" chdir=%d/%d", r, errno);
     char* g = _getcwd(buf, sizeof(buf));
     printf(" getcwd=");
     if (g && strcmp(buf, cwd) == 0)
@@ -71,11 +73,14 @@ static void run(void)
     char nf[64];
     sprintf(nf, "%s/\xf0\x9f\x98\x81.txt", d);
     errno = 0;
-    printf(" rename=%d/%d", rename(f, nf), errno);
+    r = rename(f, nf);
+    printf(" rename=%d/%d", r, errno);
     errno = 0;
-    printf(" remove=%d/%d", remove(nf), errno);
+    r = remove(nf);
+    printf(" remove=%d/%d", r, errno);
     errno = 0;
-    printf(" rmdir=%d/%d", _rmdir(d), errno);
+    r = _rmdir(d);
+    printf(" rmdir=%d/%d", r, errno);
     char* t = _tempnam(NULL, "\xc3\xa9");
     printf(" tempnam=");
     if (t)

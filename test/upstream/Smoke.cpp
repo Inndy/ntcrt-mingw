@@ -6,7 +6,7 @@ extern "C"
 BOOL
 TestSmoke(VOID)
 {
-    void* p;
+    char* p;
 
     p = new char[100];
     DbgPrint("%p\n", p);

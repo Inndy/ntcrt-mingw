@@ -1,8 +1,11 @@
 # NtCRT for MinGW-w64 (x64): link C/C++ programs that import ntdll.dll only
 #
 #   make            build build/libntcrt.a, the support libraries and build/ntcrt.specs
-#   make test       build and run test/upstream, test/fuzz, test/console and test/cxx
+#   make test       build and run the tests
 #   g++ -static -specs=build/ntcrt.specs ...
+#
+#   make LLVM=1     build with clang into build-llvm, programs link by lld (LLVM=<dir>/ for clang in <dir>)
+#   clang++ --config=build-llvm/ntcrt.cfg -static ...
 
 CXX      ?= g++
 ifeq ($(origin CC),default)
@@ -11,7 +14,11 @@ endif
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra
 CXXFLAGS += -Iinclude -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti
 
-BUILD    := build
+ifdef LLVM
+BUILD    ?= build-llvm
+else
+BUILD    ?= build
+endif
 SRCS     := $(wildcard src/*.cpp)
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 members, linked before it
@@ -20,19 +27,41 @@ START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
 HEADERS  := src/NtCRT.h $(wildcard include/KNSoft/NDK/*) $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
 
+# The compilers of the runtime and of the programs on it
+ifdef LLVM
+LLVM_PREFIX := $(filter %/,$(LLVM))
+# clang uses the headers and libraries of GCC (libstdc++, the msvcrt flavor of MinGW-w64). The __cpuidex of
+# MinGW-w64 headers before 12 clashes with the one of <cpuid.h> of clang and is left out, and their <intrin.h>
+# includes <mm3dnow.h>, which clang deprecates.
+GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
+LLVM_FLAGS := --target=x86_64-w64-mingw32 --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
+              -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS
+LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
+LIB_AS   := $(LLVM_PREFIX)clang --target=x86_64-w64-mingw32
+NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt.cfg
+NTCRT_CXX := $(LLVM_PREFIX)clang++ --config=$(BUILD)/ntcrt.cfg
+DRIVER   := $(BUILD)/ntcrt.cfg
+else
+LIB_CXX  := $(CXX)
+LIB_AS   := $(CXX)
+NTCRT_CC := $(CC) -specs=$(BUILD)/ntcrt.specs
+NTCRT_CXX := $(CXX) -specs=$(BUILD)/ntcrt.specs
+DRIVER   := $(BUILD)/ntcrt.specs
+endif
+
 LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a
 
-all: $(LIBS) $(BUILD)/ntcrt.specs
+all: $(LIBS) $(DRIVER)
 
 $(BUILD):
 	mkdir -p $@
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD)/start/%.o: src/start/%.cpp $(HEADERS) | $(BUILD)
 	mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD)/libntcrt_start.a: $(START_OBJS)
 	rm -f $@
@@ -44,7 +73,7 @@ $(BUILD)/exports.stamp: $(SRCS) src/Exports.awk | $(BUILD)
 	mkdir -p $(BUILD)/exports
 	sed -n -E 's/^NTCRT_IMPORT(_ONLY)?\(([A-Za-z0-9_]+), *([A-Za-z0-9_]+)\);.*/\1 \2 \3/p' $(SRCS) | \
 	    awk -v dir=$(BUILD)/exports -f src/Exports.awk
-	cd $(BUILD)/exports && ls *.s | xargs -P 8 -n 64 $(CXX) -c
+	cd $(BUILD)/exports && ls *.s | xargs -P 8 -n 64 $(LIB_AS) -c
 	touch $@
 
 $(BUILD)/libntcrt.a: $(OBJS) $(BUILD)/exports.stamp
@@ -87,10 +116,24 @@ $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lpthread -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
+# The same for clang, the options prefixed with $ are for linking and follow the inputs. clang splits the file
+# like a shell (GNU style), the path of the libraries is quoted for spaces. lld drops the unused functions of
+# objects built with -ffunction-sections by clang, which makes their .pdata associative. lld resolves a symbol to
+# the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for btowc, wctob and
+# ftruncate64, the math functions both libmingwex and ntdll define are of libmingwex.
+comma := ,
+NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS) --gc-sections) \
+              $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex pthread msvcrt_static ntdll_crt ntdll)
+
+$(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
+	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs > $@
+	printf '$$"%s"\n' "-Wl,-L$(CURDIR)/$(BUILD)" >> $@
+	printf '$$%s\n' $(NTCRT_LINK) >> $@
+
 TEST_SRCS := $(wildcard test/upstream/*.cpp)
 
-$(BUILD)/Test.exe: $(TEST_SRCS) $(LIBS) $(BUILD)/ntcrt.specs
-	$(CXX) -std=c++23 -O2 -Iinclude -static -specs=$(BUILD)/ntcrt.specs -o $@ $(TEST_SRCS)
+$(BUILD)/Test.exe: $(TEST_SRCS) $(LIBS) $(DRIVER)
+	$(NTCRT_CXX) -std=c++23 -O2 -Iinclude -static -o $@ $(TEST_SRCS)
 
 test-upstream: $(BUILD)/Test.exe
 	objdump -p $< | grep 'DLL Name'
@@ -99,17 +142,17 @@ test-upstream: $(BUILD)/Test.exe
 # Differential fuzz of the UTF-8 codec against kernel32, FUZZ_ITERATIONS=n for a longer run
 FUZZ_ITERATIONS ?= 200000
 
-$(BUILD)/fuzz/utf8.exe: test/fuzz/utf8.c $(LIBS) $(BUILD)/ntcrt.specs
+$(BUILD)/fuzz/utf8.exe: test/fuzz/utf8.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
-	$(CC) -std=c17 -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $<
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 
 test-fuzz: $(BUILD)/fuzz/utf8.exe
 	./$< $(FUZZ_ITERATIONS)
 
 # Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
-$(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(BUILD)/ntcrt.specs
+$(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
-	$(CC) -std=c17 -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $< -lkernel32
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< -lkernel32
 
 $(BUILD)/console/conpty.exe: test/console/conpty.c
 	mkdir -p $(@D)
@@ -119,9 +162,9 @@ test-console: $(BUILD)/console/conpty.exe $(BUILD)/console/child.exe
 	./$< $(BUILD)/console/child.exe
 
 # libstdc++ on NtCRT
-$(BUILD)/cxx/stdcxx.exe: test/cxx/stdcxx.cpp $(LIBS) $(BUILD)/ntcrt.specs
+$(BUILD)/cxx/stdcxx.exe: test/cxx/stdcxx.cpp $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
-	$(CXX) -std=c++23 -O2 -Wno-deprecated-declarations -static -specs=$(BUILD)/ntcrt.specs -o $@ $<
+	$(NTCRT_CXX) -std=c++23 -O2 -Wno-deprecated-declarations -static -o $@ $<
 
 test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
@@ -131,13 +174,13 @@ $(BUILD)/start/data.dll: test/start/data.c
 	mkdir -p $(@D)
 	$(CC) -O2 -shared -o $@ $< -Wl,--out-implib,$(BUILD)/start/libdata.a
 
-$(BUILD)/start/reloc.exe: test/start/reloc.c $(BUILD)/start/data.dll $(LIBS) $(BUILD)/ntcrt.specs
-	$(CC) -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $< -L$(BUILD)/start -ldata
+$(BUILD)/start/reloc.exe: test/start/reloc.c $(BUILD)/start/data.dll $(LIBS) $(DRIVER)
+	$(NTCRT_CC) -O2 -static -o $@ $< -L$(BUILD)/start -ldata
 
-$(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe: test/start/matherr.c $(LIBS) $(BUILD)/ntcrt.specs
+$(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe: test/start/matherr.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
-	$(CC) -O2 -w -static -specs=$(BUILD)/ntcrt.specs -o $(BUILD)/start/matherr.exe $<
-	$(CC) -O2 -w -static -specs=$(BUILD)/ntcrt.specs -DCUSTOM -o $(BUILD)/start/matherr_custom.exe $<
+	$(NTCRT_CC) -O2 -w -static -o $(BUILD)/start/matherr.exe $<
+	$(NTCRT_CC) -O2 -w -static -DCUSTOM -o $(BUILD)/start/matherr_custom.exe $<
 
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe
 	cd $(BUILD)/start && ./reloc.exe
@@ -151,17 +194,17 @@ test: test-upstream test-fuzz test-console test-cxx test-start
 # depends on which objects of libntcrt.a a program links.
 SIZE_SRCS := $(wildcard test/size/*.c test/size/*.cpp)
 
-size: $(LIBS) $(BUILD)/ntcrt.specs
+size: $(LIBS) $(DRIVER)
 	@mkdir -p $(BUILD)/size
 	@for f in $(SIZE_SRCS); do \
-	    n=$$(basename $${f%.*}); c=$(CC); case $$f in *.cpp) c=$(CXX);; esac; \
-	    $$c -O2 -s -static -specs=$(BUILD)/ntcrt.specs -o $(BUILD)/size/$$n.exe $$f && \
+	    n=$$(basename $${f%.*}); c="$(NTCRT_CC)"; case $$f in *.cpp) c="$(NTCRT_CXX)";; esac; \
+	    $$c -O2 -s -static -o $(BUILD)/size/$$n.exe $$f && \
 	    printf '%-10s %8d\n' $$n $$(wc -c < $(BUILD)/size/$$n.exe); \
 	done
 
 # Compare with UCRT, needs cl of Visual Studio
-compare: $(LIBS) $(BUILD)/ntcrt.specs
-	sh test/compare/run.sh
+compare: $(LIBS) $(DRIVER)
+	BUILD=$(BUILD) NTCRT_CC="$(NTCRT_CC)" sh test/compare/run.sh
 
 clean:
 	rm -rf $(BUILD)
