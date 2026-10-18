@@ -43,6 +43,9 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/wine/` the msvcrt and ucrtbase tests of Wine 11.0 on NtCRT (`make test-wine`, downloads them into the build
   directory, LGPL): `GetProcAddress` of msvcrt.dll finds the functions of the program, `skip.txt` leaves out the
   tests of UCRT-only APIs
+- `test/pthread/` the tests of pthreads4w 3.0.0 (Apache-2.0) and the thread tests of musl libc-test (MIT) on NtCRT
+  (`make test-pthread`, downloads them into the build directory, see "Threads"), `skip.txt` leaves out what NtCRT
+  does not support and what is of pthreads4w or Linux
 - `IDEAS.md` proposals not started yet
 
 ## Size
@@ -330,10 +333,25 @@ code.
 Not supported: process-shared objects (`PTHREAD_PROCESS_SHARED` is `ENOTSUP`, `sem_init` with `pshared` `ENOSYS`; the
 waits are of the process, spin locks work anyway), named semaphores (`sem_open`, `sem_close` and `sem_unlink` fail
 with `ENOSYS`), signals (`pthread_kill` of a signal other than 0 is `EINVAL`, `pthread_sigmask` and `pthread_atfork`
-are macros of the header), asynchronous cancellation, and the internals of winpthreads (`thread_print`, `cond_print`,
-`rwl_print`, `pthread_create_wrapper`, `_pthread_invoke_cancel`, `_pthread_cleanup_dest`, `__pthread_shallcancel`,
-`_pthread_key_dest`, ...). `pthread_mutexattr_setprotocol`, `pthread_mutexattr_setprioceiling`,
-`pthread_attr_setscope` and `pthread_setconcurrency` keep their value, which has no effect.
+are macros of the header), asynchronous cancellation, robust mutexes (the headers of winpthreads have none), and the
+internals of winpthreads (`thread_print`, `cond_print`, `rwl_print`, `pthread_create_wrapper`,
+`_pthread_invoke_cancel`, `_pthread_cleanup_dest`, `__pthread_shallcancel`, `_pthread_key_dest`, ...).
+`pthread_mutexattr_setprotocol`, `pthread_mutexattr_setprioceiling`, `pthread_attr_setscope` and
+`pthread_setconcurrency` keep their value, which has no effect.
+
+`make test-pthread` (not in `make test`, it needs the network) runs the tests of pthreads4w 3.0.0 (Apache-2.0, the
+release archive of SourceForge) and the thread, semaphore and TLS tests of musl libc-test (MIT, a pinned commit) on
+NtCRT, `make LLVM=1 test-pthread` with clang and lld. `test/pthread/fetch.sh` downloads them into the build directory
+and checks them by SHA-256, `run.sh` builds each test, checks that it imports ntdll.dll only and runs it with a
+timeout (`TIMEOUT=s`, 120 by default; `RUNS=n` runs each n times, `PTHREAD_TESTS="suite/test ..."` some of them), a
+summary of each suite follows. `pthreads4w.sed` adapts its tests to the ABI of winpthreads: a `pthread_t` of
+pthreads4w is a struct and its objects are pointers, which the tests check (`NULL` after destroy); `libc-test.sed`
+leaves out the `shm_open` and asynchronous parts of two tests. `skip.txt` gives the reason for each test left out:
+the extensions and internals of pthreads4w (affinity, `pthread_getunique_np`, its handles, cancellation by
+exceptions), what is not supported (asynchronous cancellation, robust mutexes, named semaphores; `fork`, signals and
+`dlopen` of libc-test), the priorities and the preference for readers described above, and what POSIX leaves undefined
+or optional (unlocking a mutex or spin lock that is not locked, the ID of an ended thread, `sem_getvalue` counting the
+waiters).
 
 ### File names, console and streams
 

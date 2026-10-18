@@ -342,6 +342,20 @@ $(WINE)/%.exe: $(WINE)/%.c $(WINE)/table.c test/wine/crt.c test/wine/compat.h te
 test-wine: $(WINE_TESTS:%=$(WINE)/%.exe)
 	sh test/wine/run.sh $(WINE) $(WINE_TESTS)
 
+# The thread tests of pthreads4w (Apache-2.0) and of musl libc-test (MIT), fetched at the versions of
+# test/pthread/fetch.sh into $(BUILD)/pthread/src, on NtCRT. Not in "test", it needs the network. run.sh builds each
+# test (incrementally) and runs it with a timeout, test/pthread/skip.txt leaves out what NtCRT does not support or
+# what is specific to pthreads4w or Linux. PTHREAD_TESTS="suite/test ..." (shell patterns) runs some, RUNS=n each n
+# times, TIMEOUT=s.
+PTHREAD := $(BUILD)/pthread
+
+$(PTHREAD)/src.stamp: test/pthread/fetch.sh
+	sh $< $(PTHREAD)/src
+	touch $@
+
+test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER)
+	set -f; NTCRT_CC="$(NTCRT_CC)" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
+
 test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
@@ -364,4 +378,4 @@ clean:
 	rm -rf $(BUILD)
 
 .PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
-        test-start test-wine size compare clean
+        test-start test-wine test-pthread size compare clean

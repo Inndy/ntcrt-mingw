@@ -1,0 +1,79 @@
+# Tests left out by run.sh: "suite test reason"
+#
+# pthreads4w: its extensions and internals
+pthreads4w affinity1 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w affinity2 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w affinity3 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w affinity4 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w affinity5 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w affinity6 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w rwlock7_1 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w rwlock8_1 pthread_*affinity_np and cpu_set_t, extensions of pthreads4w
+pthreads4w join4 pthread_tryjoin_np and pthread_timedjoin_np, extensions of glibc and pthreads4w
+pthreads4w name_np2 pthread_attr_setname_np, an extension of pthreads4w
+pthreads4w sequence1 pthread_getunique_np, an extension of pthreads4w
+pthreads4w reinit1 pthread_win32_process_attach_np and pthread_getunique_np, extensions of pthreads4w
+pthreads4w benchtest1 benchmark of the internals of pthreads4w (config.h, __PTW32_MUTEX_TYPES), no pass or fail
+pthreads4w benchtest2 benchmark of the internals of pthreads4w (config.h, __PTW32_MUTEX_TYPES), no pass or fail
+pthreads4w benchtest3 benchmark of the internals of pthreads4w (config.h, __PTW32_MUTEX_TYPES), no pass or fail
+pthreads4w benchtest4 benchmark of the internals of pthreads4w (config.h, __PTW32_MUTEX_TYPES), no pass or fail
+pthreads4w benchtest5 benchmark of the internals of pthreads4w (config.h, __PTW32_MUTEX_TYPES), no pass or fail
+pthreads4w sizes the sizes of the internals of pthreads4w (implement.h)
+pthreads4w reuse1 the reuse of pthreads4w handles, the sequence number in its struct pthread_t
+pthreads4w reuse2 the reuse of pthreads4w handles, the sequence number in its struct pthread_t
+pthreads4w tryentercs TryEnterCriticalSection of kernel32 by GetProcAddress, no pthread function
+pthreads4w tryentercs2 TryEnterCriticalSection of kernel32 by GetProcAddress, no pthread function
+pthreads4w openmp1 OpenMP, libgomp links winpthreads
+#
+# pthreads4w: cancellation by exceptions and asynchronous cancellation, not supported (README)
+pthreads4w cancel2 cancellation by the exceptions (SEH, C++) of pthreads4w, NtCRT does not unwind; does nothing in C
+pthreads4w exception1 cancellation by the exceptions (SEH, C++) of pthreads4w, NtCRT does not unwind; does nothing in C
+pthreads4w exception2 exceptions out of a thread and the terminate handler of pthreads4w; does nothing in C
+pthreads4w exception3 exceptions out of a thread and the terminate handler of pthreads4w; does nothing in C
+pthreads4w exception3_0 exceptions out of a thread and the terminate handler of pthreads4w; does nothing in C
+pthreads4w cancel3 asynchronous cancellation of a thread without cancellation points
+pthreads4w cancel5 asynchronous cancellation of a thread without cancellation points
+pthreads4w cancel6a asynchronous cancellation of a thread without cancellation points
+pthreads4w cancel9 asynchronous cancellation (pthread_win32_test_features_np)
+pthreads4w context1 asynchronous cancellation by the thread context, the internals of pthreads4w (implement.h)
+pthreads4w context2 asynchronous cancellation by the thread context, the internals of pthreads4w (implement.h)
+#
+# pthreads4w: robust mutexes, not supported (README); pthreads4w.h leaves out the robust passes of the mutex tests
+pthreads4w robust1 robust mutexes
+pthreads4w robust2 robust mutexes
+pthreads4w robust3 robust mutexes
+pthreads4w robust4 robust mutexes
+pthreads4w robust5 robust mutexes
+#
+# pthreads4w: behavior of NtCRT the README describes
+pthreads4w priority1 pthread_getschedparam reads the priority of the thread, not the value set
+pthreads4w priority2 pthread_getschedparam reads the priority of the thread, not the value set
+pthreads4w inherit1 pthread_getschedparam reads the priority of the thread, not the value set
+pthreads4w rwlock6_t expects a waiting writer to take the lock before a waiting reader, NtCRT prefers readers
+#
+# pthreads4w: the order in which woken waiters take a lock, which POSIX leaves to the scheduling
+pthreads4w rwlock6 expects a waiting reader to take the lock before a writer that came later, both are woken and race
+#
+# pthreads4w: what POSIX leaves undefined or optional
+pthreads4w mutex4 unlocks a normal mutex that another thread unlocked and expects 0 (NtCRT: EPERM)
+pthreads4w mutex7 unlocks a normal mutex twice and expects 0 (NtCRT: EPERM)
+pthreads4w spin1 locks a destroyed spin lock and expects EINVAL
+pthreads4w spin3 unlocks a spin lock that is not locked and expects 0 (NtCRT: EPERM)
+pthreads4w errno0 sem_destroy(NULL) expects EINVAL (NtCRT crashes)
+pthreads4w valid1 pthread_kill of a joined thread expects ESRCH, the ID of an ended thread
+pthreads4w semaphore3 sem_getvalue counts the waiters as a negative value, an option of POSIX (NtCRT: 0)
+pthreads4w semaphore4 sem_getvalue counts the waiters as a negative value, an option of POSIX (NtCRT: 0)
+pthreads4w semaphore4t sem_getvalue counts the waiters as a negative value, an option of POSIX (NtCRT: 0)
+#
+# libc-test: what NtCRT does not support (README) or Windows does not have
+libc-test pthread_robust robust mutexes and process-shared mutexes
+libc-test pthread-robust-detach robust mutexes and process-shared mutexes
+libc-test sem_open named semaphores (sem_open)
+libc-test sem_close-unmap named semaphores (sem_open)
+libc-test raise-race fork, signals sent to a thread
+libc-test pthread_atfork-errno-clobber fork, setrlimit
+libc-test pthread_exit-dtor fork
+libc-test pthread_create-oom t_memfill, memory exhausted by mmap and setrlimit
+libc-test tls_align_dlopen dlopen of a shared object with TLS
+libc-test tls_init_dlopen dlopen of a shared object with TLS
+libc-test tls_get_new-dtv dlopen of a shared object with TLS
