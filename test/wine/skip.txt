@@ -1,0 +1,31 @@
+# Tests left out by skip.awk: "dll/name function reason". The printf and scanf tests of ucrtbase are not built,
+# they call __stdio_common_* only (test/fuzz/format.c compares NtCRT with them).
+ucrtbase/misc test__initialize_onexit_table UCRT-only _o__initialize_onexit_table
+ucrtbase/misc test__register_onexit_function UCRT-only _o__register_onexit_function
+ucrtbase/misc test__execute_onexit_table UCRT-only _o__execute_onexit_table
+ucrtbase/misc test___fpe_flt_rounds UCRT-only __fpe_flt_rounds
+ucrtbase/misc test_invalid_parameter_handler UCRT-only _set_thread_local_invalid_parameter_handler
+ucrtbase/misc test__get_narrow_winmain_command_line UCRT-only _get_narrow_winmain_command_line
+ucrtbase/misc test__sopen_dispatch UCRT-only _sopen_dispatch
+ucrtbase/misc test_isblank UCRT-only _isblank_l and _iswblank_l
+ucrtbase/misc test_quick_exit UCRT-only quick_exit
+ucrtbase/misc test_call_quick_exit UCRT-only quick_exit
+ucrtbase/misc test__o_malloc UCRT-only _o_malloc
+ucrtbase/misc test_thread_storage UCRT-only __current_exception
+ucrtbase/misc test_fenv the fenv_t of UCRT
+ucrtbase/misc test_cexp the _Dcomplex of UCRT
+ucrtbase/misc test_carg the _Dcomplex of UCRT
+ucrtbase/misc test_cargf the _Fcomplex of UCRT
+ucrtbase/string test___strncnt UCRT-only __strncnt
+ucrtbase/string test_wcstok the wcstok of C11 (msvcrt: two arguments)
+ucrtbase/misc test_exit UCRT-only _crt_atexit in the child
+ucrtbase/misc test_call_exit UCRT-only _crt_atexit
+ucrtbase/string test__mbbtype_l UCRT-only _mbbtype_l
+ucrtbase/file test_iobuf_layout UCRT-only _get_stream_buffer_pointers and FILE layout
+msvcrt/locale test_locale_info named locales, NtCRT has C and C.UTF-8 only
+ucrtbase/environ test_initial_environ UCRT-only _get_initial_narrow_environment
+msvcrt/file test_tmpnam tmpnam(buffer) fails with ERANGE, the names of NtCRT are in the temporary directory
+msvcrt/file test__open_osfhandle reads __pioinfo, which NtCRT does not have
+msvcrt/file test_close reads __pioinfo, which NtCRT does not have
+msvcrt/file test_invalid_stdin_child reads __pioinfo, which NtCRT does not have
+msvcrt/file test_ioinfo_flags reads __pioinfo, which NtCRT does not have

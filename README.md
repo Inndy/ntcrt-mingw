@@ -36,6 +36,9 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/start/` pseudo relocations of data auto-imported from a DLL and `_matherr` (`make test-start`)
 - `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
+- `test/wine/` the msvcrt and ucrtbase tests of Wine 11.0 on NtCRT (`make test-wine`, downloads them into the build
+  directory, LGPL): `GetProcAddress` of msvcrt.dll finds the functions of the program, `skip.txt` leaves out the
+  tests of UCRT-only APIs
 - `IDEAS.md` proposals not started yet
 
 ## Size

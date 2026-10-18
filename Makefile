@@ -249,6 +249,52 @@ test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/m
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
 	@echo "start: ok"
 
+# The CRT tests of Wine (LGPL, fetched at the tag of test/wine/fetch.sh into $(BUILD)/wine/src) on NtCRT, one
+# program for each, the output in $(BUILD)/wine/log. Not in "test", it needs the network, and failures are expected
+# (the differences of README.md and more): run.sh fails only when a test does not finish. GetProcAddress of msvcrt.dll and
+# ucrtbase.dll finds the functions of NtCRT (test/wine/crt.c, the names exported by the DLLs of System32), the
+# kernel32 functions that NtCRT does not have are imported from kernel32.dll. test/wine/skip.txt leaves out the tests
+# of UCRT-only APIs and of what NtCRT does not have. The C++ test (cpp.c) needs the MSVC C++ ABI of msvcrt.
+WINE := $(BUILD)/wine
+WINE_TESTS := $(addprefix msvcrt/,data dir environ file heap locale misc printf scanf signal string time) \
+              $(addprefix ucrtbase/,environ file misc string)
+WINE_CFLAGS := -std=gnu17 -O2 -w -Wno-implicit-function-declaration -Wno-int-conversion -DSTANDALONE \
+               -Itest/wine/include -I$(WINE)/src/include -include test/wine/compat.h
+KERNEL32_A := $(shell $(CXX) -print-file-name=libkernel32.a)
+MINGWEX_A := $(shell $(CXX) -print-file-name=libmingwex.a)
+SYSTEM32 := $(subst \,/,$(SYSTEMROOT))/System32
+
+$(WINE)/src.stamp: test/wine/fetch.sh
+	sh $< $(WINE)/src
+	touch $@
+
+$(WINE)/%.c: $(WINE)/src.stamp test/wine/skip.awk test/wine/skip.txt
+	mkdir -p $(@D)
+	awk -v test=$* -f test/wine/skip.awk test/wine/skip.txt $(WINE)/src/dlls/$(*D)/tests/$(*F).c > $@
+
+$(WINE)/table.c: test/wine/table.sh $(LIBS)
+	mkdir -p $(@D)
+	sh $< $(SYSTEM32)/msvcrt.dll $(SYSTEM32)/ucrtbase.dll $(BUILD)/libntcrt.a $(BUILD)/libntdll_crt.a \
+	    $(BUILD)/libmsvcrt_static.a "$(MINGWEX_A)" > $@
+
+# kernel32 without the functions of NtCRT
+$(WINE)/libkernel32_rest.a: $(BUILD)/ntcrt.syms
+	mkdir -p $(@D)
+	printf 'LIBRARY kernel32.dll\nEXPORTS\n' > $(WINE)/kernel32_rest.def
+	nm -g "$(KERNEL32_A)" | awk '$$2 == "I" && $$3 ~ /^__imp_/ { print substr($$3, 7) }' | sort -u | \
+	    awk 'NR == FNR { Defined[$$1] = 1; next } !($$1 in Defined)' $(BUILD)/ntcrt.syms - >> $(WINE)/kernel32_rest.def
+	dlltool -d $(WINE)/kernel32_rest.def -l $@
+
+$(WINE)/%.exe: $(WINE)/%.c $(WINE)/table.c test/wine/crt.c test/wine/compat.h test/wine/include/wine/debug.h \
+               $(WINE)/libkernel32_rest.a $(LIBS) $(DRIVER)
+	$(NTCRT_CC) $(WINE_CFLAGS) -static -o $@ $< test/wine/crt.c $(WINE)/table.c -L$(WINE) -lkernel32_rest \
+	    -ladvapi32 -luser32
+
+.PRECIOUS: $(WINE)/%.c
+
+test-wine: $(WINE_TESTS:%=$(WINE)/%.exe)
+	sh test/wine/run.sh $(WINE) $(WINE_TESTS)
+
 test: test-upstream test-fuzz test-printf test-console test-cxx test-start
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
@@ -270,4 +316,5 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-start size compare clean
+.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-start test-wine \
+        size compare clean
