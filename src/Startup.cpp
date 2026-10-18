@@ -1,12 +1,10 @@
-/* msvcrt startup, termination, errno, locks, signal, threads and locale */
+/* msvcrt startup, termination, errno, locks and signal */
 
 #include "NtCRT.h"
+#include "Argv.inl"
 
 #include <errno.h>
 #include <signal.h>
-#include <locale.h>
-#include <limits.h>
-#include <float.h>
 #include <new>
 
 /* errno */
@@ -288,11 +286,6 @@ extern "C"
     unsigned int _NtCRT_lc_codepage = 0;
 }
 
-EXTERN_C UINT _NtCRT_CodePage(void)
-{
-    return NtCurrentPeb()->ActiveCodePage;
-}
-
 EXTERN_C void __cdecl _NtCRT___set_app_type(int type)
 {
     _NtCRT_app_type = type;
@@ -312,139 +305,6 @@ EXTERN_C wchar_t** __cdecl _NtCRT___p__wpgmptr(void) { return &_NtCRT_wpgmptr; }
 EXTERN_C int __cdecl _NtCRT____mb_cur_max_func(void) { return _NtCRT_mb_cur_max; }
 EXTERN_C unsigned int __cdecl _NtCRT____lc_codepage_func(void) { return _NtCRT_lc_codepage; }
 EXTERN_C int* __cdecl _NtCRT___p___mb_cur_max(void) { return &_NtCRT_mb_cur_max; }
-
-/* Command line, follows the parsing rules of msvcrt */
-
-template <typename T>
-static
-void
-_NtCRT_ParseCommandLine(
-    _In_ const T* CommandLine,
-    _Out_opt_ T** Argv,
-    _Out_opt_ T* Args,
-    _Out_ size_t* ArgCount,
-    _Out_ size_t* CharCount)
-{
-    const T* p = CommandLine;
-    bool InQuote;
-
-    *ArgCount = 0;
-    *CharCount = 0;
-
-#define _NTCRT_EMIT(c) do { if (Args != NULL) { *Args++ = (c); } ++*CharCount; } while (0)
-
-    /* Program name, ends at the closing quote or whitespace, backslashes are not special */
-    if (Argv != NULL)
-    {
-        *Argv++ = Args;
-    }
-    ++*ArgCount;
-    if (*p == '"')
-    {
-        p++;
-        while (*p != '\0' && *p != '"')
-        {
-            _NTCRT_EMIT(*p);
-            p++;
-        }
-        if (*p == '"')
-        {
-            p++;
-        }
-    } else
-    {
-        while (*p != '\0' && *p != ' ' && *p != '\t')
-        {
-            _NTCRT_EMIT(*p);
-            p++;
-        }
-    }
-    _NTCRT_EMIT('\0');
-
-    for (;;)
-    {
-        while (*p == ' ' || *p == '\t')
-        {
-            p++;
-        }
-        if (*p == '\0')
-        {
-            break;
-        }
-        if (Argv != NULL)
-        {
-            *Argv++ = Args;
-        }
-        ++*ArgCount;
-        InQuote = false;
-        for (;;)
-        {
-            bool CopyChar = true;
-            size_t Backslashes = 0;
-
-            while (*p == '\\')
-            {
-                p++;
-                Backslashes++;
-            }
-            if (*p == '"')
-            {
-                /* 2N backslashes + quote -> N backslashes + toggle, 2N+1 -> N backslashes + literal quote */
-                if (Backslashes % 2 == 0)
-                {
-                    if (InQuote && p[1] == '"')
-                    {
-                        /* "" inside quotes is a literal quote */
-                        p++;
-                    } else
-                    {
-                        CopyChar = false;
-                        InQuote = !InQuote;
-                    }
-                }
-                Backslashes /= 2;
-            }
-            while (Backslashes-- != 0)
-            {
-                _NTCRT_EMIT('\\');
-            }
-            if (*p == '\0' || (!InQuote && (*p == ' ' || *p == '\t')))
-            {
-                break;
-            }
-            if (CopyChar)
-            {
-                _NTCRT_EMIT(*p);
-            }
-            p++;
-        }
-        _NTCRT_EMIT('\0');
-    }
-
-#undef _NTCRT_EMIT
-}
-
-template <typename T>
-static
-T**
-_NtCRT_BuildArgv(
-    _In_ const T* CommandLine,
-    _Out_ int* Argc)
-{
-    size_t ArgCount, CharCount;
-    T** Argv;
-
-    _NtCRT_ParseCommandLine<T>(CommandLine, NULL, NULL, &ArgCount, &CharCount);
-    Argv = (T**)RtlAllocateHeap(NTCRT_HEAP, 0, (ArgCount + 1) * sizeof(T*) + CharCount * sizeof(T));
-    if (Argv == NULL)
-    {
-        return NULL;
-    }
-    _NtCRT_ParseCommandLine<T>(CommandLine, Argv, (T*)(Argv + ArgCount + 1), &ArgCount, &CharCount);
-    Argv[ArgCount] = NULL;
-    *Argc = (int)ArgCount;
-    return Argv;
-}
 
 /* Environment */
 
@@ -520,7 +380,7 @@ _NtCRT_BuildEnvironFromWide(
     return Env;
 }
 
-static
+EXTERN_C
 void
 _NtCRT_InitEnviron(void)
 {
@@ -564,13 +424,6 @@ _NtCRT_InitProgramName(void)
     }
 }
 
-typedef struct
-{
-    int newmode;
-} _NtCRT_startupinfo;
-
-EXTERN_C int __cdecl _NtCRT_InitRuntime(void);
-
 EXTERN_C
 int
 __cdecl
@@ -600,281 +453,6 @@ _NtCRT___getmainargs(
     *argv = _NtCRT_argv;
     *envp = _NtCRT_environ;
     return 0;
-}
-
-EXTERN_C
-int
-__cdecl
-_NtCRT___wgetmainargs(
-    _Out_ int* argc,
-    _Out_ wchar_t*** argv,
-    _Out_ wchar_t*** envp,
-    _In_ int dowildcard,
-    _In_opt_ _NtCRT_startupinfo* startinfo)
-{
-    UNREFERENCED_PARAMETER(dowildcard);
-    UNREFERENCED_PARAMETER(startinfo);
-
-    _NtCRT_InitRuntime();
-    if (_NtCRT_wargv == NULL)
-    {
-        _NtCRT_wcmdln = NtCurrentPeb()->ProcessParameters->CommandLine.Buffer;
-        _NtCRT_wargv = _NtCRT_BuildArgv<wchar_t>(_NtCRT_wcmdln, &_NtCRT_argc);
-        if (_NtCRT_wargv == NULL)
-        {
-            _NtCRT_amsg_exit(8);
-            return -1;
-        }
-    }
-    _NtCRT_InitEnviron();
-    _NtCRT_winitenv = _NtCRT_wenviron;
-    *argc = _NtCRT_argc;
-    *argv = _NtCRT_wargv;
-    *envp = _NtCRT_wenviron;
-    return 0;
-}
-
-/* getenv / _putenv operate on _environ and the process environment */
-
-/* Whether an environment entry is "Name=...", names compare case-insensitively as by the system */
-static
-BOOL
-_NtCRT_IsEnvName(
-    _In_z_ const char* Entry,
-    _In_reads_(Length) const char* Name,
-    _In_ size_t Length)
-{
-    for (size_t i = 0; i < Length; i++)
-    {
-        unsigned char a = (unsigned char)Entry[i], b = (unsigned char)Name[i];
-
-        a = a >= 'A' && a <= 'Z' ? a + ('a' - 'A') : a;
-        b = b >= 'A' && b <= 'Z' ? b + ('a' - 'A') : b;
-        if (a == 0 || a != b)
-        {
-            return FALSE;
-        }
-    }
-    return Entry[Length] == '=';
-}
-
-static
-BOOL
-_NtCRT_IsEnvName(
-    _In_z_ const wchar_t* Entry,
-    _In_reads_(Length) const wchar_t* Name,
-    _In_ size_t Length)
-{
-    for (size_t i = 0; i < Length; i++)
-    {
-        if (Entry[i] == 0 || RtlUpcaseUnicodeChar(Entry[i]) != RtlUpcaseUnicodeChar(Name[i]))
-        {
-            return FALSE;
-        }
-    }
-    return Entry[Length] == L'=';
-}
-
-EXTERN_C char* __cdecl _NtCRT_getenv(const char* name)
-{
-    size_t Length;
-    char* Value = NULL;
-
-    if (name == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return NULL;
-    }
-    _NtCRT_lock(_ENV_LOCK);
-    _NtCRT_InitEnviron();
-    Length = strlen(name);
-    if (_NtCRT_environ != NULL && Length != 0)
-    {
-        for (char** p = _NtCRT_environ; *p != NULL; p++)
-        {
-            if (_NtCRT_IsEnvName(*p, name, Length))
-            {
-                Value = *p + Length + 1;
-                break;
-            }
-        }
-    }
-    _NtCRT_unlock(_ENV_LOCK);
-    return Value;
-}
-
-EXTERN_C wchar_t* __cdecl _NtCRT__wgetenv(const wchar_t* name)
-{
-    size_t Length;
-    wchar_t* Value = NULL;
-
-    if (name == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return NULL;
-    }
-    _NtCRT_lock(_ENV_LOCK);
-    _NtCRT_InitEnviron();
-    Length = wcslen(name);
-    if (_NtCRT_wenviron != NULL && Length != 0)
-    {
-        for (wchar_t** p = _NtCRT_wenviron; *p != NULL; p++)
-        {
-            if (_NtCRT_IsEnvName(*p, name, Length))
-            {
-                Value = *p + Length + 1;
-                break;
-            }
-        }
-    }
-    _NtCRT_unlock(_ENV_LOCK);
-    return Value;
-}
-
-/* Replace or remove "Name=" in an environment table, takes the ownership of Entry */
-template <typename T>
-static
-int
-_NtCRT_UpdateEnvTable(
-    _Inout_ T*** Table,
-    _In_ T* Entry,
-    _In_ size_t NameLength,
-    _In_ bool Remove)
-{
-    size_t Count = 0, Index = (size_t)-1;
-    T** Env = *Table;
-
-    if (Env != NULL)
-    {
-        for (; Env[Count] != NULL; Count++)
-        {
-            const T* e = Env[Count];
-            size_t i = 0;
-            for (; i < NameLength; i++)
-            {
-                T a = e[i], b = Entry[i];
-                if (a >= 'a' && a <= 'z') a -= 'a' - 'A';
-                if (b >= 'a' && b <= 'z') b -= 'a' - 'A';
-                if (a != b) break;
-            }
-            if (i == NameLength && e[NameLength] == '=' && Index == (size_t)-1)
-            {
-                Index = Count;
-            }
-        }
-    }
-    if (Index != (size_t)-1)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Env[Index]);
-        if (Remove)
-        {
-            memmove(&Env[Index], &Env[Index + 1], (Count - Index) * sizeof(T*));
-            RtlFreeHeap(NTCRT_HEAP, 0, Entry);
-        } else
-        {
-            Env[Index] = Entry;
-        }
-        return 0;
-    }
-    if (Remove)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Entry);
-        return 0;
-    }
-    Env = (T**)(Env != NULL ?
-                RtlReAllocateHeap(NTCRT_HEAP, 0, Env, (Count + 2) * sizeof(T*)) :
-                RtlAllocateHeap(NTCRT_HEAP, 0, 2 * sizeof(T*)));
-    if (Env == NULL)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Entry);
-        return -1;
-    }
-    Env[Count] = Entry;
-    Env[Count + 1] = NULL;
-    *Table = Env;
-    return 0;
-}
-
-EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring)
-{
-    const wchar_t* Equal;
-    size_t NameLength;
-    bool Remove;
-    wchar_t* Name;
-    wchar_t* WideEntry;
-    char* AnsiEntry;
-    int Result = -1;
-
-    if (envstring == NULL || (Equal = wcschr(envstring, L'=')) == NULL || Equal == envstring)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    NameLength = Equal - envstring;
-    Remove = Equal[1] == L'\0';
-
-    _NtCRT_lock(_ENV_LOCK);
-    _NtCRT_InitEnviron();
-    WideEntry = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, (wcslen(envstring) + 1) * sizeof(wchar_t));
-    if (WideEntry == NULL)
-    {
-        goto _Exit;
-    }
-    wcscpy(WideEntry, envstring);
-    AnsiEntry = _NtCRT_WideToAnsi(envstring);
-    if (AnsiEntry == NULL)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, WideEntry);
-        goto _Exit;
-    }
-
-    /* Update the process environment */
-    Name = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, (NameLength + 1) * sizeof(wchar_t));
-    if (Name != NULL)
-    {
-        memcpy(Name, envstring, NameLength * sizeof(wchar_t));
-        Name[NameLength] = L'\0';
-        _Inline_SetEnvironmentVariableW(Name, Remove ? NULL : Equal + 1);
-        RtlFreeHeap(NTCRT_HEAP, 0, Name);
-    }
-
-    Result = _NtCRT_UpdateEnvTable<wchar_t>(&_NtCRT_wenviron, WideEntry, NameLength, Remove);
-    if (Result == 0)
-    {
-        const char* AnsiEqual = strchr(AnsiEntry, '=');
-        Result = _NtCRT_UpdateEnvTable<char>(&_NtCRT_environ, AnsiEntry, AnsiEqual - AnsiEntry, Remove);
-    } else
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, AnsiEntry);
-    }
-
-_Exit:
-    _NtCRT_unlock(_ENV_LOCK);
-    if (Result != 0)
-    {
-        NTCRT_ERRNO = ENOMEM;
-    }
-    return Result;
-}
-
-EXTERN_C int __cdecl _NtCRT__putenv(const char* envstring)
-{
-    int Result;
-    PWSTR Wide;
-
-    if (envstring == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    Wide = _NtCRT_AnsiToWide(envstring);
-    if (Wide == NULL)
-    {
-        return -1;
-    }
-    Result = _NtCRT__wputenv(Wide);
-    RtlFreeHeap(NTCRT_HEAP, 0, Wide);
-    return Result;
 }
 
 /* Initializers and termination */
@@ -1010,17 +588,9 @@ EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__exit(int code)
     RtlExitUserProcess(code);
 }
 
-static
-void
-_NtCRT_WriteStderr(
-    _In_z_ const char* Message)
-{
-    _NtCRT_write(2, Message, (unsigned int)strlen(Message));
-}
-
 /* The messages of the runtime are built without the printf family, which a program may not link otherwise */
 
-static
+EXTERN_C
 void
 _NtCRT_AppendText(
     _Inout_updates_z_(Size) char* Buffer,
@@ -1036,33 +606,7 @@ _NtCRT_AppendText(
     Buffer[Length] = '\0';
 }
 
-/* Wide text in the multibyte characters of the locale, '?' for a character it cannot represent */
-static
-void
-_NtCRT_AppendWideText(
-    _Inout_updates_z_(Size) char* Buffer,
-    _In_ size_t Size,
-    _In_z_ const wchar_t* Text)
-{
-    mbstate_t State = 0;
-
-    for (; *Text != L'\0'; Text++)
-    {
-        char Bytes[MB_LEN_MAX + 1];
-        size_t Length = wcrtomb(Bytes, *Text, &State);
-
-        if (Length == (size_t)-1)
-        {
-            State = 0;
-            Bytes[0] = '?';
-            Length = 1;
-        }
-        Bytes[Length] = '\0';
-        _NtCRT_AppendText(Buffer, Size, Bytes);
-    }
-}
-
-static
+EXTERN_C
 void
 _NtCRT_AppendNumber(
     _Inout_updates_z_(Size) char* Buffer,
@@ -1094,13 +638,11 @@ EXTERN_C void __cdecl _NtCRT_amsg_exit(int rterrnum)
 
 /* signal */
 
-typedef void(__cdecl* _NtCRT_sighandler_t)(int);
-
-static _NtCRT_sighandler_t g_SignalHandlers[NSIG];
+_NtCRT_sighandler_t _NtCRT_SignalHandlers[NSIG];
 static bool g_CtrlHandlerInstalled = false;
 
 /* As msvcrt, SIGILL of a privileged instruction has its own action, set by signal and reset by _XcptFilter */
-static _NtCRT_sighandler_t g_PrivilegedInstructionHandler;
+_NtCRT_sighandler_t _NtCRT_PrivilegedInstructionHandler;
 
 /* As msvcrt, any console control event other than Ctrl+C raises SIGBREAK */
 static
@@ -1113,10 +655,10 @@ _NtCRT_CtrlHandler(
     _NtCRT_sighandler_t Handler;
 
     _NtCRT_lock(_SIGNAL_LOCK);
-    Handler = g_SignalHandlers[Signal];
+    Handler = _NtCRT_SignalHandlers[Signal];
     if (Handler != SIG_IGN)
     {
-        g_SignalHandlers[Signal] = SIG_DFL;
+        _NtCRT_SignalHandlers[Signal] = SIG_DFL;
     }
     _NtCRT_unlock(_SIGNAL_LOCK);
     if (Handler == SIG_DFL)
@@ -1161,147 +703,14 @@ EXTERN_C _NtCRT_sighandler_t __cdecl _NtCRT_signal(int sig, _NtCRT_sighandler_t 
         }
         g_CtrlHandlerInstalled = true;
     }
-    Old = g_SignalHandlers[sig];
-    g_SignalHandlers[sig] = func;
+    Old = _NtCRT_SignalHandlers[sig];
+    _NtCRT_SignalHandlers[sig] = func;
     if (sig == SIGILL)
     {
-        g_PrivilegedInstructionHandler = func;
+        _NtCRT_PrivilegedInstructionHandler = func;
     }
     _NtCRT_unlock(_SIGNAL_LOCK);
     return Old;
-}
-
-/* Call the handler of SIGFPE, SIGILL or SIGSEGV with the exception information of the thread */
-static
-void
-_NtCRT_CallXcptHandler(
-    _In_ _NtCRT_sighandler_t Handler,
-    _In_ int Signal,
-    _In_opt_ void* XcptInfoPtrs,
-    _In_ int Fpecode)
-{
-    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
-    void* OldXcptInfoPtrs = Ptd->PxcptInfoPtrs;
-    int OldFpecode = Ptd->Fpecode;
-
-    Ptd->PxcptInfoPtrs = XcptInfoPtrs;
-    if (Signal == SIGFPE)
-    {
-        Ptd->Fpecode = Fpecode;
-        ((void(__cdecl*)(int, int))(void*)Handler)(SIGFPE, Fpecode);
-        Ptd->Fpecode = OldFpecode;
-    } else
-    {
-        Handler(Signal);
-    }
-    Ptd->PxcptInfoPtrs = OldXcptInfoPtrs;
-}
-
-EXTERN_C int __cdecl _NtCRT_raise(int sig)
-{
-    _NtCRT_sighandler_t Handler;
-
-    if (sig <= 0 || sig >= NSIG)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    if (sig == SIGABRT_COMPAT)
-    {
-        sig = SIGABRT;
-    }
-    _NtCRT_lock(_SIGNAL_LOCK);
-    Handler = g_SignalHandlers[sig];
-    if (Handler != SIG_IGN && Handler != SIG_DFL)
-    {
-        g_SignalHandlers[sig] = SIG_DFL;
-    }
-    _NtCRT_unlock(_SIGNAL_LOCK);
-    if (Handler == SIG_IGN)
-    {
-        return 0;
-    }
-    if (Handler == SIG_DFL)
-    {
-        _NtCRT__exit(3);
-    }
-    if (sig == SIGFPE || sig == SIGILL || sig == SIGSEGV)
-    {
-        _NtCRT_CallXcptHandler(Handler, sig, NULL, _FPE_EXPLICITGEN);
-    } else
-    {
-        Handler(sig);
-    }
-    return 0;
-}
-
-/* The exceptions that _XcptFilter passes to the handlers of signals */
-static const struct
-{
-    NTSTATUS Status;
-    int Signal;
-    int Fpecode;
-} g_XcptSignals[] = {
-    { STATUS_ACCESS_VIOLATION, SIGSEGV, 0 },
-    { STATUS_ILLEGAL_INSTRUCTION, SIGILL, 0 },
-    { STATUS_PRIVILEGED_INSTRUCTION, SIGILL, 0 },
-    { STATUS_FLOAT_DENORMAL_OPERAND, SIGFPE, _FPE_DENORMAL },
-    { STATUS_FLOAT_DIVIDE_BY_ZERO, SIGFPE, _FPE_ZERODIVIDE },
-    { STATUS_FLOAT_INEXACT_RESULT, SIGFPE, _FPE_INEXACT },
-    { STATUS_FLOAT_INVALID_OPERATION, SIGFPE, _FPE_INVALID },
-    { STATUS_FLOAT_OVERFLOW, SIGFPE, _FPE_OVERFLOW },
-    { STATUS_FLOAT_STACK_CHECK, SIGFPE, _FPE_STACKOVERFLOW },
-    { STATUS_FLOAT_UNDERFLOW, SIGFPE, _FPE_UNDERFLOW },
-};
-
-/* Other exceptions and SIG_DFL are left to the other exception handlers */
-EXTERN_C int __cdecl _NtCRT__XcptFilter(unsigned long xcptnum, PEXCEPTION_POINTERS pxcptinfoptrs)
-{
-    _NtCRT_sighandler_t Handler = SIG_DFL;
-    int Signal = 0, Fpecode = 0;
-
-    for (size_t i = 0; i < ARRAYSIZE(g_XcptSignals); i++)
-    {
-        if ((unsigned long)g_XcptSignals[i].Status == xcptnum)
-        {
-            Signal = g_XcptSignals[i].Signal;
-            Fpecode = g_XcptSignals[i].Fpecode;
-            break;
-        }
-    }
-    if (Signal != 0)
-    {
-        _NtCRT_sighandler_t* Action = xcptnum == (unsigned long)STATUS_PRIVILEGED_INSTRUCTION ?
-                                          &g_PrivilegedInstructionHandler :
-                                          &g_SignalHandlers[Signal];
-
-        _NtCRT_lock(_SIGNAL_LOCK);
-        Handler = *Action;
-        if (Handler != SIG_IGN && Handler != SIG_DFL)
-        {
-            *Action = SIG_DFL;
-        }
-        _NtCRT_unlock(_SIGNAL_LOCK);
-    }
-    if (Handler == SIG_DFL)
-    {
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    if (Handler != SIG_IGN)
-    {
-        _NtCRT_CallXcptHandler(Handler, Signal, pxcptinfoptrs, Fpecode);
-    }
-    return EXCEPTION_CONTINUE_EXECUTION;
-}
-
-EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT_abort(void)
-{
-    if (g_SignalHandlers[SIGABRT] == SIG_DFL || g_SignalHandlers[SIGABRT] == SIG_IGN)
-    {
-        _NtCRT_WriteStderrRaw("\r\nThis application has requested the Runtime to terminate it in an unusual way.\r\n");
-    }
-    _NtCRT_raise(SIGABRT);
-    _NtCRT__exit(3);
 }
 
 typedef void(__cdecl* _NtCRT_invalid_parameter_handler)(
@@ -1330,34 +739,6 @@ EXTERN_C int _NtCRT_InvalidParameter(int Errno)
     return Errno;
 }
 
-EXTERN_C void __cdecl _NtCRT__assert(const char* message, const char* file, unsigned line)
-{
-    char Buffer[1024] = "Assertion failed: ";
-
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), message);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", file ");
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), file);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", line ");
-    _NtCRT_AppendNumber(Buffer, sizeof(Buffer), line, 1);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), "\n");
-    _NtCRT_WriteStderr(Buffer);
-    _NtCRT_abort();
-}
-
-EXTERN_C void __cdecl _NtCRT__wassert(const wchar_t* message, const wchar_t* file, unsigned line)
-{
-    char Buffer[1024] = "Assertion failed: ";
-
-    _NtCRT_AppendWideText(Buffer, sizeof(Buffer), message);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", file ");
-    _NtCRT_AppendWideText(Buffer, sizeof(Buffer), file);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", line ");
-    _NtCRT_AppendNumber(Buffer, sizeof(Buffer), line, 1);
-    _NtCRT_AppendText(Buffer, sizeof(Buffer), "\n");
-    _NtCRT_WriteStderr(Buffer);
-    _NtCRT_abort();
-}
-
 typedef int(__cdecl* _NtCRT_matherr_t)(struct _exception*);
 static _NtCRT_matherr_t g_UserMathErr = NULL;
 
@@ -1371,178 +752,6 @@ EXTERN_C void __cdecl _NtCRT__fpreset(void)
     __asm__ __volatile__("fninit");
     unsigned int Mxcsr = 0x1F80;
     __asm__ __volatile__("ldmxcsr %0" : : "m"(Mxcsr));
-}
-
-/* Threads */
-
-typedef unsigned(__stdcall* _NtCRT_beginthreadex_proc)(void*);
-typedef void(__cdecl* _NtCRT_beginthread_proc)(void*);
-
-typedef struct _NTCRT_THREAD_PARAM
-{
-    _NtCRT_beginthreadex_proc StartEx;
-    _NtCRT_beginthread_proc Start;
-    void* ArgList;
-    HANDLE Handle;
-} NTCRT_THREAD_PARAM, *PNTCRT_THREAD_PARAM;
-
-static
-NTSTATUS
-NTAPI
-_NtCRT_ThreadStartEx(
-    _In_ PVOID Parameter)
-{
-    NTCRT_THREAD_PARAM Param = *(PNTCRT_THREAD_PARAM)Parameter;
-    unsigned Result = 0;
-
-    RtlFreeHeap(NTCRT_HEAP, 0, Parameter);
-    if (Param.StartEx != NULL)
-    {
-        Result = Param.StartEx(Param.ArgList);
-    } else
-    {
-        Param.Start(Param.ArgList);
-    }
-    _NtCRT_ThreadDetach();
-    RtlExitUserThread((NTSTATUS)Result);
-}
-
-static
-HANDLE
-_NtCRT_CreateThread(
-    _In_opt_ PSECURITY_DESCRIPTOR SecurityDescriptor,
-    _In_ unsigned StackSize,
-    _In_ PNTCRT_THREAD_PARAM Template,
-    _In_ bool Suspended,
-    _Out_opt_ unsigned* ThreadId)
-{
-    NTSTATUS Status;
-    HANDLE Handle;
-    CLIENT_ID ClientId;
-    PNTCRT_THREAD_PARAM Param;
-
-    Param = (PNTCRT_THREAD_PARAM)RtlAllocateHeap(NTCRT_HEAP, 0, sizeof(*Param));
-    if (Param == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return NULL;
-    }
-    *Param = *Template;
-    Status = RtlCreateUserThread(NtCurrentProcess(),
-                                 SecurityDescriptor,
-                                 Suspended,
-                                 0,
-                                 0,
-                                 StackSize,
-                                 (PTHREAD_START_ROUTINE)_NtCRT_ThreadStartEx,
-                                 Param,
-                                 &Handle,
-                                 &ClientId);
-    if (!NT_SUCCESS(Status))
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Param);
-        _NtCRT_SetErrnoFromNtStatus(Status);
-        return NULL;
-    }
-    if (ThreadId != NULL)
-    {
-        *ThreadId = (unsigned)(ULONG_PTR)ClientId.UniqueThread;
-    }
-    return Handle;
-}
-
-EXTERN_C
-uintptr_t
-__cdecl
-_NtCRT__beginthreadex(
-    _In_opt_ void* security,
-    _In_ unsigned stack_size,
-    _In_ _NtCRT_beginthreadex_proc start_address,
-    _In_opt_ void* arglist,
-    _In_ unsigned initflag,
-    _Out_opt_ unsigned* thrdaddr)
-{
-    NTCRT_THREAD_PARAM Param = { start_address, NULL, arglist, NULL };
-
-    if (start_address == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return 0;
-    }
-    return (uintptr_t)_NtCRT_CreateThread(security != NULL ? ((LPSECURITY_ATTRIBUTES)security)->lpSecurityDescriptor
-                                                           : NULL,
-                                          stack_size,
-                                          &Param,
-                                          (initflag & CREATE_SUSPENDED) != 0,
-                                          thrdaddr);
-}
-
-EXTERN_C
-uintptr_t
-__cdecl
-_NtCRT__beginthread(
-    _In_ _NtCRT_beginthread_proc start_address,
-    _In_ unsigned stack_size,
-    _In_opt_ void* arglist)
-{
-    NTCRT_THREAD_PARAM Param = { NULL, start_address, arglist, NULL };
-    HANDLE Handle;
-
-    if (start_address == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return (uintptr_t)-1;
-    }
-    /* _beginthread closes the handle on thread exit in msvcrt, here the caller never owns it */
-    Handle = _NtCRT_CreateThread(NULL, stack_size, &Param, false, NULL);
-    if (Handle == NULL)
-    {
-        return (uintptr_t)-1;
-    }
-    NtClose(Handle);
-    return (uintptr_t)Handle;
-}
-
-EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthreadex(unsigned retval)
-{
-    _NtCRT_ThreadDetach();
-    RtlExitUserThread((NTSTATUS)retval);
-}
-
-EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthread(void)
-{
-    _NtCRT__endthreadex(0);
-}
-
-/* The locale information of the "C" locale, see Locale.cpp for setlocale */
-
-static char g_EmptyString[] = "";
-static char g_DecimalPoint[] = ".";
-static struct lconv g_Lconv;
-
-EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void)
-{
-    if (g_Lconv.decimal_point == NULL)
-    {
-        g_Lconv.thousands_sep = g_Lconv.grouping = g_Lconv.int_curr_symbol = g_Lconv.currency_symbol = g_EmptyString;
-        g_Lconv.mon_decimal_point = g_Lconv.mon_thousands_sep = g_Lconv.mon_grouping = g_EmptyString;
-        g_Lconv.positive_sign = g_Lconv.negative_sign = g_EmptyString;
-        g_Lconv.int_frac_digits = g_Lconv.frac_digits = g_Lconv.p_cs_precedes = g_Lconv.p_sep_by_space = CHAR_MAX;
-        g_Lconv.n_cs_precedes = g_Lconv.n_sep_by_space = g_Lconv.p_sign_posn = g_Lconv.n_sign_posn = CHAR_MAX;
-        g_Lconv.decimal_point = g_DecimalPoint;
-    }
-    return &g_Lconv;
-}
-
-EXTERN_C int __cdecl _NtCRT___lconv_init(void)
-{
-    return 0;
-}
-
-EXTERN_C int __cdecl _NtCRT__configthreadlocale(int type)
-{
-    UNREFERENCED_PARAMETER(type);
-    return 2; /* _DISABLE_PER_THREAD_LOCALE */
 }
 
 /* One-time runtime initialization, also called by DLL entry points through __getmainargs-less paths */
@@ -1610,12 +819,6 @@ NTCRT_IMPORT(__p___mb_cur_max, _NtCRT___p___mb_cur_max);
 NTCRT_IMPORT(___mb_cur_max_func, _NtCRT____mb_cur_max_func);
 NTCRT_IMPORT(___lc_codepage_func, _NtCRT____lc_codepage_func);
 NTCRT_IMPORT(__getmainargs, _NtCRT___getmainargs);
-NTCRT_IMPORT(__wgetmainargs, _NtCRT___wgetmainargs);
-NTCRT_IMPORT(getenv, _NtCRT_getenv);
-NTCRT_IMPORT(_wgetenv, _NtCRT__wgetenv);
-NTCRT_IMPORT(_putenv, _NtCRT__putenv);
-NTCRT_IMPORT(putenv, _NtCRT__putenv);
-NTCRT_IMPORT(_wputenv, _NtCRT__wputenv);
 NTCRT_IMPORT(_initterm, _NtCRT__initterm);
 NTCRT_IMPORT(_initterm_e, _NtCRT__initterm_e);
 NTCRT_IMPORT(_onexit, _NtCRT__onexit);
@@ -1628,19 +831,7 @@ NTCRT_IMPORT(_cexit, _NtCRT__cexit);
 NTCRT_IMPORT(_c_exit, _NtCRT__c_exit);
 NTCRT_IMPORT(_amsg_exit, _NtCRT_amsg_exit);
 NTCRT_IMPORT(signal, _NtCRT_signal);
-NTCRT_IMPORT(_XcptFilter, _NtCRT__XcptFilter);
-NTCRT_IMPORT(raise, _NtCRT_raise);
-NTCRT_IMPORT(abort, _NtCRT_abort);
 NTCRT_IMPORT(_set_invalid_parameter_handler, _NtCRT__set_invalid_parameter_handler);
 NTCRT_IMPORT(_get_invalid_parameter_handler, _NtCRT__get_invalid_parameter_handler);
-NTCRT_IMPORT(_assert, _NtCRT__assert);
-NTCRT_IMPORT(_wassert, _NtCRT__wassert);
 NTCRT_IMPORT(__setusermatherr, _NtCRT___setusermatherr);
 NTCRT_IMPORT_ONLY(_fpreset, _NtCRT__fpreset);
-NTCRT_IMPORT(_beginthreadex, _NtCRT__beginthreadex);
-NTCRT_IMPORT(_beginthread, _NtCRT__beginthread);
-NTCRT_IMPORT(_endthreadex, _NtCRT__endthreadex);
-NTCRT_IMPORT(_endthread, _NtCRT__endthread);
-NTCRT_IMPORT(localeconv, _NtCRT_localeconv);
-NTCRT_IMPORT(__lconv_init, _NtCRT___lconv_init);
-NTCRT_IMPORT(_configthreadlocale, _NtCRT__configthreadlocale);

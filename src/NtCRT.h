@@ -77,14 +77,19 @@ extern "C" int _NtCRT_InvalidParameter(int Errno);
 
 /* Heap */
 #define NTCRT_HEAP RtlProcessHeap()
+/* malloc, calloc, free and realloc of msvcrt, see Heap.cpp */
+extern "C" void* __cdecl _NtCRT_malloc(size_t size);
+extern "C" void* __cdecl _NtCRT_calloc(size_t count, size_t size);
+extern "C" void __cdecl _NtCRT_free(void* block);
+extern "C" void* __cdecl _NtCRT_realloc(void* block, size_t size);
 
 /* The ANSI code page of the process */
 extern "C" UINT _NtCRT_CodePage(void);
 
 /*
- * Locale, see Locale.cpp. A category is either the "C" locale or "C.UTF-8", the "C" locale with UTF-8 multibyte
- * characters. The LC_CTYPE code page is 0 for "C", where a byte is the character of the same code point, and
- * CP_UTF8 for "C.UTF-8".
+ * Locale, see Locale.cpp and CodePage.cpp. A category is either the "C" locale or "C.UTF-8", the "C" locale with
+ * UTF-8 multibyte characters. The LC_CTYPE code page is 0 for "C", where a byte is the character of the same code
+ * point, and CP_UTF8 for "C.UTF-8".
  */
 extern "C" UINT _NtCRT_CurrentCodePage(void);
 extern "C" UINT _NtCRT_LocaleCodePage(_locale_t Locale);
@@ -150,6 +155,16 @@ extern "C" char* _NtCRT_WideToAnsi(const wchar_t* Str);
 extern "C" PWSTR _NtCRT_FileToWide(const char* Str);
 extern "C" char* _NtCRT_WideToFile(const wchar_t* Str);
 
+/* NtOpenFile of a DOS path, see FilePath.cpp */
+extern "C" NTSTATUS _NtCRT_OpenPath(
+    _Out_ PHANDLE FileHandle,
+    _In_ PCWSTR FileName,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG ShareAccess,
+    _In_ ULONG OpenOptions);
+/* Delete a file (Options FILE_NON_DIRECTORY_FILE) or a directory (FILE_DIRECTORY_FILE), FALSE with the last error */
+extern "C" BOOL _NtCRT_DeletePath(_In_ PCWSTR Path, _In_ ULONG Options);
+
 /* Open a file by DOS path with NtCreateFile, returns Win32 error */
 extern "C" ULONG _NtCRT_CreateFile(
     _Out_ PHANDLE FileHandle,
@@ -171,6 +186,7 @@ extern "C" int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count);
 extern "C" int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count);
 extern "C" int __cdecl _NtCRT_close(int fd);
 extern "C" long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origin);
+extern "C" int __cdecl _NtCRT_chsize_s(int fd, long long size);
 extern "C" int __cdecl _NtCRT_open_handle(HANDLE Handle, int flags);
 extern "C" int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, int pmode);
 extern "C" intptr_t __cdecl _NtCRT_get_osfhandle(int fd);
@@ -194,9 +210,10 @@ extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _I
 /* stdio, see Stdio.cpp */
 
 /*
- * printf (Printf.cpp). _NtCRT_FormatString is snprintf of C (the terminator within Count, returns the whole length),
- * _NtCRT_FormatLegacy _vsnprintf of msvcrt (no terminator if the output fills Count, -1 if it does not fit). They
- * return -1 with errno for an encoding error (EILSEQ) or a length beyond INT_MAX (EOVERFLOW).
+ * printf (Printf.inl, Printf.cpp and PrintfWide.cpp). _NtCRT_FormatString is snprintf of C (the terminator within
+ * Count, returns the whole length), _NtCRT_FormatLegacy _vsnprintf of msvcrt (no terminator if the output fills
+ * Count, -1 if it does not fit). They return -1 with errno for an encoding error (EILSEQ) or a length beyond
+ * INT_MAX (EOVERFLOW).
  */
 #define NTCRT_PRINTF_LEGACY_WIDE 0x1 /* %s and %c of a wide format are wide, %S and %C narrow (msvcrt) */
 extern "C" int _NtCRT_FormatString(char* Buffer, size_t Count, const char* Format, va_list ap, ULONG Options);
@@ -318,7 +335,24 @@ extern "C" void (*_NtCRT_FlushAllAtExit)(void);
 
 /* exit, see Startup.cpp */
 extern "C" __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code);
+extern "C" __attribute__((noreturn)) void __cdecl _NtCRT__exit(int code);
 extern "C" void __cdecl _NtCRT_amsg_exit(int rterrnum);
+extern "C" __attribute__((noreturn)) void __cdecl _NtCRT_abort(void);
+
+/* Messages of the runtime without the printf family: append Text or Value of at least MinDigits to Buffer */
+extern "C" void _NtCRT_AppendText(_Inout_updates_z_(Size) char* Buffer, _In_ size_t Size, _In_z_ const char* Text);
+extern "C" void _NtCRT_AppendNumber(_Inout_updates_z_(Size) char* Buffer, _In_ size_t Size, _In_ unsigned int Value,
+                                    _In_ int MinDigits);
+
+/* One-time runtime initialization, see Startup.cpp */
+extern "C" int __cdecl _NtCRT_InitRuntime(void);
+/* _environ and _wenviron from the process environment if not built yet, see Startup.cpp */
+extern "C" void _NtCRT_InitEnviron(void);
+
+/* The actions of the signals and of SIGILL of a privileged instruction, set by signal (Startup.cpp) */
+typedef void(__cdecl* _NtCRT_sighandler_t)(int);
+extern "C" _NtCRT_sighandler_t _NtCRT_SignalHandlers[];
+extern "C" _NtCRT_sighandler_t _NtCRT_PrivilegedInstructionHandler;
 
 /* Globals, see Startup.cpp */
 extern "C" int _NtCRT_fmode;

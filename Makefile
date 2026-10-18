@@ -12,9 +12,12 @@ ifeq ($(origin CC),default)
 CC       := gcc
 endif
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra
-CXXFLAGS += -Iinclude -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti
+CXXFLAGS += -Iinclude -ffunction-sections -fno-exceptions -fno-rtti
 
 ifdef LLVM
+# A section for each variable, which lld drops unused. GCC would put the zero data in .data$ sections, which take
+# space in the file unlike .bss, and ld links whole objects anyway.
+CXXFLAGS += -fdata-sections
 BUILD    ?= build-llvm
 else
 BUILD    ?= build
@@ -104,8 +107,8 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 
 # Functions of libmingwex replaced by libntcrt: the printf of mingw-w64 by src/FormatNarrow.cpp and
 # src/FormatWide.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll, wcstoull, wcstoimax and
-# wcstoumax by src/Integer.cpp, btowc and wctob by src/Multibyte.cpp and ftruncate64 by src/LowIO.cpp. libntcrt
-# defines them under their names too, for lld.
+# wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp and ftruncate64 by src/LowIOFile.cpp.
+# libntcrt defines them under their names too, for lld.
 WRAPS_REPLACED := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                               vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
                   $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \

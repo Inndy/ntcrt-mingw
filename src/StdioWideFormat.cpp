@@ -16,7 +16,7 @@
  * Formatted I/O
  *
  * The wide scanf of msvcrt treats %s and %c as wide, the format is rewritten for the scanf of mingw-w64 before
- * use, a format it does not change is used as it is. printf takes the wide formats of msvcrt itself (Printf.cpp).
+ * use, a format it does not change is used as it is. printf takes the wide formats of msvcrt itself (Printf.inl).
  */
 
 static

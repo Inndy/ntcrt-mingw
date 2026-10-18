@@ -48,100 +48,6 @@ try_get_console_output_cp(VOID) throw()
     return (PCRT_GET_CONSOLE_OUTPUT_CP)_NtCRT_GetKernel32Function("GetConsoleOutputCP");
 }
 
-/* WriteConsoleW through condrv, the request carries the message and the text as two input buffers */
-
-typedef struct _NTCRT_CONSOLE_WRITE_IO
-{
-    CD_USER_DEFINED_IO Header;
-    CD_IO_BUFFER DataBuffer;
-    CD_IO_BUFFER ResultBuffer;
-} NTCRT_CONSOLE_WRITE_IO;
-
-typedef BOOL(WINAPI* PNTCRT_WRITE_CONSOLE_W)(HANDLE, const VOID*, DWORD, LPDWORD, LPVOID);
-
-EXTERN_C
-BOOL
-WINAPI
-_NtCRT_WriteConsoleW(
-    _In_ HANDLE hConsoleOutput,
-    _In_reads_(nNumberOfCharsToWrite) const VOID* lpBuffer,
-    _In_ DWORD nNumberOfCharsToWrite,
-    _Out_opt_ LPDWORD lpNumberOfCharsWritten)
-{
-    NTSTATUS Status;
-    IO_STATUS_BLOCK IoStatusBlock;
-    NTCRT_CONSOLE_WRITE_IO Request;
-    CONSOLE_MSG_L1 Message;
-    HANDLE ConsoleServerHandle;
-
-    if (lpNumberOfCharsWritten != NULL)
-    {
-        *lpNumberOfCharsWritten = 0;
-    }
-    hConsoleOutput = _Inline_BasepMapStdHandle(hConsoleOutput);
-
-    if (!IS_NT_VERSION_GE(NT_VERSION_WIN8))
-    {
-        auto const WriteConsoleW = (PNTCRT_WRITE_CONSOLE_W)_NtCRT_GetKernel32Function("WriteConsoleW");
-        if (WriteConsoleW == NULL)
-        {
-            _Inline_SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-            return FALSE;
-        }
-        return WriteConsoleW(hConsoleOutput, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten, NULL);
-    }
-
-    ConsoleServerHandle = NtCurrentPeb()->ProcessParameters->ConsoleHandle;
-    if ((LONG_PTR)ConsoleServerHandle <= 0)
-    {
-        _Inline_BaseSetLastNTError(STATUS_INVALID_HANDLE);
-        return FALSE;
-    }
-    if (nNumberOfCharsToWrite > MAXULONG / sizeof(WCHAR))
-    {
-        _Inline_BaseSetLastNTError(STATUS_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    RtlZeroMemory(&Message, sizeof(Message));
-    Message.ApiNumber = ConsolepWriteConsole;
-    Message.ApiDescriptorSize = sizeof(Message.u.WriteConsole);
-    Message.u.WriteConsole.NumBytes = nNumberOfCharsToWrite * sizeof(WCHAR);
-    Message.u.WriteConsole.Unicode = TRUE;
-
-    RtlZeroMemory(&Request, sizeof(Request));
-    Request.Header.Client = hConsoleOutput;
-    Request.Header.InputCount = 2;
-    Request.Header.OutputCount = 1;
-    Request.Header.Buffers[0].Size = sizeof(CONSOLE_MSG_HEADER) + sizeof(Message.u.WriteConsole);
-    Request.Header.Buffers[0].Buffer = &Message;
-    Request.DataBuffer.Size = nNumberOfCharsToWrite * sizeof(WCHAR);
-    Request.DataBuffer.Buffer = (PVOID)lpBuffer;
-    Request.ResultBuffer.Size = sizeof(Message.u.WriteConsole);
-    Request.ResultBuffer.Buffer = &Message.u;
-
-    Status = NtDeviceIoControlFile(ConsoleServerHandle,
-                                   NULL,
-                                   NULL,
-                                   NULL,
-                                   &IoStatusBlock,
-                                   IOCTL_CONDRV_ISSUE_USER_IO,
-                                   &Request,
-                                   sizeof(Request),
-                                   NULL,
-                                   0);
-    if (!NT_SUCCESS(Status))
-    {
-        _Inline_BaseSetLastNTError(Status);
-        return FALSE;
-    }
-    if (lpNumberOfCharsWritten != NULL)
-    {
-        *lpNumberOfCharsWritten = Message.u.WriteConsole.NumBytes / sizeof(WCHAR);
-    }
-    return TRUE;
-}
-
 /* Exports */
 
 EXTERN_C
@@ -209,85 +115,6 @@ _K32_IsDBCSLeadByteEx(
 
 NTCRT_API BOOL WINAPI _K32_IsDBCSLeadByte(_In_ BYTE TestChar) { return _K32_IsDBCSLeadByteEx(CP_ACP, TestChar); }
 
-NTCRT_API
-HMODULE
-WINAPI
-_K32_LoadLibraryExW(
-    _In_ LPCWSTR lpLibFileName,
-    _Reserved_ HANDLE hFile,
-    _In_ DWORD dwFlags)
-{
-    return _CRT_LoadLibraryExW(lpLibFileName, hFile, dwFlags);
-}
-
-NTCRT_API
-HMODULE
-WINAPI
-_K32_LoadLibraryW(
-    _In_ LPCWSTR lpLibFileName)
-{
-    return _CRT_LoadLibraryExW(lpLibFileName, NULL, 0);
-}
-
-NTCRT_API
-HMODULE
-WINAPI
-_K32_LoadLibraryExA(
-    _In_ LPCSTR lpLibFileName,
-    _Reserved_ HANDLE hFile,
-    _In_ DWORD dwFlags)
-{
-    HMODULE Module;
-    PWSTR Name = _NtCRT_AnsiToWide(lpLibFileName);
-
-    if (Name == NULL)
-    {
-        return NULL;
-    }
-    Module = _CRT_LoadLibraryExW(Name, hFile, dwFlags);
-    RtlFreeHeap(RtlProcessHeap(), 0, Name);
-    return Module;
-}
-
-NTCRT_API
-HMODULE
-WINAPI
-_K32_LoadLibraryA(
-    _In_ LPCSTR lpLibFileName)
-{
-    return _K32_LoadLibraryExA(lpLibFileName, NULL, 0);
-}
-
-NTCRT_API
-FARPROC
-WINAPI
-_K32_GetProcAddress(
-    _In_ HMODULE hModule,
-    _In_ LPCSTR lpProcName)
-{
-    return _CRT_GetProcAddress(hModule, lpProcName);
-}
-
-NTCRT_API
-BOOL
-WINAPI
-_K32_FreeLibrary(
-    _In_ HMODULE hLibModule)
-{
-    if (LDR_IS_RESOURCE(hLibModule))
-    {
-        _Inline_SetLastError(ERROR_NOT_SUPPORTED);
-        return FALSE;
-    }
-    NTSTATUS Status = LdrUnloadDll(hLibModule);
-    if (NT_SUCCESS(Status))
-    {
-        return TRUE;
-    }
-    _Inline_BaseSetLastNTError(Status);
-    return FALSE;
-}
-
 /*
  * Install the filter to ntdll directly as the original NtCRT does. kernel32!UnhandledExceptionFilter is returned as
  * the previous filter at the first time, so MinGW-w64's _gnu_exception_handler still chains to the default behavior.
@@ -317,20 +144,6 @@ NTCRT_API DWORD WINAPI _K32_GetFileType(_In_ HANDLE hFile) { return _CRT_GetFile
 NTCRT_API BOOL WINAPI _K32_GetConsoleMode(_In_ HANDLE h, _Out_ LPDWORD m) { return _CRT_GetConsoleMode(h, m); }
 NTCRT_API UINT WINAPI _K32_GetConsoleOutputCP(VOID) { return _CRT_GetConsoleOutputCP(); }
 
-NTCRT_API
-BOOL
-WINAPI
-_K32_WriteConsoleW(
-    _In_ HANDLE hConsoleOutput,
-    _In_reads_(nNumberOfCharsToWrite) const VOID* lpBuffer,
-    _In_ DWORD nNumberOfCharsToWrite,
-    _Out_opt_ LPDWORD lpNumberOfCharsWritten,
-    _Reserved_ LPVOID lpReserved)
-{
-    UNREFERENCED_PARAMETER(lpReserved);
-    return _NtCRT_WriteConsoleW(hConsoleOutput, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten);
-}
-
 /* UCRT internal of KNSoft.NtCRT UCRT/Locale.inl, used by test/upstream */
 NTCRT_API
 _Success_(return)
@@ -354,14 +167,7 @@ NTCRT_IMPORT(IsValidCodePage, _CRT_IsValidCodePage);
 NTCRT_IMPORT(GetStringTypeW, _CRT_GetStringTypeW);
 NTCRT_IMPORT(IsDBCSLeadByteEx, _K32_IsDBCSLeadByteEx);
 NTCRT_IMPORT(IsDBCSLeadByte, _K32_IsDBCSLeadByte);
-NTCRT_IMPORT(LoadLibraryExW, _K32_LoadLibraryExW);
-NTCRT_IMPORT(LoadLibraryW, _K32_LoadLibraryW);
-NTCRT_IMPORT(LoadLibraryExA, _K32_LoadLibraryExA);
-NTCRT_IMPORT(LoadLibraryA, _K32_LoadLibraryA);
-NTCRT_IMPORT(GetProcAddress, _K32_GetProcAddress);
-NTCRT_IMPORT(FreeLibrary, _K32_FreeLibrary);
 NTCRT_IMPORT(SetUnhandledExceptionFilter, _K32_SetUnhandledExceptionFilter);
 NTCRT_IMPORT(GetFileType, _K32_GetFileType);
 NTCRT_IMPORT(GetConsoleMode, _K32_GetConsoleMode);
 NTCRT_IMPORT(GetConsoleOutputCP, _K32_GetConsoleOutputCP);
-NTCRT_IMPORT(WriteConsoleW, _K32_WriteConsoleW);

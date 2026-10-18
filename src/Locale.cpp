@@ -60,54 +60,8 @@ static BOOL g_Utf8[LC_MAX + 1];
 static char g_AllName[96];
 static wchar_t g_WideName[96];
 static unsigned short g_CtypeUtf8[257];
-static volatile LONG g_LocaleScopes;
 
 extern "C" int _NtCRT_mb_cur_max;
-
-EXTERN_C UINT _NtCRT_CurrentCodePage(void)
-{
-    if (g_LocaleScopes != 0)
-    {
-        unsigned int CodePage = _NtCRT_GetPtd()->LocaleCodePage;
-
-        if (CodePage != 0)
-        {
-            return CodePage - 1;
-        }
-    }
-    return _NtCRT_lc_codepage;
-}
-
-EXTERN_C UINT _NtCRT_LocaleCodePage(_locale_t Locale)
-{
-    return Locale != NULL ? Locale->locinfo->lc_codepage : _NtCRT_CurrentCodePage();
-}
-
-EXTERN_C UINT _NtCRT_FileCodePage(void)
-{
-    return _NtCRT_lc_codepage == CP_UTF8 ? CP_UTF8 : _NtCRT_CodePage();
-}
-
-NTCRT_LOCALE_SCOPE::NTCRT_LOCALE_SCOPE(_locale_t Locale)
-{
-    m_Ptd = NULL;
-    if (Locale != NULL)
-    {
-        m_Ptd = _NtCRT_GetPtd();
-        m_Saved = m_Ptd->LocaleCodePage;
-        _InterlockedIncrement(&g_LocaleScopes);
-        m_Ptd->LocaleCodePage = Locale->locinfo->lc_codepage + 1;
-    }
-}
-
-NTCRT_LOCALE_SCOPE::~NTCRT_LOCALE_SCOPE()
-{
-    if (m_Ptd != NULL)
-    {
-        m_Ptd->LocaleCodePage = m_Saved;
-        _InterlockedDecrement(&g_LocaleScopes);
-    }
-}
 
 /*
  * Parse the locale name of one category: 1 for "C.UTF-8", 0 for "C", -1 if not supported.

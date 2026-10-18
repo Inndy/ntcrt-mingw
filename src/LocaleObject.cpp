@@ -1,14 +1,47 @@
 /*
- * Locale objects of msvcrt: _create_locale, _get_current_locale and _free_locale, see Locale.cpp.
+ * Locale objects of msvcrt: _create_locale, _get_current_locale and _free_locale, see Locale.cpp. The locale
+ * information of the "C" locale (localeconv).
  */
 
 #include "NtCRT.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <string.h>
 
-EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void);
+#pragma region The locale information of the "C" locale
+
+static char g_EmptyString[] = "";
+static char g_DecimalPoint[] = ".";
+static struct lconv g_Lconv;
+
+EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void)
+{
+    if (g_Lconv.decimal_point == NULL)
+    {
+        g_Lconv.thousands_sep = g_Lconv.grouping = g_Lconv.int_curr_symbol = g_Lconv.currency_symbol = g_EmptyString;
+        g_Lconv.mon_decimal_point = g_Lconv.mon_thousands_sep = g_Lconv.mon_grouping = g_EmptyString;
+        g_Lconv.positive_sign = g_Lconv.negative_sign = g_EmptyString;
+        g_Lconv.int_frac_digits = g_Lconv.frac_digits = g_Lconv.p_cs_precedes = g_Lconv.p_sep_by_space = CHAR_MAX;
+        g_Lconv.n_cs_precedes = g_Lconv.n_sep_by_space = g_Lconv.p_sign_posn = g_Lconv.n_sign_posn = CHAR_MAX;
+        g_Lconv.decimal_point = g_DecimalPoint;
+    }
+    return &g_Lconv;
+}
+
+EXTERN_C int __cdecl _NtCRT___lconv_init(void)
+{
+    return 0;
+}
+
+EXTERN_C int __cdecl _NtCRT__configthreadlocale(int type)
+{
+    UNREFERENCED_PARAMETER(type);
+    return 2; /* _DISABLE_PER_THREAD_LOCALE */
+}
+
+#pragma endregion
 
 #pragma region Locale objects
 
@@ -99,3 +132,6 @@ EXTERN_C void __cdecl _NtCRT__free_locale(_locale_t locale)
 NTCRT_IMPORT(_create_locale, _NtCRT__create_locale);
 NTCRT_IMPORT(_get_current_locale, _NtCRT__get_current_locale);
 NTCRT_IMPORT(_free_locale, _NtCRT__free_locale);
+NTCRT_IMPORT(localeconv, _NtCRT_localeconv);
+NTCRT_IMPORT(__lconv_init, _NtCRT___lconv_init);
+NTCRT_IMPORT(_configthreadlocale, _NtCRT__configthreadlocale);

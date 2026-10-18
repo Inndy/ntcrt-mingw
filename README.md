@@ -42,10 +42,26 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 
 ld cannot drop the unused functions of an x64 PE image: the linker script keeps `.pdata`, which refers to every
 function, so `--gc-sections` has no effect and a program links whole objects of `libntcrt.a`. The runtime is
-split so that the startup code links few of them: the `_l` functions are beside the functions they call or in
-`Locale*.cpp`, locale objects, character class tables, printf, wide printf and scanf are objects of their own,
-and stdio is flushed at exit by a pointer that stdio sets. `libntcrt_start.a` replaces the pseudo relocator and
-`_matherr` of libmingw32, which report errors by `fprintf` and would link the printf family into every program.
+split so that the startup code and small programs link few and small objects:
+
+- what every program reaches is apart from the rest of its file: the startup of `Startup.cpp` (`getenv` and
+  `_putenv` are `Environ.cpp`, `raise`, `_XcptFilter` and `abort` `Signal.cpp`, `_assert` `Assert.cpp`, threads
+  `Thread.cpp`, `__wgetmainargs` `WideMain.cpp`), the descriptor table and the raw writes of fd 2 (`LowIOInit.cpp`),
+  the last error, critical sections and TLS that libmingw32 uses (`Kernel32Lock.cpp`), the code pages and the
+  strings converted by them (`CodePage.cpp`), malloc and free (`Heap.cpp`)
+- low-level I/O is split into `_write` (`LowIO.cpp`), `_read`, opening, `stat` and the other descriptor functions,
+  stdio into what `puts` and printf write by (`Stdio.cpp`), input, wide output, wide input, positioning, control,
+  opening and temporary files, kernel32 into `LoadLibrary`, `WriteConsoleW` and the paths that `_open` and `remove`
+  use (`FilePath.cpp`) beside the rest
+- the printf engine is a template (`Printf.inl`) instantiated for narrow (`Printf.cpp`) and wide (`PrintfWide.cpp`)
+  output, the multibyte functions keep the codec, `mbrtowc` and `wcrtomb` that printf uses in `MultibyteChar.cpp`
+- the `_l` functions are beside the functions they call or in `Locale*.cpp`, locale objects, character class
+  tables and scanf are objects of their own, and stdio is flushed at exit by a pointer that stdio sets
+- GCC builds without `-fdata-sections`, which puts zero data in `.data$` sections that take space in the file
+  (`.bss` does not)
+
+`libntcrt_start.a` replaces the pseudo relocator and `_matherr` of libmingw32, which report errors by `fprintf` and
+would link the printf family into every program.
 
 lld (`make LLVM=1`) drops the unused functions: clang makes the `.pdata` and `.xdata` of a function associative to
 it, so a program links the functions it reaches. The libraries of GCC (libmingwex, libstdc++) are still linked by
@@ -67,14 +83,17 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 114176 | 30208 | 14336 |
-| `puts` | 248832 | 445440 | 143872 | 40448 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 237056 | 71680 | 41984 |
-| `wprintf` | 248832 | 445440 | 237056 | 74752 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1246208 | 772608 | 1035776 |
+| `return 0` | 248832 | 445440 | 37376 | 25088 | 14336 |
+| `puts` | 248832 | 445440 | 48128 | 35328 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
+| `wprintf` | 248832 | 445440 | 82432 | 69120 | 41472 |
+| `std::cout` | 1257472 | 1420800 | 1179648 | 748544 | 1035776 |
 
-The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links
-`src/Printf.cpp` and the digits of `src/Float.cpp`, with ld all of both (the parser of strtod too).
+The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links the
+narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of `src/Float.cpp`, with ld
+all of them. What ld links beyond lld is the unused functions of these objects, most of all the code page
+conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of `argv`,
+one object of the shared sources).
 
 ## LLVM
 
@@ -127,7 +146,7 @@ Two locales: "C" and "C.UTF-8". Each category of `setlocale` is one of them.
 
 ### printf and scanf
 
-The printf family is NtCRT's own (`src/Printf.cpp`): the functions of msvcrt, and the `__mingw_*printf` that
+The printf family is NtCRT's own (`src/Printf.inl`): the functions of msvcrt, and the `__mingw_*printf` that
 MinGW-w64 formats through in C++, with `__USE_MINGW_ANSI_STDIO` and for its inline `snprintf` (wrapped by the
 specs, defined by libntcrt for lld). The printf of libmingwex (`pformat`, `gdtoa`) is not linked. It follows C and
 takes the conventions of msvcrt beside:
