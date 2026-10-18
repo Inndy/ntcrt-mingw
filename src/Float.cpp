@@ -6,7 +6,7 @@
  * 19 significant digits is d * 10**p, scaled by a 128-bit power of 10 (FloatPow10.inl) to the 53 or 24 bits of
  * the result and two bits more for rounding. More digits are truncated to 19 when d + 1 rounds the same, the
  * multiprecision decimal of up to 800 digits is the fallback. The syntax is the one of strtod in C instead of Go.
- * The decimal also gives the exact digits for %g of printf (Format.cpp).
+ * The ftoa of Go gives the digits of %e, %f and %g of printf (Printf.cpp), the same way.
  *
  * Copyright 2009 The Go Authors.
  *
@@ -200,14 +200,21 @@ static BOOL _NtCRT_ParseFloat32(ULONG64 d, int p, ULONG Sign, ULONG* Bits)
 
 #pragma region Multiprecision decimal (decimal.go)
 
+/*
+ * The digits are in a buffer of the caller: 800 hold any double exactly (Go), 12000 any 80-bit long double, whose
+ * smallest denormal 2**-16445 has 11500 significant digits.
+ */
 typedef struct _NTCRT_DECIMAL
 {
-    char d[800]; /* Digits */
+    char* d;     /* Digits */
+    int Cap;     /* Size of d */
     int nd;      /* Number of digits */
     int dp;      /* Decimal point */
     BOOL Neg;
     BOOL Trunc; /* Nonzero digits discarded beyond d[nd - 1] */
 } NTCRT_DECIMAL;
+
+#define NTCRT_DECIMAL_DIGITS 800
 
 /* The largest shift without overflow of 9 << k in 64 bits */
 #define NTCRT_MAX_SHIFT 60
@@ -267,7 +274,7 @@ static void _NtCRT_DecimalRightShift(NTCRT_DECIMAL* a, int k)
         ULONG64 Digit = n >> k;
 
         n &= Mask;
-        if (w < (int)sizeof(a->d))
+        if (w < a->Cap)
         {
             a->d[w++] = (char)(Digit + '0');
         } else if (Digit > 0)
@@ -383,7 +390,7 @@ static void _NtCRT_DecimalLeftShift(NTCRT_DECIMAL* a, int k)
         Quo = n / 10;
         Rem = n - 10 * Quo;
         w--;
-        if (w < (int)sizeof(a->d))
+        if (w < a->Cap)
         {
             a->d[w] = (char)(Rem + '0');
         } else if (Rem != 0)
@@ -399,7 +406,7 @@ static void _NtCRT_DecimalLeftShift(NTCRT_DECIMAL* a, int k)
         ULONG64 Quo = n / 10, Rem = n - 10 * Quo;
 
         w--;
-        if (w < (int)sizeof(a->d))
+        if (w < a->Cap)
         {
             a->d[w] = (char)(Rem + '0');
         } else if (Rem != 0)
@@ -409,9 +416,9 @@ static void _NtCRT_DecimalLeftShift(NTCRT_DECIMAL* a, int k)
         n = Quo;
     }
     a->nd += Delta;
-    if (a->nd >= (int)sizeof(a->d))
+    if (a->nd >= a->Cap)
     {
-        a->nd = (int)sizeof(a->d);
+        a->nd = a->Cap;
     }
     a->dp += Delta;
     _NtCRT_DecimalTrim(a);
@@ -848,7 +855,7 @@ static void _NtCRT_DecimalSet(NTCRT_DECIMAL* b, const TChar* s, const NTCRT_FLOA
             continue;
         }
         nd++;
-        if (b->nd < (int)sizeof(b->d))
+        if (b->nd < b->Cap)
         {
             b->d[b->nd++] = (char)s[i];
         } else if (s[i] != '0')
@@ -1060,7 +1067,11 @@ static size_t _NtCRT_Atof64(const TChar* s, double* Value, BOOL* Range)
         /* The truncated digits do not matter if d + 1 rounds the same */
         if (t.Trunc && (_NtCRT_ParseFloat64(t.Mantissa + 1, t.Exp, Sign, &Bits1), Bits1 != Bits))
         {
-            NTCRT_DECIMAL Dec;
+            char Digits[NTCRT_DECIMAL_DIGITS];
+            NTCRT_DECIMAL Dec = {};
+
+            Dec.d = Digits;
+            Dec.Cap = sizeof(Digits);
 
             _NtCRT_DecimalSet(&Dec, s, &t);
             Overflow = _NtCRT_DecimalFloatBits(&Dec, &g_Float64Info, &Bits);
@@ -1116,7 +1127,11 @@ static size_t _NtCRT_Atof32(const TChar* s, float* Value, BOOL* Range)
         Overflow = _NtCRT_ParseFloat32(t.Mantissa, t.Exp, Sign, &Bits);
         if (t.Trunc && (_NtCRT_ParseFloat32(t.Mantissa + 1, t.Exp, Sign, &Bits1), Bits1 != Bits))
         {
-            NTCRT_DECIMAL Dec;
+            char Digits[NTCRT_DECIMAL_DIGITS];
+            NTCRT_DECIMAL Dec = {};
+
+            Dec.d = Digits;
+            Dec.Cap = sizeof(Digits);
 
             _NtCRT_DecimalSet(&Dec, s, &t);
             Overflow = _NtCRT_DecimalFloatBits(&Dec, &g_Float32Info, &Bits64);
@@ -1132,33 +1147,136 @@ static size_t _NtCRT_Atof32(const TChar* s, float* Value, BOOL* Range)
 
 #pragma region Formatting (ftoa.go)
 
-/*
- * The exponent of %e of a finite double with Digits significant digits, ties to even, the digits after the last one
- * that is not 0 in *Zeros. Exact, by the multiprecision decimal: the slow path of ftoa.
- */
-EXTERN_C int _NtCRT_DecimalExponent(double Value, int Digits, int* Zeros)
+/* floor(log10(2**x)), log10 2 ~ 78913 / 2**18 */
+static inline int _NtCRT_Log10Pow2(int x)
 {
-    const NTCRT_FLOAT_INFO* Flt = &g_Float64Info;
-    NTCRT_DECIMAL d;
-    ULONG64 Bits, Mant;
-    int Exp;
+    return (x * 78913) >> 18;
+}
 
-    memcpy(&Bits, &Value, sizeof(Bits));
-    Mant = Bits & ((1ull << Flt->MantBits) - 1);
-    Exp = (int)(Bits >> Flt->MantBits) & ((1 << Flt->ExpBits) - 1);
-    if (Exp == 0)
+static inline NTCRT_UNROUNDED _NtCRT_UnroundedDiv(NTCRT_UNROUNDED u, ULONG64 d)
+{
+    return u / d | (u & 1) | (u % d != 0);
+}
+
+static const ULONG64 g_Uint64Pow10[] = { 1ull,
+                                         10ull,
+                                         100ull,
+                                         1000ull,
+                                         10000ull,
+                                         100000ull,
+                                         1000000ull,
+                                         10000000ull,
+                                         100000000ull,
+                                         1000000000ull,
+                                         10000000000ull,
+                                         100000000000ull,
+                                         1000000000000ull,
+                                         10000000000000ull,
+                                         100000000000000ull,
+                                         1000000000000000ull,
+                                         10000000000000000ull,
+                                         100000000000000000ull,
+                                         1000000000000000000ull,
+                                         10000000000000000000ull };
+
+/*
+ * The n-digit decimal of m * 2**e, m left-justified, as d * 10**-p (fixedWidthFloat). For 'f' n is an upper
+ * bound and digits after the Precision-th after the point are dropped. FALSE if 10**p is not in the table.
+ */
+static BOOL _NtCRT_FixedWidth(ULONG64 m, int e, int n, int Precision, char Mode, ULONG64* d, int* p)
+{
+    NTCRT_SCALER Pre;
+    NTCRT_UNROUNDED u;
+
+    *p = n - 1 - _NtCRT_Log10Pow2(e + 63);
+    if (*p < NTCRT_POW10_MIN || *p > NTCRT_POW10_MAX)
     {
-        Exp++;
+        return FALSE;
+    }
+    _NtCRT_Prescale(&Pre, e, *p, _NtCRT_Log2Pow10(*p));
+    u = _NtCRT_Uscale(m, &Pre);
+    if (u >= _NtCRT_Unmin(g_Uint64Pow10[n]))
+    {
+        u = _NtCRT_UnroundedDiv(u, 10);
+        (*p)--;
+    }
+    if (Mode == 'f')
+    {
+        for (; *p > Precision; (*p)--)
+        {
+            u = _NtCRT_UnroundedDiv(u, 10);
+        }
+    }
+    *d = _NtCRT_Round(u);
+    return TRUE;
+}
+
+/*
+ * The decimal digits of Mant * 2**Exp, Mant not 0, for printf, ties to even: Mode 'e' rounds to Precision + 1
+ * significant digits, 'f' to Precision digits after the point. The digits d1 d2 ... dn in Digits, without the
+ * trailing zeros, are 0.d1d2...dn * 10**Point; returns n, 0 if they are all 0 (%f of a small number). Size is
+ * NTCRT_FLOAT_DIGITS for a double and NTCRT_FLOAT_DIGITS_LONG for a long double; the long double needs the
+ * multiprecision decimal and a mantissa of up to 53 bits takes the fast path of ftoa when it has at most 18
+ * digits to print.
+ */
+EXTERN_C int _NtCRT_FloatDigits(ULONG64 Mant, int Exp, char Mode, int Precision, char* Digits, int Size, int* Point)
+{
+    int Len = _NtCRT_Len64(Mant), Log2 = Exp + Len - 1, n;
+    NTCRT_DECIMAL d = {};
+
+    d.d = Digits;
+    d.Cap = Size;
+
+    /* Digits to compute: Precision + 1 for %e, an upper bound for %f */
+    if (Mode == 'f')
+    {
+        n = Log2 >= 0 ? 1 + _NtCRT_Log10Pow2(1 + Log2) + Precision : 1 + Precision - _NtCRT_Log10Pow2(-Log2);
     } else
     {
-        Mant |= 1ull << Flt->MantBits;
+        n = Precision + 1;
     }
-    Exp += Flt->Bias;
+    if (n <= 0)
+    {
+        return 0;
+    }
+    if (n <= 18 && Len <= 53)
+    {
+        ULONG64 v;
+        int p, nd;
+
+        if (_NtCRT_FixedWidth(Mant << (64 - Len), Exp - (64 - Len), n, Precision, Mode, &v, &p))
+        {
+            if (v == 0)
+            {
+                return 0;
+            }
+            for (nd = 1; nd < 20 && v >= g_Uint64Pow10[nd]; nd++)
+            {
+            }
+            *Point = nd - p;
+            for (int i = nd - 1; i >= 0; i--)
+            {
+                Digits[i] = (char)('0' + v % 10);
+                v /= 10;
+            }
+            while (Digits[nd - 1] == '0')
+            {
+                nd--;
+            }
+            return nd;
+        }
+    }
+
+    /* The slow path */
     _NtCRT_DecimalAssign(&d, Mant);
-    _NtCRT_DecimalShift(&d, Exp - Flt->MantBits);
-    _NtCRT_DecimalRound(&d, Digits);
-    *Zeros = Digits - d.nd;
-    return d.nd == 0 ? 0 : d.dp - 1;
+    _NtCRT_DecimalShift(&d, Exp);
+    if (Mode == 'f' && d.dp + Precision < 0)
+    {
+        return 0;
+    }
+    _NtCRT_DecimalRound(&d, Mode == 'f' ? d.dp + Precision : Precision + 1);
+    *Point = d.dp;
+    return d.nd;
 }
 
 #pragma endregion

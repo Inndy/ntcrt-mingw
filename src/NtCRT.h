@@ -99,8 +99,10 @@ extern "C" char* _NtCRT_LocaleName(int Category, const BOOL* Utf8, char* Buffer)
 extern "C" unsigned short* _NtCRT_CtypeUtf8(void);
 extern "C" void _NtCRT_GetLocaleUtf8(BOOL* Utf8);
 
-/* Float.cpp: the exponent of %e of a finite double with Digits significant digits, and its trailing zeros */
-extern "C" int _NtCRT_DecimalExponent(double Value, int Digits, int* Zeros);
+/* Float.cpp: the decimal digits of Mant * 2**Exp for %e (Mode 'e') or %f ('f') of printf */
+#define NTCRT_FLOAT_DIGITS 800
+#define NTCRT_FLOAT_DIGITS_LONG 12000
+extern "C" int _NtCRT_FloatDigits(ULONG64 Mant, int Exp, char Mode, int Precision, char* Digits, int Size, int* Point);
 
 /* _ctype, the character classes of "C" (Ctype.cpp) */
 struct NTCRT_CTYPE_TABLE
@@ -192,26 +194,19 @@ extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _I
 /* stdio, see Stdio.cpp */
 
 /*
- * The arguments of printf with the strings and characters of the other width than the format converted by the
- * locale, see Format.cpp. The wide format is the C99 one translated by Stdio.cpp. Pass Format and Args to the
- * printf of mingw-w64, unless Failed for an encoding error or no memory, where errno is set.
+ * printf (Printf.cpp). _NtCRT_FormatString is snprintf of C (the terminator within Count, returns the whole length),
+ * _NtCRT_FormatLegacy _vsnprintf of msvcrt (no terminator if the output fills Count, -1 if it does not fit). They
+ * return -1 with errno for an encoding error (EILSEQ) or a length beyond INT_MAX (EOVERFLOW).
  */
-class NTCRT_FORMAT_ARGS
-{
-public:
-    NTCRT_FORMAT_ARGS(const char* Format, va_list ap);
-    NTCRT_FORMAT_ARGS(const wchar_t* Format, va_list ap);
-    ~NTCRT_FORMAT_ARGS();
+#define NTCRT_PRINTF_LEGACY_WIDE 0x1 /* %s and %c of a wide format are wide, %S and %C narrow (msvcrt) */
+extern "C" int _NtCRT_FormatString(char* Buffer, size_t Count, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatStringW(wchar_t* Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatLegacy(char* Buffer, size_t Count, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatLegacyW(wchar_t* Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatAlloc(char** Result, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatStream(FILE* Stream, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatStreamW(FILE* Stream, const wchar_t* Format, va_list ap, ULONG Options);
 
-    BOOL Failed;
-    const void* Format;
-    va_list Args;
-
-    PVOID m_Format;
-    ULONG64* m_Slots;
-    PVOID* m_Strings;
-    int m_StringCount;
-};
 /* Streams of Stdio.cpp used by StdioPrintf.cpp and StdioScanf.cpp */
 extern "C" FILE _NtCRT_iob[];
 extern "C" void __cdecl _NtCRT_lock_file(FILE* stream);
@@ -219,7 +214,8 @@ extern "C" void __cdecl _NtCRT_unlock_file(FILE* stream);
 extern "C" int __cdecl _NtCRT__fflush_nolock(FILE* stream);
 extern "C" int _NtCRT_FlushPut(const char* Bytes, int Length, FILE* stream);
 extern "C" wint_t _NtCRT_putwc_nolock(wchar_t Ch, FILE* Stream);
-/* A wide format of msvcrt (%s and %c are wide) as mingw-w64 takes it, see StdioWideFormat.cpp */
+extern "C" int _NtCRT_StreamWrite(FILE* stream, const char* Bytes, size_t Length);
+/* A wide scanf format of msvcrt (%s and %c are wide) as mingw-w64 takes it, see StdioWideFormat.cpp */
 extern "C" PCWSTR _NtCRT_TranslateWideFormat(PCWSTR Format, PWSTR Buffer, size_t BufferCount, BOOL Scan,
                                              PWSTR* Allocated);
 #define NTCRT_WIDE_FORMAT(Format, Scan)                                                                                \
@@ -236,9 +232,6 @@ extern "C" PCWSTR _NtCRT_TranslateWideFormat(PCWSTR Format, PWSTR Buffer, size_t
         } \
     } while (0)
 
-/* The format and arguments of an NTCRT_FORMAT_ARGS as mingw-w64 takes them */
-#define NTCRT_A(f) ((const char*)(f).Format)
-#define NTCRT_W(f) ((const wchar_t*)(f).Format)
 /* A variadic function calling its va_list form */
 #define NTCRT_WRAP_VARIADIC(Name, VName, Params, Last, Args) \
     NTCRT_API int __cdecl Name Params \

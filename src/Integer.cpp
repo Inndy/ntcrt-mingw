@@ -255,3 +255,9 @@ NTCRT_IMPORT_ONLY(wcstoull, _NtCRT_wcstoull);
 NTCRT_IMPORT(_wcstoui64, _NtCRT_wcstoull);
 NTCRT_IMPORT(atoll, _NtCRT_atoll);
 NTCRT_IMPORT(_wtoll, _NtCRT__wtoll);
+
+/* Under their names too, as the printf of FormatNarrow.cpp: lld takes them from libntcrt without --wrap */
+EXTERN_C long long __cdecl wcstoll(const wchar_t*, wchar_t**, int) __attribute__((alias("__wrap_wcstoll")));
+EXTERN_C unsigned long long __cdecl wcstoull(const wchar_t*, wchar_t**, int) __attribute__((alias("__wrap_wcstoull")));
+EXTERN_C intmax_t __cdecl wcstoimax(const wchar_t*, wchar_t**, int) __attribute__((alias("__wrap_wcstoimax")));
+EXTERN_C uintmax_t __cdecl wcstoumax(const wchar_t*, wchar_t**, int) __attribute__((alias("__wrap_wcstoumax")));

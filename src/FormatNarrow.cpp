@@ -1,6 +1,6 @@
 /*
- * The narrow printf of mingw-w64 wrapped by the specs (--wrap), see Format.cpp. The conversions between narrow and
- * wide strings are done by NTCRT_FORMAT_ARGS before the format reaches mingw-w64.
+ * The narrow printf of mingw-w64 wrapped by the specs (--wrap), formatted by Printf.cpp. libmingwex is not called:
+ * its printf (pformat, gdtoa) is not linked.
  */
 
 #include "NtCRT.h"
@@ -8,66 +8,29 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-extern "C"
-{
-    int __cdecl __real___mingw_vfprintf(FILE*, const char*, va_list);
-    int __cdecl __real___mingw_vprintf(const char*, va_list);
-    int __cdecl __real___mingw_vsprintf(char*, const char*, va_list);
-    int __cdecl __real___mingw_vsnprintf(char*, size_t, const char*, va_list);
-    int __cdecl __real___mingw_vasprintf(char**, const char*, va_list);
-}
-
 NTCRT_API int __cdecl __wrap___mingw_vfprintf(FILE* stream, const char* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    return f.Failed ? -1 : __real___mingw_vfprintf(stream, NTCRT_A(f), f.Args);
+    return _NtCRT_FormatStream(stream, format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vprintf(const char* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    return f.Failed ? -1 : __real___mingw_vprintf(NTCRT_A(f), f.Args);
+    return _NtCRT_FormatStream(&_NtCRT_iob[1], format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vsprintf(char* buffer, const char* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    if (f.Failed)
-    {
-        *buffer = '\0';
-        return -1;
-    }
-    return __real___mingw_vsprintf(buffer, NTCRT_A(f), f.Args);
+    return _NtCRT_FormatString(buffer, SIZE_MAX, format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vsnprintf(char* buffer, size_t count, const char* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    if (f.Failed)
-    {
-        if (count != 0)
-        {
-            *buffer = '\0';
-        }
-        return -1;
-    }
-    return __real___mingw_vsnprintf(buffer, count, NTCRT_A(f), f.Args);
+    return _NtCRT_FormatString(buffer, count, format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vasprintf(char** result, const char* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    if (f.Failed)
-    {
-        *result = NULL;
-        return -1;
-    }
-    return __real___mingw_vasprintf(result, NTCRT_A(f), f.Args);
+    return _NtCRT_FormatAlloc(result, format, ap, 0);
 }
 
 NTCRT_WRAP_VARIADIC(__wrap___mingw_fprintf,
@@ -91,3 +54,19 @@ NTCRT_WRAP_VARIADIC(__wrap___mingw_asprintf,
                     (char** result, const char* format, ...),
                     format,
                     (result, format, ap))
+
+/*
+ * The functions under their names too: lld takes them from libntcrt, which precedes libmingwex, so ntcrt.cfg does not
+ * wrap them and the printf of libmingwex is not loaded. ld takes libmingwex first and wraps them (ntcrt.specs).
+ */
+EXTERN_C int __cdecl __mingw_vfprintf(FILE*, const char*, va_list) __attribute__((alias("__wrap___mingw_vfprintf")));
+EXTERN_C int __cdecl __mingw_vprintf(const char*, va_list) __attribute__((alias("__wrap___mingw_vprintf")));
+EXTERN_C int __cdecl __mingw_vsprintf(char*, const char*, va_list) __attribute__((alias("__wrap___mingw_vsprintf")));
+EXTERN_C int __cdecl __mingw_vsnprintf(char*, size_t, const char*, va_list)
+    __attribute__((alias("__wrap___mingw_vsnprintf")));
+EXTERN_C int __cdecl __mingw_vasprintf(char**, const char*, va_list) __attribute__((alias("__wrap___mingw_vasprintf")));
+EXTERN_C int __cdecl __mingw_fprintf(FILE*, const char*, ...) __attribute__((alias("__wrap___mingw_fprintf")));
+EXTERN_C int __cdecl __mingw_printf(const char*, ...) __attribute__((alias("__wrap___mingw_printf")));
+EXTERN_C int __cdecl __mingw_sprintf(char*, const char*, ...) __attribute__((alias("__wrap___mingw_sprintf")));
+EXTERN_C int __cdecl __mingw_snprintf(char*, size_t, const char*, ...) __attribute__((alias("__wrap___mingw_snprintf")));
+EXTERN_C int __cdecl __mingw_asprintf(char**, const char*, ...) __attribute__((alias("__wrap___mingw_asprintf")));

@@ -102,15 +102,18 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	rm -f $@
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
-# printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp, ftruncate64
-# of libmingwex by src/LowIO.cpp, the strtod family of mingw-w64 (src/Float.cpp) and wcstoll, wcstoull, wcstoimax and wcstoumax
-# of libmingwex by src/String.cpp, the scanf of mingw-w64 by src/StdioScanf.cpp
-WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
-                     vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
-         $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
-         $(foreach f,wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
-         $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f)) \
-         --wrap=btowc --wrap=wctob --wrap=ftruncate64
+# Functions of libmingwex replaced by libntcrt: the printf of mingw-w64 by src/FormatNarrow.cpp and
+# src/FormatWide.cpp, wcstoll, wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by
+# src/Multibyte.cpp and ftruncate64 by src/LowIO.cpp. libntcrt defines them under their names too, for lld.
+WRAPS_REPLACED := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
+                              vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
+                  $(foreach f,wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
+                  --wrap=btowc --wrap=wctob --wrap=ftruncate64
+# Functions of libmingwex corrected by libntcrt, which calls them as __real_: the strtod family of mingw-w64 by
+# src/Float.cpp (only strtold), the scanf of mingw-w64 by src/ScanfWrap.cpp
+WRAPS_CORRECTED := $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
+                   $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f))
+WRAPS := $(WRAPS_REPLACED) $(WRAPS_CORRECTED)
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
@@ -123,10 +126,11 @@ $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 # The same for clang, the options prefixed with $ are for linking and follow the inputs. clang splits the file
 # like a shell (GNU style), the path of the libraries is quoted for spaces. lld drops the unused functions of
 # objects built with -ffunction-sections by clang, which makes their .pdata associative. lld resolves a symbol to
-# the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for btowc, wctob and
-# ftruncate64, the math functions both libmingwex and ntdll define are of libmingwex.
+# the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for the functions it
+# replaces, without --wrap (with it lld would load the members of libmingwex and every object of a __wrap_
+# function). The math functions both libmingwex and ntdll define are of libmingwex.
 comma := ,
-NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS) --gc-sections) \
+NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS_CORRECTED) --gc-sections) \
               $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex pthread msvcrt_static ntdll_crt ntdll)
 
 $(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
@@ -159,8 +163,8 @@ test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe
 	./$(BUILD)/fuzz/utf8.exe $(FUZZ_ITERATIONS)
 	./$(BUILD)/fuzz/format.exe $(FUZZ_ITERATIONS)
 
-# strtod, strtof and wcstod in a DLL, tested by Go: the tables of Go strconv and a fuzz against strconv.ParseFloat,
-# GO_FUZZTIME=d for a longer fuzz. Not in "test", it needs go.
+# strtod, strtof, wcstod and the floating point conversions of printf in a DLL, tested by Go: the tables of Go
+# strconv, fuzz against strconv and math/big, GO_FUZZTIME=d for longer fuzzing. Not in "test", it needs go.
 GO ?= go
 GO_FUZZTIME ?= 30s
 
@@ -169,7 +173,15 @@ $(BUILD)/gofloat/float.dll: test/gofloat/dll/float.c $(LIBS) $(DRIVER)
 	$(NTCRT_CC) -std=c17 -O2 -shared -o $@ $<
 
 test-go: $(BUILD)/gofloat/float.dll
-	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run Test . && 	    NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz FuzzStrtod -fuzztime $(GO_FUZZTIME) .
+	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run Test . && 	    for f in FuzzStrtod FuzzPrintfDouble FuzzPrintfLongDouble; do 	        NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz $$f -fuzztime $(GO_FUZZTIME) . || exit 1; 	    done
+
+# printf where the fuzz cannot compare with UCRT: long double, positional arguments, %Z, %n, errors
+$(BUILD)/printf/printf.exe: test/printf/printf.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -Wno-format -static -o $@ $<
+
+test-printf: $(BUILD)/printf/printf.exe
+	./$<
 
 # Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
 $(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(DRIVER)
@@ -210,7 +222,7 @@ test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/m
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
 	@echo "start: ok"
 
-test: test-upstream test-fuzz test-console test-cxx test-start
+test: test-upstream test-fuzz test-printf test-console test-cxx test-start
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -231,4 +243,4 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-console test-cxx test-start size compare clean
+.PHONY: all test test-upstream test-fuzz test-go test-printf test-console test-cxx test-start size compare clean

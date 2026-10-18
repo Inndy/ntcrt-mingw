@@ -59,9 +59,8 @@ _NtCRT_CvtDigits(
     _Out_ int* Decpt)
 {
     unsigned long long Bits;
-    char Text[32];
-    const char* p;
-    int Exponent;
+    char Text[NTCRT_FLOAT_DIGITS];
+    int Exponent, nd;
 
     memcpy(&Bits, &Value, sizeof(Bits));
     if ((Bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL)
@@ -88,17 +87,18 @@ _NtCRT_CvtDigits(
         return;
     }
 
-    /* "d.dddddddddddddddde+ddd" */
-    __mingw_snprintf(Text, sizeof(Text), "%.16e", fabs(Value));
-    Digits[0] = Text[0];
-    memcpy(Digits + 1, Text + 2, 16);
+    /* The digits of %.16e */
+    Exponent = (int)(Bits >> 52) & 0x7FF;
+    nd = _NtCRT_FloatDigits(Exponent == 0 ? Bits & 0x000FFFFFFFFFFFFFULL : (Bits & 0x000FFFFFFFFFFFFFULL) | 1ULL << 52,
+                            Exponent == 0 ? -1074 : Exponent - 1075,
+                            'e',
+                            16,
+                            Text,
+                            sizeof(Text),
+                            Decpt);
+    memcpy(Digits, Text, (size_t)nd);
+    memset(Digits + nd, '0', (size_t)(17 - nd));
     Digits[17] = '\0';
-    Exponent = 0;
-    for (p = Text + 20; *p >= '0' && *p <= '9'; p++)
-    {
-        Exponent = Exponent * 10 + (*p - '0');
-    }
-    *Decpt = (Text[19] == '-' ? -Exponent : Exponent) + 1;
 }
 
 /*

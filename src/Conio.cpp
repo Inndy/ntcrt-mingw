@@ -281,7 +281,7 @@ EXTERN_C int __cdecl _NtCRT__vcprintf(const char* format, va_list ap)
         return -1;
     }
     va_copy(Copy, ap);
-    Length = __mingw_vsnprintf(NULL, 0, format, Copy);
+    Length = _NtCRT_FormatString(NULL, 0, format, Copy, 0);
     va_end(Copy);
     if (Length < 0)
     {
@@ -293,7 +293,7 @@ EXTERN_C int __cdecl _NtCRT__vcprintf(const char* format, va_list ap)
         NTCRT_ERRNO = ENOMEM;
         return -1;
     }
-    __mingw_vsnprintf(Buffer, (size_t)Length + 1, format, ap);
+    _NtCRT_FormatString(Buffer, (size_t)Length + 1, format, ap, 0);
     _NtCRT_lock(_CONIO_LOCK);
     if (_NtCRT_ConsoleWriteA(Buffer, Length) != 0)
     {

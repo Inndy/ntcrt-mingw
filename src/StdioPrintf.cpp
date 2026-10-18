@@ -21,7 +21,7 @@ EXTERN_C int __cdecl _NtCRT_vfprintf(FILE* stream, const char* format, va_list a
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    return __mingw_vfprintf(stream, format, ap);
+    return _NtCRT_FormatStream(stream, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT_fprintf(FILE* stream, const char* format, ...)
@@ -58,7 +58,7 @@ EXTERN_C int __cdecl _NtCRT_vsprintf(char* buffer, const char* format, va_list a
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    return __mingw_vsprintf(buffer, format, ap);
+    return _NtCRT_FormatString(buffer, SIZE_MAX, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT_sprintf(char* buffer, const char* format, ...)
@@ -72,39 +72,15 @@ EXTERN_C int __cdecl _NtCRT_sprintf(char* buffer, const char* format, ...)
     return Ret;
 }
 
-/* msvcrt semantics: no terminator and -1 returned on truncation */
+/* msvcrt semantics: no terminator if the output fills the buffer, -1 if it does not fit */
 EXTERN_C int __cdecl _NtCRT__vsnprintf(char* buffer, size_t count, const char* format, va_list ap)
 {
-    va_list Copy;
-    int Length;
-
     if (format == NULL || (buffer == NULL && count != 0))
     {
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    va_copy(Copy, ap);
-    Length = __mingw_vsnprintf(buffer, count, format, ap);
-    if (Length >= 0 && (size_t)Length >= count && count != 0)
-    {
-        /* C99 truncation dropped the last character for the terminator, format again in full */
-        char* Full = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, (size_t)Length + 1);
-        if (Full != NULL)
-        {
-            __mingw_vsnprintf(Full, (size_t)Length + 1, format, Copy);
-            memcpy(buffer, Full, count);
-            RtlFreeHeap(NTCRT_HEAP, 0, Full);
-        }
-        if ((size_t)Length > count)
-        {
-            Length = -1;
-        }
-    } else if (Length >= 0 && count == 0 && buffer != NULL)
-    {
-        Length = Length == 0 ? 0 : -1;
-    }
-    va_end(Copy);
-    return Length;
+    return _NtCRT_FormatLegacy(buffer, count, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT__snprintf(char* buffer, size_t count, const char* format, ...)
@@ -121,7 +97,7 @@ EXTERN_C int __cdecl _NtCRT__snprintf(char* buffer, size_t count, const char* fo
 /* C99 semantics */
 EXTERN_C int __cdecl _NtCRT_vsnprintf(char* buffer, size_t count, const char* format, va_list ap)
 {
-    return __mingw_vsnprintf(buffer, count, format, ap);
+    return _NtCRT_FormatString(buffer, count, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT_snprintf(char* buffer, size_t count, const char* format, ...)
@@ -130,7 +106,7 @@ EXTERN_C int __cdecl _NtCRT_snprintf(char* buffer, size_t count, const char* for
     int Ret;
 
     va_start(ap, format);
-    Ret = __mingw_vsnprintf(buffer, count, format, ap);
+    Ret = _NtCRT_vsnprintf(buffer, count, format, ap);
     va_end(ap);
     return Ret;
 }
@@ -142,7 +118,7 @@ EXTERN_C int __cdecl _NtCRT__vscprintf(const char* format, va_list ap)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    return __mingw_vsnprintf(NULL, 0, format, ap);
+    return _NtCRT_FormatString(NULL, 0, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT__scprintf(const char* format, ...)

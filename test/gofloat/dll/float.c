@@ -1,9 +1,10 @@
 /*
- * The float conversions of NtCRT in a DLL for the Go tests (float_test.go). Go calls by syscall, which returns
+ * The float conversions of NtCRT in a DLL for the Go tests. Go calls by syscall, which returns
  * integer registers only: the results are stored as bits.
  */
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,4 +52,22 @@ __declspec(dllexport) size_t wcstod_bits(const wchar_t* s, uint64_t* Bits, int* 
 __declspec(dllexport) int is_wspace(int c)
 {
     return iswspace((wint_t)c) != 0;
+}
+
+/* printf of NtCRT with one double, given as its bits, for the Go tests of printf (printf_test.go) */
+__declspec(dllexport) int format_double(char* Buffer, size_t Size, const char* Format, uint64_t Bits)
+{
+    double d;
+
+    memcpy(&d, &Bits, sizeof(d));
+    return __mingw_snprintf(Buffer, Size, Format, d);
+}
+
+/* The same with one 80-bit long double, given as its 10 bytes */
+__declspec(dllexport) int format_long_double(char* Buffer, size_t Size, const char* Format, const unsigned char* Bytes)
+{
+    long double x = 0;
+
+    memcpy(&x, Bytes, 10);
+    return __mingw_snprintf(Buffer, Size, Format, x);
 }

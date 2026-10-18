@@ -15,8 +15,8 @@
 /*
  * Formatted I/O
  *
- * The narrow functions use the C99 implementation of mingw-w64, which accepts the format extensions of msvcrt.
- * The wide functions of msvcrt treat %s and %c as wide, the format is rewritten for mingw-w64 before use.
+ * The wide scanf of msvcrt treats %s and %c as wide, the format is rewritten for the scanf of mingw-w64 before
+ * use. printf takes the wide formats of msvcrt itself (Printf.cpp).
  */
 
 EXTERN_C

@@ -1,6 +1,6 @@
 /*
- * The wide printf of mingw-w64 wrapped by the specs (--wrap), see Format.cpp. The conversions between narrow and
- * wide strings are done by NTCRT_FORMAT_ARGS before the format reaches mingw-w64.
+ * The wide printf of mingw-w64 wrapped by the specs (--wrap), formatted by Printf.cpp in the conventions of C: %s
+ * and %c are narrow, %S and %C wide.
  */
 
 #include "NtCRT.h"
@@ -8,53 +8,25 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-extern "C"
-{
-    int __cdecl __real___mingw_vfwprintf(FILE*, const wchar_t*, va_list);
-    int __cdecl __real___mingw_vwprintf(const wchar_t*, va_list);
-    int __cdecl __real___mingw_vswprintf(wchar_t*, const wchar_t*, va_list);
-    int __cdecl __real___mingw_vsnwprintf(wchar_t*, size_t, const wchar_t*, va_list);
-}
-
 NTCRT_API int __cdecl __wrap___mingw_vfwprintf(FILE* stream, const wchar_t* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    return f.Failed ? -1 : __real___mingw_vfwprintf(stream, NTCRT_W(f), f.Args);
+    return _NtCRT_FormatStreamW(stream, format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vwprintf(const wchar_t* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    return f.Failed ? -1 : __real___mingw_vwprintf(NTCRT_W(f), f.Args);
+    return _NtCRT_FormatStreamW(&_NtCRT_iob[1], format, ap, 0);
 }
 
+/* swprintf of mingw-w64 without a size */
 NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, const wchar_t* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    if (f.Failed)
-    {
-        *buffer = L'\0';
-        return -1;
-    }
-    return __real___mingw_vswprintf(buffer, NTCRT_W(f), f.Args);
+    return _NtCRT_FormatStringW(buffer, SIZE_MAX, format, ap, 0);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
 {
-    NTCRT_FORMAT_ARGS f(format, ap);
-
-    if (f.Failed)
-    {
-        if (count != 0)
-        {
-            *buffer = L'\0';
-        }
-        return -1;
-    }
-    return __real___mingw_vsnwprintf(buffer, count, NTCRT_W(f), f.Args);
+    return _NtCRT_FormatStringW(buffer, count, format, ap, 0);
 }
 
 NTCRT_WRAP_VARIADIC(__wrap___mingw_fwprintf,
@@ -73,3 +45,17 @@ NTCRT_WRAP_VARIADIC(__wrap___mingw_snwprintf,
                     (wchar_t* buffer, size_t count, const wchar_t* format, ...),
                     format,
                     (buffer, count, format, ap))
+
+/*
+ * The functions under their names too: lld takes them from libntcrt, which precedes libmingwex, so ntcrt.cfg does not
+ * wrap them and the printf of libmingwex is not loaded. ld takes libmingwex first and wraps them (ntcrt.specs).
+ */
+EXTERN_C int __cdecl __mingw_vfwprintf(FILE*, const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vfwprintf")));
+EXTERN_C int __cdecl __mingw_vwprintf(const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vwprintf")));
+EXTERN_C int __cdecl __mingw_vswprintf(wchar_t*, const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vswprintf")));
+EXTERN_C int __cdecl __mingw_vsnwprintf(wchar_t*, size_t, const wchar_t*, va_list)
+    __attribute__((alias("__wrap___mingw_vsnwprintf")));
+EXTERN_C int __cdecl __mingw_fwprintf(FILE*, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_fwprintf")));
+EXTERN_C int __cdecl __mingw_wprintf(const wchar_t*, ...) __attribute__((alias("__wrap___mingw_wprintf")));
+EXTERN_C int __cdecl __mingw_swprintf(wchar_t*, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_swprintf")));
+EXTERN_C int __cdecl __mingw_snwprintf(wchar_t*, size_t, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_snwprintf")));

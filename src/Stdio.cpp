@@ -860,6 +860,13 @@ EXTERN_C wchar_t* __cdecl _NtCRT__getws(wchar_t* str)
 
 EXTERN_C size_t __cdecl _NtCRT_fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
 
+/* The output of printf (Printf.cpp) to a narrow stream, 0 or -1 */
+EXTERN_C int _NtCRT_StreamWrite(FILE* stream, const char* Bytes, size_t Length)
+{
+    NTCRT_CHECK_STREAM_ANSI(stream, -1);
+    return _NtCRT_fwrite(Bytes, 1, Length, stream) == Length ? 0 : -1;
+}
+
 EXTERN_C int __cdecl _NtCRT_fputs(const char* str, FILE* stream)
 {
     size_t Length;

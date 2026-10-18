@@ -4,6 +4,8 @@
 package gofloat
 
 import (
+	"encoding/binary"
+	"math"
 	"os"
 	"strings"
 	"syscall"
@@ -16,6 +18,8 @@ var (
 	procStrtof = dll.NewProc("strtof_bits")
 	procWcstod = dll.NewProc("wcstod_bits")
 	procWspace = dll.NewProc("is_wspace")
+	procFmtD   = dll.NewProc("format_double")
+	procFmtLD  = dll.NewProc("format_long_double")
 )
 
 const erange = 34
@@ -66,4 +70,40 @@ func cWcstod(s string) (bits uint64, end int, errno int) {
 func cIsWspace(c byte) bool {
 	r, _, _ := procWspace.Call(uintptr(c))
 	return r != 0
+}
+
+// cFormat runs call with a buffer, growing it until the output fits; call returns the result of snprintf
+func cFormat(call func(buf []byte) uintptr) (string, int) {
+	buf := make([]byte, 4096)
+	for {
+		n := int(int32(call(buf)))
+		if n < 0 {
+			return "", n
+		}
+		if n < len(buf) {
+			return string(buf[:n]), n
+		}
+		buf = make([]byte, n+1)
+	}
+}
+
+// cFormatDouble is __mingw_snprintf(format, f) of NtCRT and its return value
+func cFormatDouble(format string, f float64) (string, int) {
+	fb := cString(format)
+	return cFormat(func(buf []byte) uintptr {
+		r, _, _ := procFmtD.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&fb[0])), uintptr(math.Float64bits(f)))
+		return r
+	})
+}
+
+// cFormatLongDouble formats the 80-bit long double of mant (explicit integer bit) and signExp (sign, 15-bit exponent)
+func cFormatLongDouble(format string, mant uint64, signExp uint16) (string, int) {
+	fb := cString(format)
+	b := make([]byte, 10)
+	binary.LittleEndian.PutUint64(b, mant)
+	binary.LittleEndian.PutUint16(b[8:], signExp)
+	return cFormat(func(buf []byte) uintptr {
+		r, _, _ := procFmtLD.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&fb[0])), uintptr(unsafe.Pointer(&b[0])))
+		return r
+	})
 }
