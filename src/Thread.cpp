@@ -32,7 +32,7 @@ _NtCRT_ThreadStartEx(
     {
         Param.Start(Param.ArgList);
     }
-    _NtCRT_ThreadDetach();
+    /* The TLS callback frees the per-thread data after the thread_local destructors of C++ */
     RtlExitUserThread((NTSTATUS)Result);
 }
 
@@ -134,7 +134,6 @@ _NtCRT__beginthread(
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthreadex(unsigned retval)
 {
-    _NtCRT_ThreadDetach();
     RtlExitUserThread((NTSTATUS)retval);
 }
 

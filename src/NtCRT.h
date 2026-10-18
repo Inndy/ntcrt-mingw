@@ -65,6 +65,47 @@ typedef struct _NTCRT_PTD
 
 extern "C" PNTCRT_PTD _NtCRT_GetPtd(void);
 
+/*
+ * The thread functions (Pthread*.cpp), set when a program uses them so that the others do not link them:
+ * _NtCRT_ThreadExit is _NtCRT_KeyExit, which runs the destructors of pthread keys and then _NtCRT_PthreadExit, the end
+ * of the pthread_t of the thread, at the exit of a thread. Once a thread was cancelled, _NtCRT_TestCancel ends a
+ * cancelled thread at a cancellation point (Pass passes on a wake that the thread may have taken from others), and
+ * _NtCRT_CleanupList is the cleanup handlers of the thread, which it gives a pthread_t, NULL if out of memory.
+ */
+extern "C" void (*_NtCRT_ThreadExit)(void);
+extern "C" void (*_NtCRT_TestCancel)(void (*Pass)(void* Object), void* Object);
+extern "C" struct _pthread_cleanup** (*_NtCRT_CleanupList)(void);
+extern "C" void (*_NtCRT_PthreadExit)(void);
+extern "C" void _NtCRT_KeyExit(void);
+
+/*
+ * Wait while the Size bytes (4 or 8) at Address are Value, until _NtCRT_Wake of the address or the timeout. Returns
+ * STATUS_SUCCESS (woken, or the value differs), STATUS_TIMEOUT, or with Alertable STATUS_ALERTED or STATUS_USER_APC.
+ * The waker changes the value before the wake.
+ */
+extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG_PTR Value, ULONG Size, PLARGE_INTEGER Timeout,
+                                BOOLEAN Alertable);
+extern "C" void _NtCRT_Wake(const volatile void* Address, BOOL All);
+
+/*
+ * Times of the thread functions in 100 ns units (PthreadTime.cpp). _NtCRT_Timeout makes the NT timeout of Units, a
+ * time of CLOCK_REALTIME or CLOCK_MONOTONIC since its epoch or a relative time (Clock -1), NULL for none
+ * (NTCRT_TIME_NEVER). Units of a timespec are rounded up.
+ */
+#define NTCRT_TIME_NEVER MAXLONGLONG
+#define NTCRT_TIMESPEC_VALID(Time) ((unsigned long)(Time)->tv_nsec < 1000000000UL)
+extern "C" LONGLONG _NtCRT_MonotonicTime(void);
+extern "C" LONGLONG _NtCRT_TimespecUnits(const struct timespec* Time);
+extern "C" PLARGE_INTEGER _NtCRT_Timeout(LONGLONG Units, int Clock, PLARGE_INTEGER Timeout);
+
+/* pthread_create with a start function of C11 (thrd_create) if StartC11 */
+extern "C" int _NtCRT_ThreadCreate(ULONG_PTR* Thread, const void* Attr, void* (*Start)(void*), int (*StartC11)(void*),
+                                   void* Arg);
+
+/* The mutex of a condition wait, unlocked whatever its recursion count, which Relock restores */
+extern "C" int _NtCRT_MutexUnlockAll(LONG_PTR* Mutex, LONG_PTR* Count);
+extern "C" void _NtCRT_MutexRelock(LONG_PTR* Mutex, LONG_PTR Count);
+
 /* errno helpers */
 extern "C" int* _NtCRT_errno(void);
 extern "C" void _NtCRT_SetErrnoFromNtStatus(NTSTATUS Status);

@@ -143,10 +143,22 @@ EXTERN_C PNTCRT_PTD _NtCRT_GetPtd(void)
     return Ptd;
 }
 
+extern "C"
+{
+    void (*_NtCRT_ThreadExit)(void) = NULL;
+    void (*_NtCRT_TestCancel)(void (*Pass)(void* Object), void* Object) = NULL;
+    struct _pthread_cleanup** (*_NtCRT_CleanupList)(void) = NULL;
+}
+
 EXTERN_C void _NtCRT_ThreadDetach(void)
 {
     PNTCRT_PTD Ptd;
 
+    /* The key destructors may use the per-thread data */
+    if (_NtCRT_ThreadExit != NULL)
+    {
+        _NtCRT_ThreadExit();
+    }
     if (g_PtdIndex == TLS_OUT_OF_INDEXES)
     {
         return;
@@ -159,7 +171,14 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->WcserrorBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->CvtBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd);
-        _Inline_TlsSetValue(g_PtdIndex, NULL);
+        /* The slot holds the data, an expansion slot has its array */
+        if (g_PtdIndex < TLS_MINIMUM_AVAILABLE)
+        {
+            NtWriteTeb(TlsSlots[g_PtdIndex], NULL);
+        } else
+        {
+            NtReadTeb(TlsExpansionSlots)[g_PtdIndex - TLS_MINIMUM_AVAILABLE] = NULL;
+        }
     }
 }
 

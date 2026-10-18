@@ -52,7 +52,8 @@ NTCRT_CXX := $(CXX) -specs=$(BUILD)/ntcrt.specs
 DRIVER   := $(BUILD)/ntcrt.specs
 endif
 
-LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a
+LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a \
+        $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a
 
 all: $(LIBS) $(DRIVER)
 
@@ -83,6 +84,12 @@ $(BUILD)/libntcrt.a: $(OBJS) $(BUILD)/exports.stamp
 	rm -f $@
 	ar rcs $@ $(OBJS)
 	cd $(BUILD)/exports && ar rs ../libntcrt.a *.o
+
+# libntcrt has the pthread functions (src/Pthread*.cpp). Empty libraries take the place of winpthreads for -lpthread
+# and -lwinpthread, the directory of the build precedes that of the toolchain.
+$(BUILD)/libpthread.a $(BUILD)/libwinpthread.a: | $(BUILD)
+	rm -f $@
+	ar rc $@
 
 $(BUILD)/ntcrt.syms: $(BUILD)/libntcrt.a
 	nm -g --defined-only $< | awk 'NF == 3 { print $$3 }' | sort -u > $@
@@ -121,25 +128,27 @@ WRAPS := $(WRAPS_REPLACED) $(WRAPS_CORRECTED)
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
-# _matherr of libmingw32, which would link the printf family into every program.
+# _matherr of libmingw32, which would link the printf family into every program. libntcrt has the pthread functions,
+# winpthreads is not linked.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" > $@
-	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lpthread -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
+	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
 # The same for clang, the options prefixed with $ are for linking and follow the inputs. clang splits the file
-# like a shell (GNU style), the path of the libraries is quoted for spaces. lld drops the unused functions of
+# like a shell (GNU style), the paths are quoted for spaces. The directory of the libraries precedes those of the
+# toolchain, which -Wl,-L would follow: -lpthread is the empty library. lld drops the unused functions of
 # objects built with -ffunction-sections by clang, which makes their .pdata associative. lld resolves a symbol to
 # the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for the functions it
 # replaces, without --wrap (with it lld would load the members of libmingwex and every object of a __wrap_
 # function). The math functions both libmingwex and ntdll define are of libmingwex.
 comma := ,
 NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS_CORRECTED) --gc-sections) \
-              $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex pthread msvcrt_static ntdll_crt ntdll)
+              $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
 $(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
 	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs > $@
-	printf '$$"%s"\n' "-Wl,-L$(CURDIR)/$(BUILD)" >> $@
+	printf '"%s"\n' "-L$(CURDIR)/$(BUILD)" >> $@
 	printf '$$%s\n' $(NTCRT_LINK) >> $@
 
 TEST_SRCS := $(wildcard test/upstream/*.cpp)

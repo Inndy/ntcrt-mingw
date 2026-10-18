@@ -866,6 +866,7 @@ typedef enum _THREADINFOCLASS
     ThreadQuerySetWin32StartAddress = 9,
     ThreadZeroTlsCell = 10,
     ThreadHideFromDebugger = 17,
+    ThreadNameInformation = 38,
 } THREADINFOCLASS;
 
 typedef struct _THREAD_BASIC_INFORMATION
@@ -1270,6 +1271,23 @@ NTSYSCALLAPI NTSTATUS NTAPI NtWaitForMultipleObjects(
 
 NTSYSCALLAPI NTSTATUS NTAPI NtDelayExecution(_In_ BOOLEAN Alertable, _In_ PLARGE_INTEGER DelayInterval);
 NTSYSCALLAPI NTSTATUS NTAPI NtYieldExecution(VOID);
+NTSYSCALLAPI NTSTATUS NTAPI NtAlertThread(_In_ HANDLE ThreadHandle);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryTimerResolution(
+    _Out_ PULONG MaximumTime,
+    _Out_ PULONG MinimumTime,
+    _Out_ PULONG CurrentTime);
+
+/* A NULL handle is the keyed event of the system (\KernelObjects\CritSecOutOfMemoryEvent), Vista and later */
+NTSYSCALLAPI NTSTATUS NTAPI NtWaitForKeyedEvent(
+    _In_opt_ HANDLE KeyedEventHandle,
+    _In_ PVOID KeyValue,
+    _In_ BOOLEAN Alertable,
+    _In_opt_ PLARGE_INTEGER Timeout);
+NTSYSCALLAPI NTSTATUS NTAPI NtReleaseKeyedEvent(
+    _In_opt_ HANDLE KeyedEventHandle,
+    _In_ PVOID KeyValue,
+    _In_ BOOLEAN Alertable,
+    _In_opt_ PLARGE_INTEGER Timeout);
 
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateEvent(
     _Out_ PHANDLE EventHandle,
