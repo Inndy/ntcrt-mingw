@@ -25,16 +25,19 @@
 #define PRINTF_LEGACY_NULL_TERMINATION 0x1ull
 #define PRINTF_STANDARD_SNPRINTF 0x2ull
 #define PRINTF_LEGACY_WIDE_SPECIFIERS 0x4ull
+#define SCANF_LEGACY_WIDE_SPECIFIERS 0x2ull
 
 typedef int(__cdecl* PCOMMON_VSPRINTF)(unsigned long long, char*, size_t, const char*, void*, va_list);
 typedef int(__cdecl* PCOMMON_VSWPRINTF)(unsigned long long, wchar_t*, size_t, const wchar_t*, void*, va_list);
 typedef int(__cdecl* PCOMMON_VSSCANF)(unsigned long long, const char*, size_t, const char*, void*, va_list);
+typedef int(__cdecl* PCOMMON_VSWSCANF)(unsigned long long, const wchar_t*, size_t, const wchar_t*, void*, va_list);
 typedef void(__cdecl* PINVALID_PARAMETER)(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t);
 
 static PCOMMON_VSPRINTF RefVsprintf;
 static int RefSnprintf(char* Buffer, size_t Size, const char* Format, ...);
 static PCOMMON_VSWPRINTF RefVswprintf;
 static PCOMMON_VSSCANF RefVsscanf;
+static PCOMMON_VSWSCANF RefVswscanf;
 static int*(__cdecl* RefErrno)(void);
 static char*(__cdecl* RefSetlocale)(int, const char*);
 static double(__cdecl* RefStrtod)(const char*, char**);
@@ -803,8 +806,8 @@ static void check_strtol_space(void)
 
 typedef struct
 {
-    char Format[256];
-    char Input[512];
+    char Format[1024];
+    char Input[1024];
     uint64_t Slots[16];
     int Size[16]; /* bytes stored through Slots[i], 0 for none */
     int Float[16];
@@ -814,7 +817,8 @@ typedef struct
 /*
  * A scanf format and its input. Every input item is a matching sequence or fails at its first character: the
  * scanf of mingw-w64 converts a prefix of a number that is not a number ("1e", "0x", "nan(") where C has a
- * matching failure (see README), and an integer out of the range of its type is undefined.
+ * matching failure (see README), and an integer out of the range of its type is undefined. Some formats begin with
+ * text longer than the buffer of the format the wrappers rewrite.
  */
 static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
 {
@@ -825,6 +829,14 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
 
     c->Format[0] = c->Input[0] = '\0';
     c->Count = 0;
+    if (rnd(8) == 0)
+    {
+        int Text = 200 + (int)rnd(400);
+
+        for (int i = 0; i < Text; i++)
+            c->Format[i] = c->Input[i] = "abIq-"[rnd(5)];
+        c->Format[Text] = c->Input[Text] = '\0';
+    }
     for (int i = 0; i < n; i++)
     {
         char* f;
@@ -950,10 +962,52 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
     }
 }
 
+/* The vswscanf of msvcrt, %s, %c and %[ are wide: NtCRT rewrites its format for the scanf of mingw-w64 */
+extern int(__cdecl* __imp_vswscanf)(const wchar_t*, const wchar_t*, va_list);
+
+static void compare_scanf(const char* What, const SCANF_CASE* c, int g, int w, unsigned char (*Got)[64],
+                          unsigned char (*Want)[64], int Narrow)
+{
+    g_Checks++;
+    /* A NaN may have another payload */
+    for (int i = 0; i < c->Count; i++)
+        if (c->Float[i] && (c->Size[i] == 8 ? isnan(*(double*)Got[i]) && isnan(*(double*)Want[i])
+                                            : isnan(*(float*)Got[i]) && isnan(*(float*)Want[i])))
+            memcpy(Got[i], Want[i], 64);
+    /*
+     * %lf of the narrow scanf of mingw-w64 rounds to long double, then to double (see README): a long double
+     * halfway between two doubles goes to the even one, 1 ulp from the correct one
+     */
+    for (int i = 0; Narrow && i < c->Count; i++)
+    {
+        uint64_t a, b;
+
+        memcpy(&a, Got[i], 8);
+        memcpy(&b, Want[i], 8);
+        if (c->Float[i] && c->Size[i] == 8 && (a & 1) == 0 && (a - b == 1 || b - a == 1))
+            memcpy(Got[i], Want[i], 64);
+    }
+    if (g != w || memcmp(Got, Want, 16 * 64) != 0)
+    {
+        char Detail[1200] = "";
+        for (int i = 0; i < c->Count; i++)
+            if (memcmp(Got[i], Want[i], 64) != 0)
+            {
+                int n = c->Size[i] < 64 ? c->Size[i] : Narrow ? 24 : 48;
+                sprintf(Detail + strlen(Detail), " arg%d %s / UCRT %s", i, show((char*)Got[i], n),
+                        show((char*)Want[i], n));
+                break;
+            }
+        fail(What, "\"%s\" \"%s\": %d, UCRT %d%s", show(c->Input, (int)strlen(c->Input)),
+             show(c->Format, (int)strlen(c->Format)), g, w, Detail);
+    }
+}
+
 static void check_scanf(void)
 {
     SCANF_CASE c;
     unsigned char Got[16][64], Want[16][64];
+    wchar_t Format[1024], Input[1024];
     int g, w;
 
     memset(c.Size, 0, sizeof(c.Size));
@@ -965,39 +1019,22 @@ static void check_scanf(void)
     for (int i = 0; i < c.Count; i++)
         c.Slots[i] = (uintptr_t)Want[i];
     w = RefVsscanf(0, c.Input, (size_t)-1, c.Format, NULL, (va_list)c.Slots);
-    g_Checks++;
-    /* A NaN may have another payload */
-    for (int i = 0; i < c.Count; i++)
-        if (c.Float[i] && (c.Size[i] == 8 ? isnan(*(double*)Got[i]) && isnan(*(double*)Want[i])
-                                          : isnan(*(float*)Got[i]) && isnan(*(float*)Want[i])))
-            memcpy(Got[i], Want[i], 64);
-    /*
-     * %lf of mingw-w64 rounds to long double, then to double (see README): a long double halfway between two
-     * doubles goes to the even one, 1 ulp from the correct one
-     */
-    for (int i = 0; i < c.Count; i++)
-    {
-        uint64_t a, b;
+    compare_scanf("vsscanf", &c, g, w, Got, Want, 1);
 
-        memcpy(&a, Got[i], 8);
-        memcpy(&b, Want[i], 8);
-        if (c.Float[i] && c.Size[i] == 8 && (a & 1) == 0 && (a - b == 1 || b - a == 1))
-            memcpy(Got[i], Want[i], 64);
-    }
-    if (g != w || memcmp(Got, Want, sizeof(Got)) != 0)
-    {
-        char Detail[1200] = "";
-        for (int i = 0; i < c.Count; i++)
-            if (memcmp(Got[i], Want[i], 64) != 0)
-            {
-                int n = c.Size[i] < 64 ? c.Size[i] : 24;
-                sprintf(Detail + strlen(Detail), " arg%d %s / UCRT %s", i, show((char*)Got[i], n),
-                        show((char*)Want[i], n));
-                break;
-            }
-        fail("vsscanf", "\"%s\" \"%s\": %d, UCRT %d%s", show(c.Input, (int)strlen(c.Input)),
-             show(c.Format, (int)strlen(c.Format)), g, w, Detail);
-    }
+    /* The same in the wide scanf of msvcrt, the bytes as U+0000..U+00FF */
+    for (int i = 0; i == 0 || c.Format[i - 1] != '\0'; i++)
+        Format[i] = (unsigned char)c.Format[i];
+    for (int i = 0; i == 0 || c.Input[i - 1] != '\0'; i++)
+        Input[i] = (unsigned char)c.Input[i];
+    memset(Got, 0xCC, sizeof(Got));
+    memset(Want, 0xCC, sizeof(Want));
+    for (int i = 0; i < c.Count; i++)
+        c.Slots[i] = (uintptr_t)Got[i];
+    g = __imp_vswscanf(Input, Format, (va_list)c.Slots);
+    for (int i = 0; i < c.Count; i++)
+        c.Slots[i] = (uintptr_t)Want[i];
+    w = RefVswscanf(SCANF_LEGACY_WIDE_SPECIFIERS, Input, (size_t)-1, Format, NULL, (va_list)c.Slots);
+    compare_scanf("vswscanf (msvcrt)", &c, g, w, Got, Want, 0);
 }
 
 static void __cdecl ignore_invalid_parameter(const wchar_t* e, const wchar_t* f, const wchar_t* file,
@@ -1022,6 +1059,7 @@ int main(int argc, char** argv)
     REF(RefVsprintf, "__stdio_common_vsprintf");
     REF(RefVswprintf, "__stdio_common_vswprintf");
     REF(RefVsscanf, "__stdio_common_vsscanf");
+    REF(RefVswscanf, "__stdio_common_vswscanf");
     REF(RefErrno, "_errno");
     REF(RefSetlocale, "setlocale");
     REF(RefStrtod, "strtod");

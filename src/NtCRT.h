@@ -215,6 +215,72 @@ extern "C" int __cdecl _NtCRT__fflush_nolock(FILE* stream);
 extern "C" int _NtCRT_FlushPut(const char* Bytes, int Length, FILE* stream);
 extern "C" wint_t _NtCRT_putwc_nolock(wchar_t Ch, FILE* Stream);
 extern "C" int _NtCRT_StreamWrite(FILE* stream, const char* Bytes, size_t Length);
+/*
+ * The output of a format rewrite. With Out NULL it measures the output and finds whether it differs from Format:
+ * until it does, the output is a prefix of Format, which holds Format[Length].
+ */
+template<typename TChar>
+struct NTCRT_FORMAT_WRITER
+{
+    const TChar* Format;
+    TChar* Out;
+    size_t Length;
+    bool Changed;
+
+    void Put(TChar Ch)
+    {
+        if (Out != NULL)
+        {
+            Out[Length] = Ch;
+        } else if (!Changed && Format[Length] != Ch)
+        {
+            Changed = true;
+        }
+        Length++;
+    }
+
+    void End()
+    {
+        Put('\0');
+    }
+};
+
+/*
+ * Rewrite(Writer) a format: Format itself if the output is the same, else Buffer if the output and its terminator fit
+ * in Size characters, else an allocation returned in *Allocated as well (Format if it fails)
+ */
+template<typename TChar, typename TRewrite>
+static inline
+const TChar*
+_NtCRT_RewriteFormat(
+    _In_z_ const TChar* Format,
+    _Out_writes_(Size) TChar* Buffer,
+    _In_ size_t Size,
+    _Outptr_result_maybenull_ TChar** Allocated,
+    _In_ TRewrite Rewrite)
+{
+    NTCRT_FORMAT_WRITER<TChar> Writer = { Format, NULL, 0, false };
+
+    *Allocated = NULL;
+    Rewrite(Writer);
+    if (!Writer.Changed)
+    {
+        return Format;
+    }
+    if (Writer.Length > Size)
+    {
+        Buffer = (TChar*)RtlAllocateHeap(NTCRT_HEAP, 0, Writer.Length * sizeof(TChar));
+        if (Buffer == NULL)
+        {
+            return Format;
+        }
+        *Allocated = Buffer;
+    }
+    Writer = { Format, Buffer, 0, false };
+    Rewrite(Writer);
+    return Buffer;
+}
+
 /* A wide scanf format of msvcrt (%s and %c are wide) as mingw-w64 takes it, see StdioWideFormat.cpp */
 extern "C" PCWSTR _NtCRT_TranslateWideFormat(PCWSTR Format, PWSTR Buffer, size_t BufferCount, BOOL Scan,
                                              PWSTR* Allocated);
