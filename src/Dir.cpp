@@ -541,6 +541,8 @@ _NtCRT_FindNextEntry(
                                                (BOOLEAN)First);
         if (!NT_SUCCESS(Status))
         {
+            /* The last error as FindNextFileW, readdir of libmingwex expects ERROR_NO_MORE_FILES at the end */
+            RtlSetLastWin32Error(RtlNtStatusToDosError(Status));
             NTCRT_ERRNO = ENOENT;
             return FALSE;
         }

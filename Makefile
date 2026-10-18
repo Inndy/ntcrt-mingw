@@ -1,7 +1,7 @@
 # NtCRT for MinGW-w64 (x64): link C/C++ programs that import ntdll.dll only
 #
 #   make            build build/libntcrt.a, the support libraries and build/ntcrt.specs
-#   make test       build and run test/upstream and the tests of test/fuzz
+#   make test       build and run test/upstream, test/fuzz, test/console and test/cxx
 #   g++ -static -specs=build/ntcrt.specs ...
 
 CXX      ?= g++
@@ -62,10 +62,11 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	rm -f $@
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
-# printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp
+# printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp, ftruncate64
+# of libmingwex by src/LowIO.cpp
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
-         --wrap=btowc --wrap=wctob
+         --wrap=btowc --wrap=wctob --wrap=ftruncate64
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll.
@@ -105,7 +106,15 @@ $(BUILD)/console/conpty.exe: test/console/conpty.c
 test-console: $(BUILD)/console/conpty.exe $(BUILD)/console/child.exe
 	./$< $(BUILD)/console/child.exe
 
-test: test-upstream test-fuzz test-console
+# libstdc++ on NtCRT
+$(BUILD)/cxx/stdcxx.exe: test/cxx/stdcxx.cpp $(LIBS) $(BUILD)/ntcrt.specs
+	mkdir -p $(@D)
+	$(CXX) -std=c++23 -O2 -Wno-deprecated-declarations -static -specs=$(BUILD)/ntcrt.specs -o $@ $<
+
+test-cxx: $(BUILD)/cxx/stdcxx.exe
+	./$<
+
+test: test-upstream test-fuzz test-console test-cxx
 
 # Compare with UCRT, needs cl of Visual Studio
 compare: $(LIBS) $(BUILD)/ntcrt.specs
@@ -114,4 +123,4 @@ compare: $(LIBS) $(BUILD)/ntcrt.specs
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-console compare clean
+.PHONY: all test test-upstream test-fuzz test-console test-cxx compare clean

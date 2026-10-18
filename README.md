@@ -5,7 +5,7 @@ functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs
-make test       # build and run test/upstream, the fuzz test and the console test
+make test       # build and run test/upstream, the fuzz, console and libstdc++ tests
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 ```
@@ -19,6 +19,7 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 - `test/fuzz/` differential fuzz of the UTF-8 codec against kernel32 (`make test-fuzz`, `FUZZ_ITERATIONS=n`)
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
+- `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
 
 ## Behavior
@@ -62,7 +63,23 @@ The specs wrap these (`--wrap`) so that the conversions between narrow and wide 
 - the precision of a narrow `%ls` counts bytes and never cuts a character, the precision of a wide `%hs` counts
   `wchar_t` and never splits a surrogate pair
 
-`btowc` and `wctob` of libmingwex are wrapped to NtCRT the same way.
+`btowc` and `wctob` of libmingwex are wrapped to NtCRT the same way, and `ftruncate64` (used by
+`std::filesystem::resize_file`), which checks the free space of the volume by kernel32 functions NtCRT does not
+have.
+
+### libstdc++
+
+`test/cxx` (`make test-cxx`) checks libstdc++ on NtCRT. Its generic locale model converts by the C library, so in
+the "C.UTF-8" locale set by `setlocale`:
+
+- `std::wcout`/`std::wcin` (by `putwc`/`getwc`), `std::wofstream`/`std::wifstream` and
+  `std::codecvt<wchar_t, char, mbstate_t>` convert UTF-8, an invalid sequence is a conversion error
+- a narrow file name (`std::ofstream`, `std::filesystem::path` from `std::string`, `path::string()`) is UTF-8
+- `std::format`, `std::to_string`, exceptions, `std::thread` and `std::filesystem` work, the program imports
+  ntdll.dll only
+
+`std::locale("C.UTF-8")` and other named locales throw `std::runtime_error`: the generic model of libstdc++
+knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use the classic `std::locale`.
 
 ### File names, console and streams
 

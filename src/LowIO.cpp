@@ -1450,6 +1450,15 @@ EXTERN_C int __cdecl _NtCRT_chsize(int fd, long size)
     return _NtCRT_chsize_s(fd, size) == 0 ? 0 : -1;
 }
 
+/*
+ * ftruncate64 of libmingwex (std::filesystem::resize_file, truncate) checks the free space of the volume by
+ * kernel32 functions NtCRT does not have, the specs wrap it to this
+ */
+EXTERN_C int __cdecl __wrap_ftruncate64(int fd, long long length)
+{
+    return _NtCRT_chsize_s(fd, length) == 0 ? 0 : -1;
+}
+
 EXTERN_C int __cdecl _NtCRT_eof(int fd)
 {
     long long Current, End;
