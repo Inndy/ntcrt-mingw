@@ -35,10 +35,11 @@ ifdef LLVM
 LLVM_PREFIX := $(filter %/,$(LLVM))
 # clang uses the headers and libraries of GCC (libstdc++, the msvcrt flavor of MinGW-w64). The __cpuidex of
 # MinGW-w64 headers before 12 clashes with the one of <cpuid.h> of clang and is left out, and their <intrin.h>
-# includes <mm3dnow.h>, which clang deprecates.
+# includes <mm3dnow.h>, which clang deprecates. Thread-local variables are emulated as GCC does, libstdc++ has
+# std::call_once by them (__emutls_get_address on pthread keys).
 GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
 LLVM_FLAGS := --target=x86_64-w64-mingw32 --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
-              -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS
+              -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -femulated-tls
 LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
 LIB_AS   := $(LLVM_PREFIX)clang --target=x86_64-w64-mingw32
 NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt.cfg
