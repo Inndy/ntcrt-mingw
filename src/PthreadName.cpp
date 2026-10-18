@@ -89,3 +89,7 @@ NTCRT_API int pthread_getname_np(pthread_t thread, char* name, size_t len)
     RtlFreeHeap(NTCRT_HEAP, 0, Narrow);
     return 0;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_setname_np, pthread_setname_np);
+NTCRT_IMPORT_ONLY(pthread_getname_np, pthread_getname_np);

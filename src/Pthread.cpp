@@ -685,3 +685,42 @@ NTCRT_API int pthread_attr_getschedpolicy(const pthread_attr_t* attr, int* pol)
     *pol = SCHED_OTHER;
     return 0;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_exit, pthread_exit);
+NTCRT_IMPORT_ONLY(pthread_create, pthread_create);
+NTCRT_IMPORT_ONLY(pthread_self, pthread_self);
+NTCRT_IMPORT_ONLY(pthread_equal, pthread_equal);
+NTCRT_IMPORT_ONLY(pthread_testcancel, pthread_testcancel);
+NTCRT_IMPORT_ONLY(pthread_join, pthread_join);
+NTCRT_IMPORT_ONLY(_pthread_tryjoin, _pthread_tryjoin);
+NTCRT_IMPORT_ONLY(pthread_detach, pthread_detach);
+NTCRT_IMPORT_ONLY(pthread_cancel, pthread_cancel);
+NTCRT_IMPORT_ONLY(pthread_setcancelstate, pthread_setcancelstate);
+NTCRT_IMPORT_ONLY(pthread_setcanceltype, pthread_setcanceltype);
+NTCRT_IMPORT_ONLY(pthread_kill, pthread_kill);
+NTCRT_IMPORT_ONLY(pthread_getclean, pthread_getclean);
+NTCRT_IMPORT_ONLY(pthread_gethandle, pthread_gethandle);
+NTCRT_IMPORT_ONLY(pthread_getevent, pthread_getevent);
+NTCRT_IMPORT_ONLY(pthread_getschedparam, pthread_getschedparam);
+NTCRT_IMPORT_ONLY(pthread_setschedparam, pthread_setschedparam);
+NTCRT_IMPORT_ONLY(pthread_attr_init, pthread_attr_init);
+NTCRT_IMPORT_ONLY(pthread_attr_destroy, pthread_attr_destroy);
+NTCRT_IMPORT_ONLY(_pthread_get_state, _pthread_get_state);
+NTCRT_IMPORT_ONLY(_pthread_set_state, _pthread_set_state);
+NTCRT_IMPORT_ONLY(pthread_attr_setdetachstate, pthread_attr_setdetachstate);
+NTCRT_IMPORT_ONLY(pthread_attr_getdetachstate, pthread_attr_getdetachstate);
+NTCRT_IMPORT_ONLY(pthread_attr_setinheritsched, pthread_attr_setinheritsched);
+NTCRT_IMPORT_ONLY(pthread_attr_getinheritsched, pthread_attr_getinheritsched);
+NTCRT_IMPORT_ONLY(pthread_attr_setscope, pthread_attr_setscope);
+NTCRT_IMPORT_ONLY(pthread_attr_getscope, pthread_attr_getscope);
+NTCRT_IMPORT_ONLY(pthread_attr_getstack, pthread_attr_getstack);
+NTCRT_IMPORT_ONLY(pthread_attr_setstack, pthread_attr_setstack);
+NTCRT_IMPORT_ONLY(pthread_attr_getstackaddr, pthread_attr_getstackaddr);
+NTCRT_IMPORT_ONLY(pthread_attr_setstackaddr, pthread_attr_setstackaddr);
+NTCRT_IMPORT_ONLY(pthread_attr_getstacksize, pthread_attr_getstacksize);
+NTCRT_IMPORT_ONLY(pthread_attr_setstacksize, pthread_attr_setstacksize);
+NTCRT_IMPORT_ONLY(pthread_attr_setschedparam, pthread_attr_setschedparam);
+NTCRT_IMPORT_ONLY(pthread_attr_getschedparam, pthread_attr_getschedparam);
+NTCRT_IMPORT_ONLY(pthread_attr_setschedpolicy, pthread_attr_setschedpolicy);
+NTCRT_IMPORT_ONLY(pthread_attr_getschedpolicy, pthread_attr_getschedpolicy);

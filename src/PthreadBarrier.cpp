@@ -191,3 +191,17 @@ NTCRT_API int pthread_spin_unlock(pthread_spinlock_t* l)
     InterlockedExchange64(l, -1);
     return 0;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_barrier_init, pthread_barrier_init);
+NTCRT_IMPORT_ONLY(pthread_barrier_destroy, pthread_barrier_destroy);
+NTCRT_IMPORT_ONLY(pthread_barrier_wait, pthread_barrier_wait);
+NTCRT_IMPORT_ONLY(pthread_barrierattr_init, pthread_barrierattr_init);
+NTCRT_IMPORT_ONLY(pthread_barrierattr_destroy, pthread_barrierattr_destroy);
+NTCRT_IMPORT_ONLY(pthread_barrierattr_setpshared, pthread_barrierattr_setpshared);
+NTCRT_IMPORT_ONLY(pthread_barrierattr_getpshared, pthread_barrierattr_getpshared);
+NTCRT_IMPORT_ONLY(pthread_spin_init, pthread_spin_init);
+NTCRT_IMPORT_ONLY(pthread_spin_destroy, pthread_spin_destroy);
+NTCRT_IMPORT_ONLY(pthread_spin_lock, pthread_spin_lock);
+NTCRT_IMPORT_ONLY(pthread_spin_trylock, pthread_spin_trylock);
+NTCRT_IMPORT_ONLY(pthread_spin_unlock, pthread_spin_unlock);

@@ -256,13 +256,18 @@ test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
 
 # The pthread functions, <threads.h> and the threads of libstdc++. -lpthread and -pthread link no winpthreads.
-THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe $(BUILD)/thread/tlsslot.exe
+THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe \
+                $(BUILD)/thread/dllimport.exe $(BUILD)/thread/tlsslot.exe
 
 $(BUILD)/thread/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -pthread -o $@ $< -lpthread
 
 $(BUILD)/thread/c11.exe: test/thread/c11.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
+$(BUILD)/thread/dllimport.exe: test/thread/dllimport.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 

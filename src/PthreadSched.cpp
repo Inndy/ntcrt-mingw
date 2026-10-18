@@ -138,3 +138,18 @@ NTCRT_API void* pthread_timechange_handler_np(void* dummy)
 NTCRT_API void pthread_tls_init(void)
 {
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(sched_yield, sched_yield);
+NTCRT_IMPORT_ONLY(sched_get_priority_min, sched_get_priority_min);
+NTCRT_IMPORT_ONLY(sched_get_priority_max, sched_get_priority_max);
+NTCRT_IMPORT_ONLY(sched_getscheduler, sched_getscheduler);
+NTCRT_IMPORT_ONLY(sched_setscheduler, sched_setscheduler);
+NTCRT_IMPORT_ONLY(pthread_num_processors_np, pthread_num_processors_np);
+NTCRT_IMPORT_ONLY(pthread_set_num_processors_np, pthread_set_num_processors_np);
+NTCRT_IMPORT_ONLY(pthread_getconcurrency, pthread_getconcurrency);
+NTCRT_IMPORT_ONLY(pthread_setconcurrency, pthread_setconcurrency);
+NTCRT_IMPORT_ONLY(pthread_get_concurrency, pthread_get_concurrency);
+NTCRT_IMPORT_ONLY(pthread_set_concurrency, pthread_set_concurrency);
+NTCRT_IMPORT_ONLY(pthread_tls_init, pthread_tls_init);
+NTCRT_IMPORT_ONLY(pthread_timechange_handler_np, pthread_timechange_handler_np);

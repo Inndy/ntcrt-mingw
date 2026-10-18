@@ -88,3 +88,8 @@ NTCRT_API unsigned long long _pthread_rel_time_in_ms(const struct timespec* ts)
 
     return Time > Now ? Time - Now : 0;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(_pthread_time_in_ms, _pthread_time_in_ms);
+NTCRT_IMPORT_ONLY(_pthread_time_in_ms_from_timespec, _pthread_time_in_ms_from_timespec);
+NTCRT_IMPORT_ONLY(_pthread_rel_time_in_ms, _pthread_rel_time_in_ms);

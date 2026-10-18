@@ -185,3 +185,16 @@ NTCRT_API int sem_unlink(const char* name)
     UNREFERENCED_PARAMETER(name);
     return SemError(ENOSYS);
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(sem_init, sem_init);
+NTCRT_IMPORT_ONLY(sem_destroy, sem_destroy);
+NTCRT_IMPORT_ONLY(sem_trywait, sem_trywait);
+NTCRT_IMPORT_ONLY(sem_wait, sem_wait);
+NTCRT_IMPORT_ONLY(sem_timedwait, sem_timedwait);
+NTCRT_IMPORT_ONLY(sem_post_multiple, sem_post_multiple);
+NTCRT_IMPORT_ONLY(sem_post, sem_post);
+NTCRT_IMPORT_ONLY(sem_getvalue, sem_getvalue);
+NTCRT_IMPORT_ONLY(sem_open, sem_open);
+NTCRT_IMPORT_ONLY(sem_close, sem_close);
+NTCRT_IMPORT_ONLY(sem_unlink, sem_unlink);

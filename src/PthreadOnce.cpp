@@ -118,3 +118,6 @@ NTCRT_API int pthread_once(pthread_once_t* o, void (*func)(void))
         _NtCRT_Wait(o, ONCE_WAITERS, sizeof(*o), NULL, FALSE);
     }
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_once, pthread_once);

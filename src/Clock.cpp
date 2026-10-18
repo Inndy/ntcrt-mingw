@@ -228,3 +228,11 @@ EXTERN_C int __cdecl __wrap_usleep(unsigned int useconds)
 }
 
 EXTERN_C int __cdecl usleep(unsigned int useconds) __attribute__((alias("__wrap_usleep")));
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(clock_gettime, clock_gettime);
+NTCRT_IMPORT_ONLY(clock_getres, clock_getres);
+NTCRT_IMPORT_ONLY(clock_settime, clock_settime);
+NTCRT_IMPORT_ONLY(clock_nanosleep, clock_nanosleep);
+NTCRT_IMPORT_ONLY(__pthread_clock_nanosleep, __pthread_clock_nanosleep);
+NTCRT_IMPORT_ONLY(pthread_delay_np, pthread_delay_np);

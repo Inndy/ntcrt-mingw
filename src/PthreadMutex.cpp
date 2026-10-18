@@ -277,3 +277,21 @@ NTCRT_API int pthread_mutexattr_setprioceiling(pthread_mutexattr_t* a, int prio)
     *a = (*a & ~0xFF00U) | ((unsigned)prio & 0xFF) << 8;
     return 0;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_mutex_init, pthread_mutex_init);
+NTCRT_IMPORT_ONLY(pthread_mutex_destroy, pthread_mutex_destroy);
+NTCRT_IMPORT_ONLY(pthread_mutex_lock, pthread_mutex_lock);
+NTCRT_IMPORT_ONLY(pthread_mutex_timedlock, pthread_mutex_timedlock);
+NTCRT_IMPORT_ONLY(pthread_mutex_trylock, pthread_mutex_trylock);
+NTCRT_IMPORT_ONLY(pthread_mutex_unlock, pthread_mutex_unlock);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_init, pthread_mutexattr_init);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_destroy, pthread_mutexattr_destroy);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_gettype, pthread_mutexattr_gettype);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_settype, pthread_mutexattr_settype);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_getpshared, pthread_mutexattr_getpshared);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_setpshared, pthread_mutexattr_setpshared);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_getprotocol, pthread_mutexattr_getprotocol);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_setprotocol, pthread_mutexattr_setprotocol);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_getprioceiling, pthread_mutexattr_getprioceiling);
+NTCRT_IMPORT_ONLY(pthread_mutexattr_setprioceiling, pthread_mutexattr_setprioceiling);

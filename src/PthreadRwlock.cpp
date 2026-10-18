@@ -195,3 +195,18 @@ NTCRT_API int pthread_rwlockattr_setpshared(pthread_rwlockattr_t* a, int s)
     }
     return s == PTHREAD_PROCESS_SHARED ? ENOTSUP : EINVAL;
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_rwlock_init, pthread_rwlock_init);
+NTCRT_IMPORT_ONLY(pthread_rwlock_destroy, pthread_rwlock_destroy);
+NTCRT_IMPORT_ONLY(pthread_rwlock_rdlock, pthread_rwlock_rdlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_timedrdlock, pthread_rwlock_timedrdlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_tryrdlock, pthread_rwlock_tryrdlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_wrlock, pthread_rwlock_wrlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_timedwrlock, pthread_rwlock_timedwrlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_trywrlock, pthread_rwlock_trywrlock);
+NTCRT_IMPORT_ONLY(pthread_rwlock_unlock, pthread_rwlock_unlock);
+NTCRT_IMPORT_ONLY(pthread_rwlockattr_init, pthread_rwlockattr_init);
+NTCRT_IMPORT_ONLY(pthread_rwlockattr_destroy, pthread_rwlockattr_destroy);
+NTCRT_IMPORT_ONLY(pthread_rwlockattr_getpshared, pthread_rwlockattr_getpshared);
+NTCRT_IMPORT_ONLY(pthread_rwlockattr_setpshared, pthread_rwlockattr_setpshared);

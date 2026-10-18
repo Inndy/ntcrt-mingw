@@ -105,3 +105,9 @@ NTCRT_API int pthread_setspecific(pthread_key_t key, const void* value)
 {
     return _Inline_TlsSetValue(key, (PVOID)value) ? 0 : (key < KEY_SLOTS ? ENOMEM : EINVAL);
 }
+
+/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
+NTCRT_IMPORT_ONLY(pthread_key_create, pthread_key_create);
+NTCRT_IMPORT_ONLY(pthread_key_delete, pthread_key_delete);
+NTCRT_IMPORT_ONLY(pthread_getspecific, pthread_getspecific);
+NTCRT_IMPORT_ONLY(pthread_setspecific, pthread_setspecific);
