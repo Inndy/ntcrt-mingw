@@ -90,7 +90,7 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 | `puts` | 248832 | 445440 | 48128 | 35328 | 14336 |
 | `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
 | `wprintf` | 248832 | 445440 | 82432 | 69120 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1179648 | 748544 | 1035776 |
+| `std::cout` | 1257472 | 1420800 | 1183232 | 752640 | 1035776 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links the
 narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of `src/Float.cpp`, with ld
@@ -231,10 +231,41 @@ knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use th
   completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream is
   exact, except between the two units of a surrogate pair, where no byte offset exists.
 
+### C, msvcrt and UCRT
+
+Where C, msvcrt.dll and ucrtbase.dll of Windows 11 differ, measured by calling the DLLs (UCRT printf in its C mode).
+NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 headers fix the msvcrt behavior
+(`L_tmpnam`); C leaves some of these to the implementation, marked "impl.".
+
+| | C | msvcrt | UCRT | NtCRT |
+|---|---|---|---|---|
+| `asctime`, `ctime` | `Wed Jan  2 03:04:05 1980` (`%3d`) | `Jan 02` | as C | as C |
+| `strftime` `%c` in "C" | `%a %b %e %T %Y` | `01/02/80 03:04:05` | as C | as C |
+| `strftime` `%e`, `%F`, `%T`, `%G`, ... | C99 | returns 0 | as C | as C |
+| printf exponent | 2 digits or more | 3 (`1e+000`) | as C | as C |
+| printf infinity, NaN | `inf`, `nan` | `1.#INF00`, `1.#QNAN0` | as C | as C |
+| printf `%F`, `hh` | C99 | `%F` writes nothing, `hh` is ignored | as C | as C |
+| printf `%.0f` of 2.5 | 2 (correctly rounded, ties to even) | 3 | 3 | as C |
+| printf `%.30f` of 0.1 | correctly rounded up to `DECIMAL_DIG` digits, exact recommended | 17 digits, zeros after | exact | exact |
+| printf `%a` of 1.0 | exact, trailing zeros may be left out | `0x1.000000p+0` | `0x1.0000000000000p+0` | `0x1p+0` |
+| printf `%05s`, `%05c` | undefined | zeros | zeros | spaces |
+| `strtod` `inf`, `nan`, `0x1p4` | C99 | not read | as C | as C |
+| `strtod` `1d5` | 1, ends at `d` | 100000 (Fortran exponent) | as C | as C |
+| `strtod` of a denormal | `ERANGE` impl. | no `ERANGE` | no `ERANGE` | `ERANGE` |
+| `strtol("0x", 16)` | 0, ends after `0` | converts nothing | converts nothing | as C |
+| `wcstol` of `L"\x661\x662"` | impl. (other locales) | 12 | 12 | converts nothing |
+| scanf `%[c-a]` | impl. | the range `a-c` | the range `a-c` | `c`, `-`, `a` |
+| scanf `%p` of `0x10` | what printf `%p` writes | 0 | 0x10 | 0x10 |
+| scanf `%hhd` | a `char` | stores a `short` | as C | as C |
+| `fopen` mode `x` | C11, `EEXIST` | `EINVAL` | as C | as C |
+| `tmpnam` | a name of up to `L_tmpnam` - 1 | `\s<pid>.<n>`, the root of the current drive | the temporary directory, `L_tmpnam` 260 in the headers of the SDK | as msvcrt, `L_tmpnam` 14 in the MinGW-w64 headers |
+| `tmpfile` | impl. | the root of the current drive, fails without write access to it | the temporary directory | the temporary directory |
+
 ### Differences from msvcrt
 
+Beside the table above:
+
 - The locales above only, see "Locales"
-- `tmpfile` creates the file in the temporary directory instead of the root of the current drive
 - `stderr` is not buffered when it is redirected to a file
 - No MSVC C++ exception handling and RTTI (`_CxxThrowException`, `__CxxFrameHandler`, `__RTDynamicCast`, ...),
   GCC programs use their own
@@ -256,18 +287,12 @@ knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use th
   function name without the arguments, the one of libmingw32 formats them by `fprintf`
 - The `printf` family returns -1 (`EILSEQ`) when a `%ls`, `%lc`, `%hs` or `%hc` argument cannot be converted,
   msvcrt writes a part of the output and returns its length
-- The `printf` family follows C where msvcrt has its own output: the exponent has two digits or more (`1e+00`,
-  msvcrt `1e+000`, `_set_output_format` only records its argument), infinity and NaN are `inf` and `nan` (msvcrt
-  `1.#INF00`, `1.#QNAN0`) and the `0` flag pads `%c` and `%s` with spaces (msvcrt with zeros)
-- The scanf functions of msvcrt are the C99 scanf of MinGW-w64 (see "printf and scanf"): `%p` takes a `0x`
-  prefix, `%Lf` stores an 80-bit long double, and a reversed range in a set is no range (`%[c-a]` reads "ca" of
-  "cab", msvcrt reads a to c)
-- `strftime` has the C99 conversions (`%C`, `%D`, `%e`, `%F`, `%g`, `%G`, `%h`, `%n`, `%R`, `%t`, `%T`, `%u`, `%V`),
-  msvcrt returns 0
-- `strtod` and `wcstod` set `ERANGE` for a denormal result as well as for an underflow to zero, msvcrt for zero
-  only; `_atodbl` reports either as `_UNDERFLOW`
-- `wcstol` and the other wide integer conversions read ASCII digits only, msvcrt also takes other Unicode decimal
-  digits (U+0660, U+FF10, ...)
+- `_set_output_format` only records its argument, the exponent of printf has two digits or more
+- The scanf functions of msvcrt are the C99 scanf of MinGW-w64 (see "printf and scanf"), `%Lf` stores an 80-bit
+  long double
+- `_atodbl` reports a denormal as `_UNDERFLOW` as well as an underflow to zero, msvcrt the latter only
+- The wide integer conversions (`wcstol`, `wcstoul`, `_wtoi`, ...) read ASCII digits only, msvcrt also takes the
+  other Unicode decimal digits (U+0660, U+FF10, ...)
 - `_winver`, `_winmajor`, `_winminor` and `_osver` are the version of Windows, msvcrt reports 6.2 to a program
   without a compatibility manifest
 - `_wenviron` is set at startup in a program with `main`, msvcrt leaves it `NULL`
@@ -277,8 +302,6 @@ knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use th
 - `_vswprintf_l` takes a count after the buffer as the MinGW-w64 headers declare it, the export of msvcrt.dll has
   none (`buffer, format, locale, args`)
 - `_strnicmp` takes any count, msvcrt returns `_NLSCMPERROR` for one above `INT_MAX`
-- `fopen` takes the mode `x` of C11 (`"wx"` fails with `EEXIST` for an existing file), msvcrt fails with
-  `EINVAL`
 
 ### Differences from UCRT
 
