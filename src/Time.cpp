@@ -1419,6 +1419,17 @@ EXTERN_C int __cdecl _NtCRT__get_tzname(size_t* length, char* buffer, size_t siz
     return 0;
 }
 
+#pragma region "_l" functions
+
+EXTERN_C size_t __cdecl _NtCRT__wcsftime_l(
+    wchar_t* buffer, size_t size, const wchar_t* format, const struct tm* tm, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_wcsftime(buffer, size, format, tm);
+}
+
+#pragma endregion
+
 NTCRT_IMPORT(_tzset, _NtCRT__tzset);
 NTCRT_IMPORT(tzset, _NtCRT__tzset);
 NTCRT_IMPORT_DATA(_timezone, _NtCRT_timezone);
@@ -1489,3 +1500,4 @@ NTCRT_IMPORT(_wctime32_s, _NtCRT__wctime32_s);
 NTCRT_IMPORT(_strtime, _NtCRT__strtime);
 NTCRT_IMPORT(_wstrdate, _NtCRT__wstrdate);
 NTCRT_IMPORT(_wstrtime, _NtCRT__wstrtime);
+NTCRT_IMPORT(_wcsftime_l, _NtCRT__wcsftime_l);

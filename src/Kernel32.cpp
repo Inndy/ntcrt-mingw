@@ -376,14 +376,35 @@ _NtCRT_FormatObjectAttributes(
     }
     if (Name != NULL)
     {
+        /* \Sessions\<id>\BaseNamedObjects\<name>, \BaseNamedObjects\<name> for session 0 */
         ULONG SessionId = NtCurrentPeb()->SessionId;
-        int Length = SessionId != 0 ?
-            _snwprintf(Buffer, Size, L"\\Sessions\\%lu\\BaseNamedObjects\\%ls", SessionId, Name) :
-            _snwprintf(Buffer, Size, L"\\BaseNamedObjects\\%ls", Name);
-        if (Length < 0 || (ULONG)Length >= Size)
+        WCHAR Digits[11];
+        PWCHAR d = Digits + ARRAYSIZE(Digits) - 1;
+
+        *d = L'\0';
+        do
         {
-            return NULL;
+            *--d = (WCHAR)(L'0' + SessionId % 10);
+            SessionId /= 10;
+        } while (SessionId != 0);
+        if (NtCurrentPeb()->SessionId != 0)
+        {
+            if (wcslen(L"\\Sessions\\") + wcslen(d) + wcslen(L"\\BaseNamedObjects\\") + wcslen(Name) >= Size)
+            {
+                return NULL;
+            }
+            wcscpy(Buffer, L"\\Sessions\\");
+            wcscat(Buffer, d);
+            wcscat(Buffer, L"\\BaseNamedObjects\\");
+        } else
+        {
+            if (wcslen(L"\\BaseNamedObjects\\") + wcslen(Name) >= Size)
+            {
+                return NULL;
+            }
+            wcscpy(Buffer, L"\\BaseNamedObjects\\");
         }
+        wcscat(Buffer, Name);
         _Inline_RtlInitUnicodeString(ObjectName, Buffer);
         Attributes |= OBJ_OPENIF;
     } else if (Attributes == 0 && SecurityAttributes == NULL)

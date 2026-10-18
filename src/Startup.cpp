@@ -636,6 +636,45 @@ _NtCRT___wgetmainargs(
 
 /* getenv / _putenv operate on _environ and the process environment */
 
+/* Whether an environment entry is "Name=...", names compare case-insensitively as by the system */
+static
+BOOL
+_NtCRT_IsEnvName(
+    _In_z_ const char* Entry,
+    _In_reads_(Length) const char* Name,
+    _In_ size_t Length)
+{
+    for (size_t i = 0; i < Length; i++)
+    {
+        unsigned char a = (unsigned char)Entry[i], b = (unsigned char)Name[i];
+
+        a = a >= 'A' && a <= 'Z' ? a + ('a' - 'A') : a;
+        b = b >= 'A' && b <= 'Z' ? b + ('a' - 'A') : b;
+        if (a == 0 || a != b)
+        {
+            return FALSE;
+        }
+    }
+    return Entry[Length] == '=';
+}
+
+static
+BOOL
+_NtCRT_IsEnvName(
+    _In_z_ const wchar_t* Entry,
+    _In_reads_(Length) const wchar_t* Name,
+    _In_ size_t Length)
+{
+    for (size_t i = 0; i < Length; i++)
+    {
+        if (Entry[i] == 0 || RtlUpcaseUnicodeChar(Entry[i]) != RtlUpcaseUnicodeChar(Name[i]))
+        {
+            return FALSE;
+        }
+    }
+    return Entry[Length] == L'=';
+}
+
 EXTERN_C char* __cdecl _NtCRT_getenv(const char* name)
 {
     size_t Length;
@@ -653,7 +692,7 @@ EXTERN_C char* __cdecl _NtCRT_getenv(const char* name)
     {
         for (char** p = _NtCRT_environ; *p != NULL; p++)
         {
-            if (_strnicmp(*p, name, Length) == 0 && (*p)[Length] == '=')
+            if (_NtCRT_IsEnvName(*p, name, Length))
             {
                 Value = *p + Length + 1;
                 break;
@@ -681,7 +720,7 @@ EXTERN_C wchar_t* __cdecl _NtCRT__wgetenv(const wchar_t* name)
     {
         for (wchar_t** p = _NtCRT_wenviron; *p != NULL; p++)
         {
-            if (_wcsnicmp(*p, name, Length) == 0 && (*p)[Length] == L'=')
+            if (_NtCRT_IsEnvName(*p, name, Length))
             {
                 Value = *p + Length + 1;
                 break;
@@ -924,6 +963,11 @@ _NtCRT_RunOnExit(void)
     _NtCRT_unlock(_EXIT_LOCK1);
 }
 
+extern "C"
+{
+    void (*_NtCRT_FlushAllAtExit)(void) = NULL;
+}
+
 static
 void
 _NtCRT_DoExit(
@@ -936,7 +980,10 @@ _NtCRT_DoExit(
     {
         _NtCRT_RunOnExit();
     }
-    _NtCRT_FlushAll();
+    if (_NtCRT_FlushAllAtExit != NULL)
+    {
+        _NtCRT_FlushAllAtExit();
+    }
     if (!retcaller)
     {
         RtlExitUserProcess(code);
@@ -972,12 +1019,76 @@ _NtCRT_WriteStderr(
     _NtCRT_write(2, Message, (unsigned int)strlen(Message));
 }
 
+/* The messages of the runtime are built without the printf family, which a program may not link otherwise */
+
+static
+void
+_NtCRT_AppendText(
+    _Inout_updates_z_(Size) char* Buffer,
+    _In_ size_t Size,
+    _In_z_ const char* Text)
+{
+    size_t Length = strlen(Buffer);
+
+    while (*Text != '\0' && Length + 1 < Size)
+    {
+        Buffer[Length++] = *Text++;
+    }
+    Buffer[Length] = '\0';
+}
+
+/* Wide text in the multibyte characters of the locale, '?' for a character it cannot represent */
+static
+void
+_NtCRT_AppendWideText(
+    _Inout_updates_z_(Size) char* Buffer,
+    _In_ size_t Size,
+    _In_z_ const wchar_t* Text)
+{
+    mbstate_t State = 0;
+
+    for (; *Text != L'\0'; Text++)
+    {
+        char Bytes[MB_LEN_MAX + 1];
+        size_t Length = wcrtomb(Bytes, *Text, &State);
+
+        if (Length == (size_t)-1)
+        {
+            State = 0;
+            Bytes[0] = '?';
+            Length = 1;
+        }
+        Bytes[Length] = '\0';
+        _NtCRT_AppendText(Buffer, Size, Bytes);
+    }
+}
+
+static
+void
+_NtCRT_AppendNumber(
+    _Inout_updates_z_(Size) char* Buffer,
+    _In_ size_t Size,
+    _In_ unsigned int Value,
+    _In_ int MinDigits)
+{
+    char Digits[16];
+    char* p = Digits + sizeof(Digits) - 1;
+
+    *p = '\0';
+    do
+    {
+        *--p = (char)('0' + Value % 10);
+        Value /= 10;
+    } while (Value != 0 || Digits + sizeof(Digits) - 1 - p < MinDigits);
+    _NtCRT_AppendText(Buffer, Size, p);
+}
+
 EXTERN_C void __cdecl _NtCRT_amsg_exit(int rterrnum)
 {
-    char Buffer[64];
+    char Buffer[64] = "\r\nruntime error R60";
 
-    _snprintf(Buffer, sizeof(Buffer), "\r\nruntime error R60%02d\r\n", rterrnum);
-    Buffer[sizeof(Buffer) - 1] = '\0';
+    _NtCRT_AppendNumber(Buffer, sizeof(Buffer), (unsigned int)rterrnum, 2);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), "\r\n");
     _NtCRT_WriteStderr(Buffer);
     _NtCRT__exit(255);
 }
@@ -1222,20 +1333,28 @@ EXTERN_C int _NtCRT_InvalidParameter(int Errno)
 
 EXTERN_C void __cdecl _NtCRT__assert(const char* message, const char* file, unsigned line)
 {
-    char Buffer[1024];
+    char Buffer[1024] = "Assertion failed: ";
 
-    _snprintf(Buffer, sizeof(Buffer), "Assertion failed: %s, file %s, line %u\n", message, file, line);
-    Buffer[sizeof(Buffer) - 1] = '\0';
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), message);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", file ");
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), file);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", line ");
+    _NtCRT_AppendNumber(Buffer, sizeof(Buffer), line, 1);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), "\n");
     _NtCRT_WriteStderr(Buffer);
     _NtCRT_abort();
 }
 
 EXTERN_C void __cdecl _NtCRT__wassert(const wchar_t* message, const wchar_t* file, unsigned line)
 {
-    char Buffer[1024];
+    char Buffer[1024] = "Assertion failed: ";
 
-    _snprintf(Buffer, sizeof(Buffer), "Assertion failed: %ls, file %ls, line %u\n", message, file, line);
-    Buffer[sizeof(Buffer) - 1] = '\0';
+    _NtCRT_AppendWideText(Buffer, sizeof(Buffer), message);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", file ");
+    _NtCRT_AppendWideText(Buffer, sizeof(Buffer), file);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), ", line ");
+    _NtCRT_AppendNumber(Buffer, sizeof(Buffer), line, 1);
+    _NtCRT_AppendText(Buffer, sizeof(Buffer), "\n");
     _NtCRT_WriteStderr(Buffer);
     _NtCRT_abort();
 }

@@ -881,6 +881,24 @@ EXTERN_C errno_t __cdecl _NtCRT__wputenv_s(const wchar_t* name, const wchar_t* v
     return Ret == 0 ? 0 : NTCRT_ERRNO;
 }
 
+#pragma region "_l" functions
+
+EXTERN_C errno_t __cdecl _NtCRT__mbstowcs_s_l(
+    size_t* converted, wchar_t* dst, size_t size, const char* src, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_mbstowcs_s(converted, dst, size, src, count);
+}
+
+EXTERN_C errno_t __cdecl _NtCRT__wcstombs_s_l(
+    size_t* converted, char* dst, size_t size, const wchar_t* src, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_wcstombs_s(converted, dst, size, src, count);
+}
+
+#pragma endregion
+
 NTCRT_IMPORT(strcpy_s, _NtCRT_strcpy_s);
 NTCRT_IMPORT(memcpy_s, _NtCRT_memcpy_s);
 NTCRT_IMPORT(memmove_s, _NtCRT_memmove_s);
@@ -920,3 +938,5 @@ NTCRT_IMPORT(getenv_s, _NtCRT_getenv_s);
 NTCRT_IMPORT(_wgetenv_s, _NtCRT__wgetenv_s);
 NTCRT_IMPORT(_putenv_s, _NtCRT__putenv_s);
 NTCRT_IMPORT(_wputenv_s, _NtCRT__wputenv_s);
+NTCRT_IMPORT(_mbstowcs_s_l, _NtCRT__mbstowcs_s_l);
+NTCRT_IMPORT(_wcstombs_s_l, _NtCRT__wcstombs_s_l);

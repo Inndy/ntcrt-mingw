@@ -362,6 +362,36 @@ EXTERN_C char* __cdecl _NtCRT_strerror(int errnum)
     return Ptd->StrerrorBuffer;
 }
 
+EXTERN_C void __cdecl _NtCRT_perror(const char* str)
+{
+    const char* Message = _NtCRT_strerror(NTCRT_ERRNO);
+    FILE* Stream = &_NtCRT_iob[2];
+
+    _NtCRT_lock_file(Stream);
+    _NtCRT__fflush_nolock(Stream);
+    if (str != NULL && *str != '\0')
+    {
+        _NtCRT_write(2, str, (unsigned int)strlen(str));
+        _NtCRT_write(2, ": ", 2);
+    }
+    _NtCRT_write(2, Message, (unsigned int)strlen(Message));
+    _NtCRT_write(2, "\n", 1);
+    _NtCRT_unlock_file(Stream);
+}
+
+/* The prefix is converted to the file code page */
+EXTERN_C void __cdecl _NtCRT__wperror(const wchar_t* str)
+{
+    char* Narrow = NULL;
+
+    if (str != NULL && *str != L'\0')
+    {
+        Narrow = _NtCRT_WideToFile(str);
+    }
+    _NtCRT_perror(Narrow);
+    RtlFreeHeap(NTCRT_HEAP, 0, Narrow);
+}
+
 EXTERN_C int __cdecl _NtCRT_strerror_s(char* buffer, size_t size, int errnum)
 {
     const char* Message = _NtCRT_ErrorMessage(errnum);
@@ -665,147 +695,16 @@ EXTERN_C size_t __cdecl _NtCRT_wcsxfrm(wchar_t* dst, const wchar_t* src, size_t 
     return Length;
 }
 
-/* Character class tables of the "C" locale */
-
-struct NTCRT_CTYPE_TABLE
-{
-    unsigned short Table[257];
-};
-
-static
-constexpr
-unsigned short
-_NtCRT_CtypeOf(
-    unsigned int c)
-{
-    if (c >= '\t' && c <= '\r')
-    {
-        return _SPACE | _CONTROL;
-    } else if (c < 0x20 || c == 0x7F)
-    {
-        return _CONTROL;
-    } else if (c == ' ')
-    {
-        return _SPACE | _BLANK;
-    } else if (c >= '0' && c <= '9')
-    {
-        return _DIGIT | _HEX;
-    } else if (c >= 'A' && c <= 'Z')
-    {
-        return c <= 'F' ? _UPPER | _HEX : _UPPER;
-    } else if (c >= 'a' && c <= 'z')
-    {
-        return c <= 'f' ? _LOWER | _HEX : _LOWER;
-    } else if (c < 0x7F)
-    {
-        return _PUNCT;
-    }
-    return 0;
-}
-
-/* Latin-1 classes of the wide table, a tab is blank in the wide table only. _ALPHA includes _UPPER and _LOWER. */
-static
-constexpr
-unsigned short
-_NtCRT_WctypeOf(
-    unsigned int c)
-{
-    if (c == '\t')
-    {
-        return _SPACE | _CONTROL | _BLANK;
-    } else if (c < 0x80)
-    {
-        return _NtCRT_CtypeOf(c);
-    } else if (c < 0xA0)
-    {
-        return _CONTROL;
-    } else if (c == 0xA0)
-    {
-        return _SPACE | _BLANK;
-    } else if (c == 0xAA || c == 0xB5 || c == 0xBA || c == 0xDF || (c >= 0xE0 && c != 0xF7))
-    {
-        return _LOWER | C1_ALPHA;
-    } else if (c >= 0xC0 && c != 0xD7 && c <= 0xDE)
-    {
-        return _UPPER | C1_ALPHA;
-    } else if (c == 0xB2 || c == 0xB3 || c == 0xB9)
-    {
-        return _DIGIT | _PUNCT;
-    }
-    return _PUNCT;
-}
-
-static
-constexpr
-NTCRT_CTYPE_TABLE
-_NtCRT_MakeCtype(
-    bool Wide)
-{
-    NTCRT_CTYPE_TABLE t {};
-    t.Table[0] = 0;
-    for (unsigned int c = 0; c < 256; c++)
-    {
-        t.Table[c + 1] = Wide ? _NtCRT_WctypeOf(c) : _NtCRT_CtypeOf(c);
-    }
-    return t;
-}
-
-static constexpr NTCRT_CTYPE_TABLE g_Ctype = _NtCRT_MakeCtype(false);
-static constexpr NTCRT_CTYPE_TABLE g_Wctype = _NtCRT_MakeCtype(true);
-
-extern "C"
-{
-    unsigned short _NtCRT_ctype[257];
-    unsigned short* _NtCRT_pctype = _NtCRT_ctype + 1;
-    extern const NTCRT_CTYPE_TABLE _NtCRT_wctype;
-    const NTCRT_CTYPE_TABLE _NtCRT_wctype = g_Wctype;
-    unsigned short* _NtCRT_pwctype = (unsigned short*)_NtCRT_wctype.Table + 1;
-}
-
-/* _ctype is writable data in msvcrt, copy the constant table at startup */
-static
-void
-__cdecl
-_NtCRT_InitCtype(void)
-{
-    memcpy(_NtCRT_ctype, g_Ctype.Table, sizeof(_NtCRT_ctype));
-}
-
-extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_InitCtypeEntry)(void) =
-    _NtCRT_InitCtype;
-
-EXTERN_C unsigned short* __cdecl _NtCRT___pctype_func(void)
-{
-    if (_NtCRT_ctype['A' + 1] == 0)
-    {
-        _NtCRT_InitCtype();
-    }
-    return _NtCRT_pctype;
-}
-
-EXTERN_C unsigned short* __cdecl _NtCRT___pwctype_func(void)
-{
-    return _NtCRT_pwctype;
-}
-
-EXTERN_C unsigned short** __cdecl _NtCRT___p__pctype(void)
-{
-    _NtCRT___pctype_func();
-    return &_NtCRT_pctype;
-}
-
-EXTERN_C unsigned short** __cdecl _NtCRT___p__pwctype(void)
-{
-    return &_NtCRT_pwctype;
-}
+extern "C" unsigned short* _NtCRT_pctype;
+extern "C" unsigned short* _NtCRT_pwctype;
+EXTERN_C unsigned short* __cdecl _NtCRT___pctype_func(void);
 
 EXTERN_C int __cdecl _NtCRT__isctype(int c, int mask)
 {
     if (c >= -1 && c <= 255)
     {
-        return g_Ctype.Table[c + 1] & mask;
+        return _NtCRT___pctype_func()[c] & mask;
     }
-    /* No multibyte character in the "C" locale */
     return 0;
 }
 
@@ -831,12 +730,12 @@ EXTERN_C int __cdecl _NtCRT___toascii(int c)
 
 EXTERN_C int __cdecl _NtCRT___iscsym(int c)
 {
-    return (c >= 0 && c <= 255 && (g_Ctype.Table[c + 1] & (_ALPHA | _DIGIT))) || c == '_';
+    return (c >= 0 && c <= 255 && (_NtCRT___pctype_func()[c] & (_ALPHA | _DIGIT))) || c == '_';
 }
 
 EXTERN_C int __cdecl _NtCRT___iscsymf(int c)
 {
-    return (c >= 0 && c <= 255 && (g_Ctype.Table[c + 1] & _ALPHA)) || c == '_';
+    return (c >= 0 && c <= 255 && (_NtCRT___pctype_func()[c] & _ALPHA)) || c == '_';
 }
 
 EXTERN_C int __cdecl _NtCRT__tolower(int c)
@@ -1273,6 +1172,8 @@ NTCRT_IMPORT_DATA(_sys_nerr, _NtCRT_sys_nerr);
 NTCRT_IMPORT(__sys_errlist, _NtCRT___sys_errlist);
 NTCRT_IMPORT(__sys_nerr, _NtCRT___sys_nerr);
 NTCRT_IMPORT(strerror, _NtCRT_strerror);
+NTCRT_IMPORT(perror, _NtCRT_perror);
+NTCRT_IMPORT(_wperror, _NtCRT__wperror);
 NTCRT_IMPORT(strerror_s, _NtCRT_strerror_s);
 NTCRT_IMPORT(_strerror, _NtCRT__strerror);
 NTCRT_IMPORT(_wcserror, _NtCRT__wcserror);
@@ -1294,14 +1195,6 @@ NTCRT_IMPORT(_wcsncoll, _NtCRT__wcsncoll);
 NTCRT_IMPORT(_wcsnicoll, _NtCRT__wcsnicoll);
 NTCRT_IMPORT(strxfrm, _NtCRT_strxfrm);
 NTCRT_IMPORT(wcsxfrm, _NtCRT_wcsxfrm);
-NTCRT_IMPORT_DATA(_ctype, _NtCRT_ctype);
-NTCRT_IMPORT_DATA(_pctype, _NtCRT_pctype);
-NTCRT_IMPORT_DATA(_pwctype, _NtCRT_pwctype);
-NTCRT_IMPORT_DATA(_wctype, _NtCRT_wctype);
-NTCRT_IMPORT(__pctype_func, _NtCRT___pctype_func);
-NTCRT_IMPORT(__pwctype_func, _NtCRT___pwctype_func);
-NTCRT_IMPORT(__p__pctype, _NtCRT___p__pctype);
-NTCRT_IMPORT(__p__pwctype, _NtCRT___p__pwctype);
 NTCRT_IMPORT(_isctype, _NtCRT__isctype);
 NTCRT_IMPORT_ONLY(isblank, _NtCRT_isblank);
 NTCRT_IMPORT_ONLY(iswblank, _NtCRT_iswblank);

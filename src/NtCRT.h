@@ -91,6 +91,12 @@ extern "C" UINT _NtCRT_LocaleCodePage(_locale_t Locale);
 extern "C" UINT _NtCRT_FileCodePage(void);
 /* Count the multibyte characters of the locale in at most MaxBytes bytes, (size_t)-1 with EILSEQ if invalid */
 extern "C" size_t _NtCRT_MbsLength(const char* Str, size_t MaxBytes);
+/* For LocaleObject.cpp: parse a locale name into the "C.UTF-8" categories, the name of a category or of all, the
+   ctype table of "C.UTF-8" and the categories of the current locale */
+extern "C" BOOL _NtCRT_ParseLocale(int Category, const char* Name, BOOL* Utf8);
+extern "C" char* _NtCRT_LocaleName(int Category, const BOOL* Utf8, char* Buffer);
+extern "C" unsigned short* _NtCRT_CtypeUtf8(void);
+extern "C" void _NtCRT_GetLocaleUtf8(BOOL* Utf8);
 
 /* Run the body of a "_l" function by the LC_CTYPE code page of the locale, the current locale if NULL */
 class NTCRT_LOCALE_SCOPE
@@ -194,8 +200,50 @@ public:
     PVOID* m_Strings;
     int m_StringCount;
 };
+/* Streams of Stdio.cpp used by StdioPrintf.cpp and StdioScanf.cpp */
+extern "C" FILE _NtCRT_iob[];
+extern "C" void __cdecl _NtCRT_lock_file(FILE* stream);
+extern "C" void __cdecl _NtCRT_unlock_file(FILE* stream);
+extern "C" int __cdecl _NtCRT__fflush_nolock(FILE* stream);
+extern "C" int _NtCRT_FlushPut(const char* Bytes, int Length, FILE* stream);
+extern "C" wint_t _NtCRT_putwc_nolock(wchar_t Ch, FILE* Stream);
+/* A wide format of msvcrt (%s and %c are wide) as mingw-w64 takes it, see StdioWideFormat.cpp */
+extern "C" PCWSTR _NtCRT_TranslateWideFormat(PCWSTR Format, PWSTR Buffer, size_t BufferCount, BOOL Scan,
+                                             PWSTR* Allocated);
+#define NTCRT_WIDE_FORMAT(Format, Scan)                                                                                \
+    WCHAR _FormatBuffer[256];                                                                                          \
+    PWSTR _FormatAllocated;                                                                                            \
+    PCWSTR _Format =                                                                                                   \
+        _NtCRT_TranslateWideFormat((Format), _FormatBuffer, ARRAYSIZE(_FormatBuffer), (Scan), &_FormatAllocated)
+
+#define NTCRT_WIDE_FORMAT_FREE() \
+    do { \
+        if (_FormatAllocated != NULL) \
+        { \
+            RtlFreeHeap(NTCRT_HEAP, 0, _FormatAllocated); \
+        } \
+    } while (0)
+
+/* The format and arguments of an NTCRT_FORMAT_ARGS as mingw-w64 takes them */
+#define NTCRT_A(f) ((const char*)(f).Format)
+#define NTCRT_W(f) ((const wchar_t*)(f).Format)
+/* A variadic function calling its va_list form */
+#define NTCRT_WRAP_VARIADIC(Name, VName, Params, Last, Args) \
+    NTCRT_API int __cdecl Name Params \
+    { \
+        va_list ap; \
+        int Ret; \
+\
+        va_start(ap, Last); \
+        Ret = VName Args; \
+        va_end(ap); \
+        return Ret; \
+    }
+
 extern "C" void _NtCRT_FlushAll(void);
 extern "C" void _NtCRT_CloseAll(void);
+/* _NtCRT_FlushAll, set by Stdio.cpp at startup so that exit does not link the streams of a program without them */
+extern "C" void (*_NtCRT_FlushAllAtExit)(void);
 
 /* exit, see Startup.cpp */
 extern "C" __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code);

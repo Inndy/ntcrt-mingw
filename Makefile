@@ -14,10 +14,13 @@ CXXFLAGS += -Iinclude -ffunction-sections -fdata-sections -fno-exceptions -fno-r
 BUILD    := build
 SRCS     := $(wildcard src/*.cpp)
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
+# Replacements of libmingw32 members, linked before it
+START_SRCS := $(wildcard src/start/*.cpp)
+START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
 HEADERS  := src/NtCRT.h $(wildcard include/KNSoft/NDK/*) $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
 
-LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a
+LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a
 
 all: $(LIBS) $(BUILD)/ntcrt.specs
 
@@ -26,6 +29,14 @@ $(BUILD):
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BUILD)/start/%.o: src/start/%.cpp $(HEADERS) | $(BUILD)
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BUILD)/libntcrt_start.a: $(START_OBJS)
+	rm -f $@
+	ar rcs $@ $^
 
 # An object for each NTCRT_IMPORT / NTCRT_IMPORT_ONLY name, see NtCRT.h
 $(BUILD)/exports.stamp: $(SRCS) src/Exports.awk | $(BUILD)
@@ -69,10 +80,11 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
          --wrap=btowc --wrap=wctob --wrap=ftruncate64
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
-# libntcrt, the math functions libntcrt calls are of ntdll.
+# libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
+# _matherr of libmingw32, which would link the printf family into every program.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" > $@
-	printf '*libgcc:\n--start-group -lmingw32 -lgcc -lmingwex -lpthread -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
+	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lpthread -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
 TEST_SRCS := $(wildcard test/upstream/*.cpp)
@@ -114,7 +126,38 @@ $(BUILD)/cxx/stdcxx.exe: test/cxx/stdcxx.cpp $(LIBS) $(BUILD)/ntcrt.specs
 test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
 
-test: test-upstream test-fuzz test-console test-cxx
+# libntcrt_start: pseudo relocations of data auto-imported from a DLL (built with the default runtime), _matherr
+$(BUILD)/start/data.dll: test/start/data.c
+	mkdir -p $(@D)
+	$(CC) -O2 -shared -o $@ $< -Wl,--out-implib,$(BUILD)/start/libdata.a
+
+$(BUILD)/start/reloc.exe: test/start/reloc.c $(BUILD)/start/data.dll $(LIBS) $(BUILD)/ntcrt.specs
+	$(CC) -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $< -L$(BUILD)/start -ldata
+
+$(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe: test/start/matherr.c $(LIBS) $(BUILD)/ntcrt.specs
+	mkdir -p $(@D)
+	$(CC) -O2 -w -static -specs=$(BUILD)/ntcrt.specs -o $(BUILD)/start/matherr.exe $<
+	$(CC) -O2 -w -static -specs=$(BUILD)/ntcrt.specs -DCUSTOM -o $(BUILD)/start/matherr_custom.exe $<
+
+test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe
+	cd $(BUILD)/start && ./reloc.exe
+	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'
+	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
+	@echo "start: ok"
+
+test: test-upstream test-fuzz test-console test-cxx test-start
+
+# Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
+# depends on which objects of libntcrt.a a program links.
+SIZE_SRCS := $(wildcard test/size/*.c test/size/*.cpp)
+
+size: $(LIBS) $(BUILD)/ntcrt.specs
+	@mkdir -p $(BUILD)/size
+	@for f in $(SIZE_SRCS); do \
+	    n=$$(basename $${f%.*}); c=$(CC); case $$f in *.cpp) c=$(CXX);; esac; \
+	    $$c -O2 -s -static -specs=$(BUILD)/ntcrt.specs -o $(BUILD)/size/$$n.exe $$f && \
+	    printf '%-10s %8d\n' $$n $$(wc -c < $(BUILD)/size/$$n.exe); \
+	done
 
 # Compare with UCRT, needs cl of Visual Studio
 compare: $(LIBS) $(BUILD)/ntcrt.specs
@@ -123,4 +166,4 @@ compare: $(LIBS) $(BUILD)/ntcrt.specs
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-console test-cxx compare clean
+.PHONY: all test test-upstream test-fuzz test-console test-cxx test-start size compare clean

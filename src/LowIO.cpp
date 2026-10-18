@@ -1541,6 +1541,21 @@ EXTERN_C int __cdecl _NtCRT_fd_textmode(int fd)
 }
 
 /* The last read of a text mode fd started with a newline, which was CRLF */
+/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF */
+EXTERN_C int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8)
+{
+    int Bytes;
+
+    if (!Utf8)
+    {
+        Bytes = sizeof(wchar_t);
+    } else
+    {
+        Bytes = Unit < 0x80 ? 1 : Unit < 0x800 || (Unit >= 0xD800 && Unit <= 0xDFFF) ? 2 : 3;
+    }
+    return Unit == L'\n' ? Bytes * 2 : Bytes;
+}
+
 EXTERN_C long long __cdecl _NtCRT_fd_pending_bytes(int fd)
 {
     PNTCRT_FD Entry = _NtCRT_LockFd(fd);
@@ -1938,7 +1953,13 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
     } else
     {
         /* msvcrt opens inheritable handles, spawned children receive them by lpReserved2 */
-        _K32_SetHandleInformation(Handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        OBJECT_HANDLE_FLAG_INFORMATION Info;
+
+        if (NT_SUCCESS(NtQueryObject(Handle, ObjectHandleFlagInformation, &Info, sizeof(Info), NULL)))
+        {
+            Info.Inherit = TRUE;
+            NtSetInformationObject(Handle, ObjectHandleFlagInformation, &Info, sizeof(Info));
+        }
     }
     if ((oflag & _O_TEXT) ||
         (!(oflag & _O_BINARY) && ((oflag & (_O_WTEXT | _O_U16TEXT | _O_U8TEXT)) || _NtCRT_fmode != _O_BINARY)))
@@ -2125,12 +2146,23 @@ _NtCRT_ModeFromAttributes(
         Mode = _S_IFREG;
         if (Path != NULL)
         {
+            static const WCHAR Executables[][5] = { L".exe", L".com", L".bat", L".cmd" };
             PCWSTR Ext = wcsrchr(Path, L'.');
-            if (Ext != NULL &&
-                (_wcsicmp(Ext, L".exe") == 0 || _wcsicmp(Ext, L".com") == 0 ||
-                 _wcsicmp(Ext, L".bat") == 0 || _wcsicmp(Ext, L".cmd") == 0))
+
+            for (size_t i = 0; Ext != NULL && wcslen(Ext) == 4 && i < ARRAYSIZE(Executables); i++)
             {
-                Mode |= _S_IEXEC;
+                size_t k = 1;
+
+                /* ASCII case-insensitive */
+                while (k < 4 && (Ext[k] | 0x20) == Executables[i][k])
+                {
+                    k++;
+                }
+                if (k == 4)
+                {
+                    Mode |= _S_IEXEC;
+                    break;
+                }
             }
         }
     }

@@ -769,6 +769,46 @@ EXTERN_C size_t __cdecl _NtCRT_c32rtomb(char* s, char32_t c32, mbstate_t* ps)
 
 #pragma endregion
 
+#pragma region "_l" functions
+
+EXTERN_C int __cdecl _NtCRT__mblen_l(const char* s, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_mblen(s, count);
+}
+
+EXTERN_C int __cdecl _NtCRT__mbtowc_l(wchar_t* pwc, const char* s, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_mbtowc(pwc, s, count);
+}
+
+EXTERN_C size_t __cdecl _NtCRT__mbstowcs_l(wchar_t* dst, const char* src, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_mbstowcs(dst, src, count);
+}
+
+EXTERN_C size_t __cdecl _NtCRT__wcstombs_l(char* dst, const wchar_t* src, size_t count, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_wcstombs(dst, src, count);
+}
+
+EXTERN_C int __cdecl _NtCRT__wctomb_l(char* s, wchar_t wc, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_wctomb(s, wc);
+}
+
+EXTERN_C errno_t __cdecl _NtCRT__wctomb_s_l(int* size, char* s, size_t max, wchar_t wc, _locale_t locale)
+{
+    NTCRT_LOCALE_SCOPE Scope(locale);
+    return _NtCRT_wctomb_s(size, s, max, wc);
+}
+
+#pragma endregion
+
 NTCRT_IMPORT(mblen, _NtCRT_mblen);
 NTCRT_IMPORT(mbtowc, _NtCRT_mbtowc);
 NTCRT_IMPORT(wctomb, _NtCRT_wctomb);
@@ -787,3 +827,9 @@ NTCRT_IMPORT(mbrtoc16, _NtCRT_mbrtoc16);
 NTCRT_IMPORT(c16rtomb, _NtCRT_c16rtomb);
 NTCRT_IMPORT(mbrtoc32, _NtCRT_mbrtoc32);
 NTCRT_IMPORT(c32rtomb, _NtCRT_c32rtomb);
+NTCRT_IMPORT(_mblen_l, _NtCRT__mblen_l);
+NTCRT_IMPORT(_mbtowc_l, _NtCRT__mbtowc_l);
+NTCRT_IMPORT(_mbstowcs_l, _NtCRT__mbstowcs_l);
+NTCRT_IMPORT(_wcstombs_l, _NtCRT__wcstombs_l);
+NTCRT_IMPORT(_wctomb_l, _NtCRT__wctomb_l);
+NTCRT_IMPORT(_wctomb_s_l, _NtCRT__wctomb_s_l);

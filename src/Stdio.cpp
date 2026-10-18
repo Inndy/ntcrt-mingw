@@ -53,8 +53,6 @@ static NTCRT_STREAM_MB g_IobMb[NTCRT_IOB_ENTRIES];
 static PNTCRT_FILEX g_Streams[NTCRT_NSTREAM - NTCRT_IOB_ENTRIES];
 static volatile LONG g_StdioState;
 
-EXTERN_C char* __cdecl _NtCRT_strerror(int errnum);
-EXTERN_C int __cdecl _NtCRT__snwprintf(wchar_t* buffer, size_t count, const wchar_t* format, ...);
 
 static
 void
@@ -302,7 +300,7 @@ EXTERN_C int __cdecl _NtCRT_filbuf(FILE* stream)
 }
 
 /* Flush the buffer and put the bytes of a character, returns 0 or EOF */
-static
+EXTERN_C
 int
 _NtCRT_FlushPut(
     _In_reads_bytes_(Length) const char* Bytes,
@@ -575,7 +573,7 @@ _NtCRT_getwc_nolock(
     return (wint_t)(Lo | (Hi << 8));
 }
 
-static
+EXTERN_C
 wint_t
 _NtCRT_putwc_nolock(
     _In_ wchar_t Ch,
@@ -1153,21 +1151,6 @@ EXTERN_C int __cdecl _NtCRT__fflush_nolock(FILE* stream)
     return _NtCRT_flush_nolock(stream);
 }
 
-/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF */
-EXTERN_C int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8)
-{
-    int Bytes;
-
-    if (!Utf8)
-    {
-        Bytes = sizeof(wchar_t);
-    } else
-    {
-        Bytes = Unit < 0x80 ? 1 : Unit < 0x800 || (Unit >= 0xD800 && Unit <= 0xDFFF) ? 2 : 3;
-    }
-    return Unit == L'\n' ? Bytes * 2 : Bytes;
-}
-
 static
 long long
 _NtCRT_ftell_nolock(
@@ -1515,8 +1498,16 @@ _NtCRT_ParseMode(
         for (; *Mode == L' '; Mode++);
         for (i = 0; i < ARRAYSIZE(Encodings); i++)
         {
-            size_t Length = wcslen(Encodings[i].Name);
-            if (_wcsnicmp(Mode, Encodings[i].Name, Length) == 0)
+            size_t Length = 0;
+
+            /* ASCII case-insensitive, the names are upper case */
+            while (Encodings[i].Name[Length] != L'\0' &&
+                   (Mode[Length] >= L'a' && Mode[Length] <= L'z' ? Mode[Length] - (L'a' - L'A') : Mode[Length]) ==
+                       Encodings[i].Name[Length])
+            {
+                Length++;
+            }
+            if (Encodings[i].Name[Length] == L'\0')
             {
                 OpenFlag |= Encodings[i].Flag;
                 Mode += Length;
@@ -1853,6 +1844,17 @@ EXTERN_C void _NtCRT_FlushAll(void)
 }
 
 static
+void
+__cdecl
+_NtCRT_InitFlushAtExit(void)
+{
+    _NtCRT_FlushAllAtExit = _NtCRT_FlushAll;
+}
+
+extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_InitFlushAtExitPtr)(void) =
+    _NtCRT_InitFlushAtExit;
+
+static
 int
 _NtCRT_CloseCallback(
     _In_ FILE* Stream,
@@ -1995,6 +1997,25 @@ EXTERN_C int __cdecl _NtCRT_rename(const char* oldname, const char* newname)
 static volatile LONG g_TmpCounter;
 
 /* Make a unique name in the temporary directory, returns a heap string */
+/* Append a number in lowercase hexadecimal */
+static
+void
+_NtCRT_AppendHex(
+    _Inout_ PWSTR Buffer,
+    _In_ ULONG Value)
+{
+    WCHAR Digits[9];
+    PWSTR p = Digits + 8;
+
+    *p = L'\0';
+    do
+    {
+        *--p = L"0123456789abcdef"[Value & 0xF];
+        Value >>= 4;
+    } while (Value != 0);
+    wcscat(Buffer, p);
+}
+
 static
 PWSTR
 _NtCRT_MakeTempName(
@@ -2031,15 +2052,16 @@ _NtCRT_MakeTempName(
         size_t DirLength = wcslen(Directory);
         LONG Counter = _InterlockedIncrement(&g_TmpCounter);
 
-        _NtCRT__snwprintf(
-            Name,
-            Length,
-            L"%ls%ls%ls%lx.%lx",
-            Directory,
-            DirLength != 0 && Directory[DirLength - 1] != L'\\' && Directory[DirLength - 1] != L'/' ? L"\\" : L"",
-            Prefix,
-            (ULONG)(ULONG_PTR)NtCurrentProcessId(),
-            (ULONG)Counter);
+        /* Directory\PrefixPID.COUNTER, hexadecimal numbers */
+        wcscpy(Name, Directory);
+        if (DirLength != 0 && Directory[DirLength - 1] != L'\\' && Directory[DirLength - 1] != L'/')
+        {
+            wcscat(Name, L"\\");
+        }
+        wcscat(Name, Prefix);
+        _NtCRT_AppendHex(Name, (ULONG)(ULONG_PTR)NtCurrentProcessId());
+        wcscat(Name, L".");
+        _NtCRT_AppendHex(Name, (ULONG)Counter);
         if (_K32_GetFileAttributesW(Name) == INVALID_FILE_ATTRIBUTES)
         {
             return Name;
@@ -2261,36 +2283,6 @@ EXTERN_C errno_t __cdecl _NtCRT__wtmpnam_s(wchar_t* str, size_t sizeInChars)
     return _NtCRT_TmpnamS(str, sizeInChars, _NtCRT_MakeTempName(NULL, L"s"));
 }
 
-EXTERN_C void __cdecl _NtCRT_perror(const char* str)
-{
-    const char* Message = _NtCRT_strerror(NTCRT_ERRNO);
-    FILE* Stream = &_NtCRT_iob[2];
-
-    _NtCRT_lock_file(Stream);
-    _NtCRT_flush_nolock(Stream);
-    if (str != NULL && *str != '\0')
-    {
-        _NtCRT_write(2, str, (unsigned int)strlen(str));
-        _NtCRT_write(2, ": ", 2);
-    }
-    _NtCRT_write(2, Message, (unsigned int)strlen(Message));
-    _NtCRT_write(2, "\n", 1);
-    _NtCRT_unlock_file(Stream);
-}
-
-/* The prefix is converted to the file code page */
-EXTERN_C void __cdecl _NtCRT__wperror(const wchar_t* str)
-{
-    char* Narrow = NULL;
-
-    if (str != NULL && *str != L'\0')
-    {
-        Narrow = _NtCRT_WideToFile(str);
-    }
-    _NtCRT_perror(Narrow);
-    RtlFreeHeap(NTCRT_HEAP, 0, Narrow);
-}
-
 /* Characters of stdin and stdout */
 EXTERN_C int __cdecl _NtCRT__fgetchar(void)
 {
@@ -2380,836 +2372,6 @@ EXTERN_C errno_t __cdecl _NtCRT__wfreopen_s(FILE** pFile, const wchar_t* path, c
     return *pFile != NULL ? 0 : NTCRT_ERRNO;
 }
 
-/*
- * Formatted I/O
- *
- * The narrow functions use the C99 implementation of mingw-w64, which accepts the format extensions of msvcrt.
- * The wide functions of msvcrt treat %s and %c as wide, the format is rewritten for mingw-w64 before use.
- */
-
-static
-PCWSTR
-_NtCRT_TranslateWideFormat(
-    _In_ PCWSTR Format,
-    _Out_writes_(BufferCount) PWSTR Buffer,
-    _In_ size_t BufferCount,
-    _In_ BOOL Scan,
-    _Outptr_result_maybenull_ PWSTR* Allocated)
-{
-    size_t Length = wcslen(Format);
-    size_t Capacity = Length * 2 + 1;
-    PWSTR Out, o;
-    PCWSTR f = Format;
-
-    *Allocated = NULL;
-    if (wcschr(Format, L'%') == NULL)
-    {
-        return Format;
-    }
-    if (Capacity <= BufferCount)
-    {
-        Out = Buffer;
-    } else
-    {
-        Out = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Capacity * sizeof(WCHAR));
-        if (Out == NULL)
-        {
-            return Format;
-        }
-        *Allocated = Out;
-    }
-    o = Out;
-    while (*f != L'\0')
-    {
-        BOOL Long = FALSE, Short = FALSE;
-        WCHAR Conv;
-
-        if (*f != L'%')
-        {
-            *o++ = *f++;
-            continue;
-        }
-        *o++ = *f++;
-        if (*f == L'%')
-        {
-            *o++ = *f++;
-            continue;
-        }
-        /* Flags, width, precision and argument suppression */
-        while (*f != L'\0' && wcschr(L"-+ #0123456789.*$'", *f) != NULL)
-        {
-            *o++ = *f++;
-        }
-        /* Length modifiers */
-        for (;;)
-        {
-            if (*f == L'h')
-            {
-                Short = TRUE;
-                f++;
-            } else if (*f == L'l' || *f == L'w')
-            {
-                if (Long)
-                {
-                    /* ll */
-                    *o++ = L'l';
-                    *o++ = L'l';
-                    Long = FALSE;
-                    f++;
-                    continue;
-                }
-                Long = TRUE;
-                f++;
-            } else if (*f == L'I')
-            {
-                *o++ = *f++;
-                if ((f[0] == L'6' && f[1] == L'4') || (f[0] == L'3' && f[1] == L'2'))
-                {
-                    *o++ = *f++;
-                    *o++ = *f++;
-                }
-            } else if (*f != L'\0' && wcschr(L"Lqjzt", *f) != NULL)
-            {
-                *o++ = *f++;
-            } else
-            {
-                break;
-            }
-        }
-        Conv = *f;
-        if (Conv == L's' || Conv == L'c' || (Scan && Conv == L'['))
-        {
-            /* Wide unless h is specified */
-            if (!Short)
-            {
-                *o++ = L'l';
-            }
-        } else if (Conv == L'S' || Conv == L'C')
-        {
-            /* Narrow unless l is specified */
-            if (Long)
-            {
-                *o++ = L'l';
-            }
-            Conv = Conv == L'S' ? L's' : L'c';
-        } else
-        {
-            if (Short)
-            {
-                *o++ = L'h';
-            }
-            if (Long)
-            {
-                *o++ = L'l';
-            }
-        }
-        if (Conv == L'\0')
-        {
-            break;
-        }
-        *o++ = Conv;
-        f++;
-        if (Scan && Conv == L'[')
-        {
-            /* Copy the scan set */
-            if (*f == L'^')
-            {
-                *o++ = *f++;
-            }
-            if (*f == L']')
-            {
-                *o++ = *f++;
-            }
-            while (*f != L'\0' && *f != L']')
-            {
-                *o++ = *f++;
-            }
-            if (*f == L']')
-            {
-                *o++ = *f++;
-            }
-        }
-    }
-    *o = L'\0';
-    return Out;
-}
-
-#define NTCRT_WIDE_FORMAT(Format, Scan)                                                                                \
-    WCHAR _FormatBuffer[256];                                                                                          \
-    PWSTR _FormatAllocated;                                                                                            \
-    PCWSTR _Format =                                                                                                   \
-        _NtCRT_TranslateWideFormat((Format), _FormatBuffer, ARRAYSIZE(_FormatBuffer), (Scan), &_FormatAllocated)
-
-#define NTCRT_WIDE_FORMAT_FREE() \
-    do { \
-        if (_FormatAllocated != NULL) \
-        { \
-            RtlFreeHeap(NTCRT_HEAP, 0, _FormatAllocated); \
-        } \
-    } while (0)
-
-/* Narrow printf */
-
-EXTERN_C int __cdecl _NtCRT_vfprintf(FILE* stream, const char* format, va_list ap)
-{
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    return __mingw_vfprintf(stream, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_fprintf(FILE* stream, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfprintf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vprintf(const char* format, va_list ap)
-{
-    return _NtCRT_vfprintf(&_NtCRT_iob[1], format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_printf(const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfprintf(&_NtCRT_iob[1], format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vsprintf(char* buffer, const char* format, va_list ap)
-{
-    if (buffer == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    return __mingw_vsprintf(buffer, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_sprintf(char* buffer, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vsprintf(buffer, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* msvcrt semantics: no terminator and -1 returned on truncation */
-EXTERN_C int __cdecl _NtCRT__vsnprintf(char* buffer, size_t count, const char* format, va_list ap)
-{
-    va_list Copy;
-    int Length;
-
-    if (format == NULL || (buffer == NULL && count != 0))
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    va_copy(Copy, ap);
-    Length = __mingw_vsnprintf(buffer, count, format, ap);
-    if (Length >= 0 && (size_t)Length >= count && count != 0)
-    {
-        /* C99 truncation dropped the last character for the terminator, format again in full */
-        char* Full = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, (size_t)Length + 1);
-        if (Full != NULL)
-        {
-            __mingw_vsnprintf(Full, (size_t)Length + 1, format, Copy);
-            memcpy(buffer, Full, count);
-            RtlFreeHeap(NTCRT_HEAP, 0, Full);
-        }
-        if ((size_t)Length > count)
-        {
-            Length = -1;
-        }
-    } else if (Length >= 0 && count == 0 && buffer != NULL)
-    {
-        Length = Length == 0 ? 0 : -1;
-    }
-    va_end(Copy);
-    return Length;
-}
-
-EXTERN_C int __cdecl _NtCRT__snprintf(char* buffer, size_t count, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT__vsnprintf(buffer, count, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* C99 semantics */
-EXTERN_C int __cdecl _NtCRT_vsnprintf(char* buffer, size_t count, const char* format, va_list ap)
-{
-    return __mingw_vsnprintf(buffer, count, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_snprintf(char* buffer, size_t count, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = __mingw_vsnprintf(buffer, count, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT__vscprintf(const char* format, va_list ap)
-{
-    if (format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    return __mingw_vsnprintf(NULL, 0, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT__scprintf(const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT__vscprintf(format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* Wide printf */
-
-EXTERN_C int __cdecl _NtCRT_vfwprintf(FILE* stream, const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    NTCRT_WIDE_FORMAT(format, FALSE);
-    Ret = __mingw_vfwprintf(stream, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_fwprintf(FILE* stream, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwprintf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vwprintf(const wchar_t* format, va_list ap)
-{
-    return _NtCRT_vfwprintf(&_NtCRT_iob[1], format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_wprintf(const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwprintf(&_NtCRT_iob[1], format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT__vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
-{
-    va_list Copy;
-    int Length;
-
-    if (format == NULL || (buffer == NULL && count != 0))
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    NTCRT_WIDE_FORMAT(format, FALSE);
-    va_copy(Copy, ap);
-    Length = __mingw_vsnwprintf(buffer, count, _Format, ap);
-    if (Length >= 0 && (size_t)Length >= count && count != 0)
-    {
-        wchar_t* Full = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, ((size_t)Length + 1) * sizeof(wchar_t));
-        if (Full != NULL)
-        {
-            __mingw_vsnwprintf(Full, (size_t)Length + 1, _Format, Copy);
-            memcpy(buffer, Full, count * sizeof(wchar_t));
-            RtlFreeHeap(NTCRT_HEAP, 0, Full);
-        }
-        if ((size_t)Length > count)
-        {
-            Length = -1;
-        }
-    } else if (Length >= 0 && count == 0 && buffer != NULL)
-    {
-        Length = Length == 0 ? 0 : -1;
-    }
-    va_end(Copy);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Length;
-}
-
-EXTERN_C int __cdecl _NtCRT__snwprintf(wchar_t* buffer, size_t count, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT__vsnwprintf(buffer, count, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* Legacy swprintf of msvcrt without a buffer size */
-EXTERN_C int __cdecl _NtCRT_vswprintf(wchar_t* buffer, const wchar_t* format, va_list ap)
-{
-    return _NtCRT__vsnwprintf(buffer, INT_MAX / sizeof(wchar_t), format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_swprintf(wchar_t* buffer, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vswprintf(buffer, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT__vscwprintf(const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    NTCRT_WIDE_FORMAT(format, FALSE);
-    Ret = __mingw_vsnwprintf(NULL, 0, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT__scwprintf(const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT__vscwprintf(format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/*
- * mingw-w64 wide pformat writes strings to a FILE with __ms_fwprintf and "%[-]*.*s" / "%[-]*.*S",
- * so it must not call back into pformat. Only string and character conversions are supported.
- */
-static
-bool
-_NtCRT_MsPutWideChar(
-    _In_ FILE* Stream,
-    _In_ wchar_t Ch)
-{
-    return _NtCRT_putwc_nolock(Ch, Stream) != WEOF;
-}
-
-static
-int
-_NtCRT_MsPutWide(
-    _In_ FILE* Stream,
-    _In_reads_(Count) const wchar_t* Str,
-    _In_ int Count,
-    _In_ int Width,
-    _In_ BOOL Left)
-{
-    int Pad = Width > Count ? Width - Count : 0;
-
-    for (int i = 0; !Left && i < Pad; i++)
-    {
-        if (!_NtCRT_MsPutWideChar(Stream, L' '))
-        {
-            return -1;
-        }
-    }
-    for (int i = 0; i < Count; i++)
-    {
-        if (!_NtCRT_MsPutWideChar(Stream, Str[i]))
-        {
-            return -1;
-        }
-    }
-    for (int i = 0; Left && i < Pad; i++)
-    {
-        if (!_NtCRT_MsPutWideChar(Stream, L' '))
-        {
-            return -1;
-        }
-    }
-    return Count + Pad;
-}
-
-EXTERN_C int __cdecl _NtCRT___ms_vfwprintf(FILE* stream, const wchar_t* format, va_list ap)
-{
-    int Total = 0;
-
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    _NtCRT_lock_file(stream);
-    for (const wchar_t* f = format; *f != L'\0'; f++)
-    {
-        BOOL Left = FALSE, Narrow;
-        int Width = 0, Precision = -1, Written;
-        WCHAR Modifier = 0;
-
-        if (*f != L'%')
-        {
-            if (!_NtCRT_MsPutWideChar(stream, *f))
-            {
-                goto _Fail;
-            }
-            Total++;
-            continue;
-        }
-        f++;
-        if (*f == L'%')
-        {
-            if (!_NtCRT_MsPutWideChar(stream, L'%'))
-            {
-                goto _Fail;
-            }
-            Total++;
-            continue;
-        }
-        if (*f == L'-')
-        {
-            Left = TRUE;
-            f++;
-        }
-        if (*f == L'*')
-        {
-            Width = va_arg(ap, int);
-            if (Width < 0)
-            {
-                Left = TRUE;
-                Width = -Width;
-            }
-            f++;
-        } else
-        {
-            while (*f >= L'0' && *f <= L'9')
-            {
-                Width = Width * 10 + (*f++ - L'0');
-            }
-        }
-        if (*f == L'.')
-        {
-            f++;
-            Precision = 0;
-            if (*f == L'*')
-            {
-                Precision = va_arg(ap, int);
-                f++;
-            } else
-            {
-                while (*f >= L'0' && *f <= L'9')
-                {
-                    Precision = Precision * 10 + (*f++ - L'0');
-                }
-            }
-        }
-        if (*f == L'h' || *f == L'l' || *f == L'w')
-        {
-            Modifier = *f++;
-        }
-        switch (*f)
-        {
-            case L's':
-            case L'S':
-                Narrow = Modifier == L'h' || (*f == L'S' && Modifier == 0);
-                if (Narrow)
-                {
-                    const char* Str = va_arg(ap, const char*);
-                    int Count;
-                    PWSTR Wide;
-
-                    if (Str == NULL)
-                    {
-                        Str = "(null)";
-                    }
-                    /* Bytes of the "C" locale */
-                    Count = Precision >= 0 ? (int)strnlen(Str, Precision) : (int)strlen(Str);
-                    Wide = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, (Count + 1) * sizeof(WCHAR));
-                    if (Wide == NULL)
-                    {
-                        goto _Fail;
-                    }
-                    for (int i = 0; i < Count; i++)
-                    {
-                        Wide[i] = (unsigned char)Str[i];
-                    }
-                    Written = _NtCRT_MsPutWide(stream, Wide, Count, Width, Left);
-                    RtlFreeHeap(NTCRT_HEAP, 0, Wide);
-                } else
-                {
-                    const wchar_t* Str = va_arg(ap, const wchar_t*);
-                    if (Str == NULL)
-                    {
-                        Str = L"(null)";
-                    }
-                    Written = _NtCRT_MsPutWide(stream,
-                                               Str,
-                                               Precision >= 0 ? (int)wcsnlen(Str, Precision) : (int)wcslen(Str),
-                                               Width,
-                                               Left);
-                }
-                break;
-            case L'c':
-            case L'C':
-            {
-                WCHAR Ch;
-                if (Modifier == L'h' || (*f == L'C' && Modifier == 0))
-                {
-                    Ch = (unsigned char)va_arg(ap, int);
-                } else
-                {
-                    Ch = (WCHAR)va_arg(ap, int);
-                }
-                Written = _NtCRT_MsPutWide(stream, &Ch, 1, Width, Left);
-                break;
-            }
-            default:
-                NTCRT_ERRNO = EINVAL;
-                goto _Fail;
-        }
-        if (Written < 0)
-        {
-            goto _Fail;
-        }
-        Total += Written;
-    }
-    _NtCRT_unlock_file(stream);
-    return Total;
-
-_Fail:
-    _NtCRT_unlock_file(stream);
-    return -1;
-}
-
-EXTERN_C int __cdecl _NtCRT___ms_fwprintf(FILE* stream, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT___ms_vfwprintf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/*
- * The internal wide output of msvcrt, UTF-16 units are put into the stream buffer regardless of the text mode,
- * and it fails on a stream without a buffer
- */
-EXTERN_C int __cdecl _NtCRT__woutput_s(FILE* stream, const wchar_t* format, va_list ap)
-{
-    va_list Copy;
-    int Length;
-    wchar_t* Buffer;
-
-    if (stream == NULL || format == NULL)
-    {
-        _NtCRT_InvalidParameter(EINVAL);
-        return -1;
-    }
-    va_copy(Copy, ap);
-    Length = _NtCRT__vscwprintf(format, Copy);
-    va_end(Copy);
-    if (Length < 0)
-    {
-        return -1;
-    }
-    Buffer = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, ((size_t)Length + 1) * sizeof(wchar_t));
-    if (Buffer == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
-    }
-    _NtCRT__vsnwprintf(Buffer, (size_t)Length + 1, format, ap);
-    for (int i = 0; i < Length; i++)
-    {
-        if ((stream->_cnt -= sizeof(wchar_t)) >= 0)
-        {
-            memcpy(stream->_ptr, &Buffer[i], sizeof(wchar_t));
-            stream->_ptr += sizeof(wchar_t);
-        } else if (stream->_base == NULL || _NtCRT_FlushPut((const char*)&Buffer[i], sizeof(wchar_t), stream) != 0)
-        {
-            stream->_flag |= _IOERR;
-            Length = -1;
-            break;
-        }
-    }
-    RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
-    return Length;
-}
-
-/* Narrow scanf */
-
-EXTERN_C int __cdecl _NtCRT_vfscanf(FILE* stream, const char* format, va_list ap)
-{
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    return __mingw_vfscanf(stream, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_fscanf(FILE* stream, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfscanf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vscanf(const char* format, va_list ap)
-{
-    return _NtCRT_vfscanf(&_NtCRT_iob[0], format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_scanf(const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfscanf(&_NtCRT_iob[0], format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vsscanf(const char* str, const char* format, va_list ap)
-{
-    if (str == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    return __mingw_vsscanf(str, format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_sscanf(const char* str, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vsscanf(str, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* Wide scanf */
-
-EXTERN_C int __cdecl _NtCRT_vfwscanf(FILE* stream, const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    NTCRT_WIDE_FORMAT(format, TRUE);
-    Ret = __mingw_vfwscanf(stream, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_fwscanf(FILE* stream, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwscanf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vwscanf(const wchar_t* format, va_list ap)
-{
-    return _NtCRT_vfwscanf(&_NtCRT_iob[0], format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_wscanf(const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwscanf(&_NtCRT_iob[0], format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vswscanf(const wchar_t* str, const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (str == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    NTCRT_WIDE_FORMAT(format, TRUE);
-    Ret = __mingw_vswscanf(str, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_swscanf(const wchar_t* str, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vswscanf(str, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
 NTCRT_IMPORT_DATA(_iob, _NtCRT_iob);
 NTCRT_IMPORT(__iob_func, _NtCRT___iob_func);
 NTCRT_IMPORT(__acrt_iob_func, _NtCRT___acrt_iob_func);
@@ -3291,8 +2453,6 @@ NTCRT_IMPORT(_tempnam, _NtCRT_tempnam);
 NTCRT_IMPORT(tempnam, _NtCRT_tempnam);
 NTCRT_IMPORT(_wtempnam, _NtCRT__wtempnam);
 NTCRT_IMPORT(tmpnam, _NtCRT_tmpnam);
-NTCRT_IMPORT(perror, _NtCRT_perror);
-NTCRT_IMPORT(_wperror, _NtCRT__wperror);
 NTCRT_IMPORT(tmpfile_s, _NtCRT_tmpfile_s);
 NTCRT_IMPORT(_rmtmp, _NtCRT__rmtmp);
 NTCRT_IMPORT(rmtmp, _NtCRT__rmtmp);
@@ -3314,42 +2474,3 @@ NTCRT_IMPORT(putw, _NtCRT__putw);
 NTCRT_IMPORT(clearerr_s, _NtCRT_clearerr_s);
 NTCRT_IMPORT(freopen_s, _NtCRT_freopen_s);
 NTCRT_IMPORT(_wfreopen_s, _NtCRT__wfreopen_s);
-NTCRT_IMPORT(vfprintf, _NtCRT_vfprintf);
-NTCRT_IMPORT(fprintf, _NtCRT_fprintf);
-NTCRT_IMPORT(vprintf, _NtCRT_vprintf);
-NTCRT_IMPORT(printf, _NtCRT_printf);
-NTCRT_IMPORT(vsprintf, _NtCRT_vsprintf);
-NTCRT_IMPORT(sprintf, _NtCRT_sprintf);
-NTCRT_IMPORT(_vsnprintf, _NtCRT__vsnprintf);
-NTCRT_IMPORT(_snprintf, _NtCRT__snprintf);
-NTCRT_IMPORT(_vscprintf, _NtCRT__vscprintf);
-NTCRT_IMPORT(_scprintf, _NtCRT__scprintf);
-NTCRT_IMPORT(vfwprintf, _NtCRT_vfwprintf);
-NTCRT_IMPORT(fwprintf, _NtCRT_fwprintf);
-NTCRT_IMPORT(__ms_fwprintf, _NtCRT___ms_fwprintf);
-NTCRT_IMPORT(_woutput_s, _NtCRT__woutput_s);
-NTCRT_IMPORT(__ms_vfwprintf, _NtCRT___ms_vfwprintf);
-NTCRT_IMPORT(vwprintf, _NtCRT_vwprintf);
-NTCRT_IMPORT(wprintf, _NtCRT_wprintf);
-NTCRT_IMPORT(_vsnwprintf, _NtCRT__vsnwprintf);
-NTCRT_IMPORT(_snwprintf, _NtCRT__snwprintf);
-NTCRT_IMPORT(snwprintf, _NtCRT__snwprintf);
-NTCRT_IMPORT(vsnwprintf, _NtCRT__vsnwprintf);
-NTCRT_IMPORT(vswprintf, _NtCRT_vswprintf);
-NTCRT_IMPORT(swprintf, _NtCRT_swprintf);
-NTCRT_IMPORT(_vswprintf, _NtCRT_vswprintf);
-NTCRT_IMPORT(_swprintf, _NtCRT_swprintf);
-NTCRT_IMPORT(_vscwprintf, _NtCRT__vscwprintf);
-NTCRT_IMPORT(_scwprintf, _NtCRT__scwprintf);
-NTCRT_IMPORT_ONLY(vfscanf, _NtCRT_vfscanf);
-NTCRT_IMPORT(fscanf, _NtCRT_fscanf);
-NTCRT_IMPORT_ONLY(vscanf, _NtCRT_vscanf);
-NTCRT_IMPORT(scanf, _NtCRT_scanf);
-NTCRT_IMPORT_ONLY(vsscanf, _NtCRT_vsscanf);
-NTCRT_IMPORT(sscanf, _NtCRT_sscanf);
-NTCRT_IMPORT_ONLY(vfwscanf, _NtCRT_vfwscanf);
-NTCRT_IMPORT(fwscanf, _NtCRT_fwscanf);
-NTCRT_IMPORT_ONLY(vwscanf, _NtCRT_vwscanf);
-NTCRT_IMPORT(wscanf, _NtCRT_wscanf);
-NTCRT_IMPORT_ONLY(vswscanf, _NtCRT_vswscanf);
-NTCRT_IMPORT(swscanf, _NtCRT_swscanf);

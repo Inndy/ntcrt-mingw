@@ -5,7 +5,8 @@ functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs
-make test       # build and run test/upstream, the fuzz, console and libstdc++ tests
+make test       # build and run test/upstream, the fuzz, console, libstdc++ and startup tests
+make size       # the size of the programs of test/size
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 ```
@@ -13,6 +14,7 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 ## Layout
 
 - `src/` the runtime, `NtCRT.h` is the internal header
+- `src/start/` replacements of libmingw32 members in `libntcrt_start.a`, linked before libmingw32
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `test/upstream/` the KNSoft.NtCRT test suite
@@ -20,7 +22,31 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
+- `test/start/` pseudo relocations of data auto-imported from a DLL and `_matherr` (`make test-start`)
+- `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
+
+## Size
+
+ld cannot drop the unused functions of an x64 PE image: the linker script keeps `.pdata`, which refers to every
+function, so `--gc-sections` has no effect and a program links whole objects of `libntcrt.a`. The runtime is
+split so that the startup code links few of them: the `_l` functions are beside the functions they call or in
+`Locale*.cpp`, locale objects, character class tables, printf, wide printf and scanf are objects of their own,
+and stdio is flushed at exit by a pointer that stdio sets. `libntcrt_start.a` replaces the pseudo relocator and
+`_matherr` of libmingw32, which report errors by `fprintf` and would link the printf family into every program.
+
+Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the split, and now:
+
+| Program | Before UTF-8 | Before split | Now | msvcrt.dll |
+|---|---:|---:|---:|---:|
+| `return 0` | 248832 | 445440 | 114688 | 14336 |
+| `puts` | 248832 | 445440 | 144384 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 210432 | 41984 |
+| `wprintf` | 248832 | 445440 | 214528 | 41472 |
+| `std::cout` | 1257472 | 1420800 | 1219584 | 1035776 |
+
+The msvcrt.dll column is the default MinGW-w64 runtime, which imports it. A program with printf links the C99
+printf of libmingwex (`pformat`, `gdtoa`).
 
 ## Behavior
 
@@ -49,6 +75,7 @@ Two locales: "C" and "C.UTF-8". Each category of `setlocale` is one of them.
   case mapping in "C.UTF-8", ASCII only in "C". Narrow case mapping (`toupper`, `_strupr`, `_stricmp`) is ASCII
   only and collation (`strcoll`, `wcscoll`) is code point order in both locales.
 - `_l` functions use the code page of the locale object, `_create_locale` does not change the current locale.
+- `_isctype`, `__iscsym` and `__iscsymf` classify by the current locale (`_LEADBYTE` for C2..F4 in "C.UTF-8").
 - `_setmbcp` (the `_mbs*` functions) is independent of `setlocale` and cannot select UTF-8 (65001) or 54936
   (GB18030, which has no NLS table).
 
@@ -120,6 +147,8 @@ knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use th
 - `_getch`, `_getwch` and `_kbhit` take the character reported with the release of Alt, msvcrt reports the
   keypad digits typed with Alt as Alt+arrow keys and loses the character (UCRT too)
 - In the "C" locale `mblen` is 1 for every non-NUL byte, msvcrt returns -1 for bytes 0x80..0xFF when `n` is 1
+- The default `_matherr` (installed when a program sets `_MINGW_INSTALL_DEBUG_MATHERR`) prints the error and the
+  function name without the arguments, the one of libmingw32 formats them by `fprintf`
 - The `printf` family returns -1 (`EILSEQ`) when a `%ls`, `%lc`, `%hs` or `%hc` argument cannot be converted,
   msvcrt writes a part of the output and returns its length
 

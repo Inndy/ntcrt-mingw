@@ -1771,16 +1771,12 @@ extern "C"
     double _NtCRT_HUGE = __builtin_huge_val();
     unsigned int _NtCRT_osplatform = VER_PLATFORM_WIN32_NT;
     int _NtCRT_fileinfo = 0;
-    int _NtCRT___setlc_active = 0;
-    int _NtCRT___unguarded_readlc_active = 0;
     void(__cdecl* _NtCRT_aexit_rtn)(int) = _NtCRT__exit;
 }
 
 NTCRT_IMPORT_DATA(_HUGE, _NtCRT_HUGE);
 NTCRT_IMPORT_DATA(_osplatform, _NtCRT_osplatform);
 NTCRT_IMPORT_DATA(_fileinfo, _NtCRT_fileinfo);
-NTCRT_IMPORT_DATA(__setlc_active, _NtCRT___setlc_active);
-NTCRT_IMPORT_DATA(__unguarded_readlc_active, _NtCRT___unguarded_readlc_active);
 NTCRT_IMPORT_DATA(_aexit_rtn, _NtCRT_aexit_rtn);
 
 #pragma endregion
