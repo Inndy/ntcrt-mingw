@@ -527,23 +527,118 @@ static void gen_number(char* s, int Float)
     s[k] = '\0';
 }
 
+/*
+ * The exact decimal of the midpoint between a double or a float and the next one, the hardest input to round,
+ * or a little more or less. The midpoint is a long double, printed exactly by mingw-w64. The UCRT rounds a tie
+ * of strtof away from zero and ignores the digits after the 768th: *Want is the correct result instead, the even
+ * one of the two for a tie.
+ */
+typedef struct
+{
+    int Float;
+    double Want;
+} MIDPOINT;
+
+static void gen_midpoint(char* s, MIDPOINT* m)
+{
+    double d = fabs(gen_double()), Lo, Hi;
+    long double Mid;
+    char Exp[16];
+    char* e;
+    int n, Pad, Keep = 18;
+
+    m->Float = rnd(2);
+    if (!m->Float)
+    {
+        if (!(d < DBL_MAX))
+            d = 1e300;
+        Lo = d;
+        Hi = nextafter(d, INFINITY);
+    } else
+    {
+        float f;
+
+        if (!(d < FLT_MAX))
+            d = 1e30;
+        f = (float)d;
+        Lo = f;
+        Hi = nextafterf(f, INFINITY);
+        Keep = 10;
+    }
+    Mid = ((long double)Lo + Hi) / 2;
+    __mingw_snprintf(s, 1000, "%.780Le", Mid);
+    e = strchr(s, 'e');
+    strcpy(Exp, e);
+    /*
+     * The digits up to the last one that is not 0, 1 if the midpoint is a power of 10 ("1."). A digit more or
+     * less after the Keep-th digit changes it by less than half the distance from Lo and from Hi.
+     */
+    for (n = (int)(e - s); s[n - 1] == '0'; n--)
+        ;
+    Pad = n < Keep + 2 ? Keep + 2 - n : 0;
+    switch (rnd(3))
+    {
+    case 0:
+        /* A tie */
+        Pad = rnd(10);
+        memset(s + n, '0', Pad);
+        n += Pad;
+        m->Want = m->Float ? (*(uint32_t*)&(float){ (float)Lo } & 1 ? Hi : Lo) : (*(uint64_t*)&Lo & 1 ? Hi : Lo);
+        break;
+    case 1:
+        /* More: a 1 after some zeros */
+        Pad += rnd(20);
+        memset(s + n, '0', Pad);
+        n += Pad;
+        s[n++] = '1';
+        m->Want = Hi;
+        break;
+    default:
+        /* Less: fewer digits, or the last digit down and some 9s after */
+        if (rnd(2) && n - 1 > Keep + 1)
+        {
+            n = Keep + 1 + rnd(n - 1 - (Keep + 1));
+        } else
+        {
+            s[n - 1 - (s[n - 1] == '.')]--;
+            Pad += rnd(20);
+            memset(s + n, '9', Pad);
+            n += Pad;
+        }
+        m->Want = Lo;
+        break;
+    }
+    strcpy(s + n, Exp);
+}
+
 static void check_strtod(void)
 {
-    char s[256];
-    wchar_t w[256];
+    char s[1024];
+    wchar_t w[1024];
     char *ge, *we;
     wchar_t *gwe, *wwe;
     double g, r;
     float gf, rf;
     int gerr, werr;
+    MIDPOINT m;
+    int Mid = rnd(4) == 0;
 
-    gen_number(s, 1);
+    if (Mid)
+        gen_midpoint(s, &m);
+    else
+        gen_number(s, 1);
     errno = 0;
     *RefErrno() = 0;
     g = strtod(s, &ge);
     gerr = errno;
     r = RefStrtod(s, &we);
     werr = *RefErrno();
+    if (Mid && !m.Float)
+    {
+        r = m.Want;
+        we = s + strlen(s);
+        werr = 0;
+    }
     g_Checks++;
     if (g == r && fabs(g) < DBL_MIN)
         werr = gerr;
@@ -557,6 +652,12 @@ static void check_strtod(void)
     gerr = errno;
     rf = RefStrtof(s, &we);
     werr = *RefErrno();
+    if (Mid && m.Float)
+    {
+        rf = (float)m.Want;
+        we = s + strlen(s);
+        werr = 0;
+    }
     /* Whether an underflow sets ERANGE is implementation-defined */
     if (gf == rf && fabsf(gf) < FLT_MIN)
         werr = gerr;
@@ -573,6 +674,12 @@ static void check_strtod(void)
     gerr = errno;
     r = RefWcstod(w, &wwe);
     werr = *RefErrno();
+    if (Mid && !m.Float)
+    {
+        r = m.Want;
+        wwe = w + wcslen(w);
+        werr = 0;
+    }
     if (g == r && fabs(g) < DBL_MIN)
         werr = gerr;
     if (memcmp(&g, &r, 8) != 0 && !(isnan(g) && isnan(r)) || gwe - w != wwe - w || gerr != werr)
@@ -806,6 +913,19 @@ static void check_scanf(void)
         if (c.Float[i] && (c.Size[i] == 8 ? isnan(*(double*)Got[i]) && isnan(*(double*)Want[i])
                                           : isnan(*(float*)Got[i]) && isnan(*(float*)Want[i])))
             memcpy(Got[i], Want[i], 64);
+    /*
+     * %lf of mingw-w64 rounds to long double, then to double (see README): a long double halfway between two
+     * doubles goes to the even one, 1 ulp from the correct one
+     */
+    for (int i = 0; i < c.Count; i++)
+    {
+        uint64_t a, b;
+
+        memcpy(&a, Got[i], 8);
+        memcpy(&b, Want[i], 8);
+        if (c.Float[i] && c.Size[i] == 8 && (a & 1) == 0 && (a - b == 1 || b - a == 1))
+            memcpy(Got[i], Want[i], 64);
+    }
     if (g != w || memcmp(Got, Want, sizeof(Got)) != 0)
     {
         char Detail[1200] = "";

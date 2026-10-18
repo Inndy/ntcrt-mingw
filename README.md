@@ -21,7 +21,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `test/upstream/` the KNSoft.NtCRT test suite
-- `test/fuzz/` differential fuzz of the UTF-8 codec against kernel32 (`make test-fuzz`, `FUZZ_ITERATIONS=n`)
+- `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
+  printf and scanf families, strtod and strtol against ucrtbase.dll
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
@@ -43,7 +44,11 @@ it, so a program links the functions it reaches. The libraries of GCC (libmingwe
 object. What lld keeps is what the startup code reaches and the sections that are not COMDAT in the objects it
 loads, so:
 
-- the export stubs (`__imp_Name` and the jump `Name`) are COMDAT, lld loads objects for `--wrap` too
+- the export stubs (`__imp_Name` and the jump `Name`) are COMDAT
+- lld loads the object of every `__wrap_` function of `--wrap`, used or not, and every object these refer to. They
+  refer to libmingwex by `__real_` only (which loads nothing, see "LLVM"), and the objects with functions that
+  call libmingwex are apart: `ScanfWrap.cpp` from `StdioScanf.cpp`, `Integer.cpp` and `Perror.cpp` from
+  `String.cpp`, `_atoldbl` in `LocaleConv.cpp`
 - no `.CRT$XI*` initializer for data that can be constant, `_ctype` is initialized data
 - the functions the startup code refers to in every program (`_amsg_exit`, `abort`, `_matherr`) write their ASCII
   messages to the handle of fd 2 as msvcrt does, `_write` would link the console and text mode conversions
@@ -52,14 +57,14 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 114176 | 29696 | 14336 |
+| `return 0` | 248832 | 445440 | 114176 | 30208 | 14336 |
 | `puts` | 248832 | 445440 | 143872 | 40448 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 209408 | 89600 | 41984 |
-| `wprintf` | 248832 | 445440 | 213504 | 91648 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1218560 | 760320 | 1035776 |
+| `printf("%d")` | 248832 | 445440 | 240640 | 78336 | 41984 |
+| `wprintf` | 248832 | 445440 | 244736 | 80896 | 41472 |
+| `std::cout` | 1257472 | 1420800 | 1249792 | 783360 | 1035776 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links the
-C99 printf of libmingwex (`pformat`, `gdtoa`).
+C99 printf of libmingwex (`pformat`, `gdtoa`), and with ld all of `src/Float.cpp` for the digits of `%g`.
 
 ## LLVM
 
@@ -73,6 +78,9 @@ does what the specs do and links by lld. clang uses the headers and libraries of
   libmingwex, so `btowc`, `wctob` and `ftruncate64` are those of NtCRT without `--wrap`. The math functions that
   both libmingwex and ntdll define (`sin`, `cos`, `log`, `pow`, `sqrt`, ...) are those of libmingwex for NtCRT too:
   `_j0`, `_y0` and the other Bessel functions may differ from the GCC build in the last bits.
+- With `--wrap=X`, lld resolves `__real_X` to the `X` of an archive member only if something else loads that
+  member (a reference to `X`); otherwise to address 0, without an error. GNU ld loads it. A `__wrap_X` reached
+  only through `X` is safe, NtCRT calls no `__real_` function from elsewhere.
 - The `__cpuidex` of MinGW-w64 headers before 12 clashes with `<cpuid.h>` of clang and is left out
   (`-D__INTRINSIC_DEFINED___cpuidex`).
 
@@ -117,6 +125,34 @@ The specs wrap these (`--wrap`) so that the conversions between narrow and wide 
   the current locale, an unconvertible character fails the call with -1 and `EILSEQ`
 - the precision of a narrow `%ls` counts bytes and never cuts a character, the precision of a wide `%hs` counts
   `wchar_t` and never splits a surrogate pair
+
+In front of the printf of mingw-w64, `Format.cpp` rewrites the format where it does not follow C: the space and
+`+` flags of `%u` are dropped, the `0` flag with `-`, a negative `*` width or the precision of an integer
+conversion, `%#.0o` of 0 prints `0`, and `%g` without `#` becomes the `%e` or `%f` it selects with the precision
+of its digits without trailing zeros (`%20.17g` of 1e13 lost the width). The Windows length modifiers `I64`,
+`I32` and `I`, `%S`/`%C` and the legacy wide `%s`/`%c` of `_snwprintf` are kept beside `hh`, `ll`, `j`, `z`, `t`
+and `%ls` of C.
+
+`strtod`, `strtof`, `wcstod` and `wcstof` (and `__mingw_strtod` and the like, wrapped) are `src/Float.cpp`, a port
+of the floating point parser of Go 1.27 (`internal/strconv`, by Russ Cox: unrounded scaling by a 128-bit power of
+10, the exact multiprecision decimal as fallback) to the syntax of C: correctly rounded, ties to even, with any
+number of digits. `strtold` stays the gdtoa of libmingwex, which the wrapper corrects where it converts nothing
+(0, not -0) or reads a `nan(...)` with other characters than letters, digits and `_`. The scanf of mingw-w64 is
+wrapped to accept `I64` after a width (`%4I64d`), and `wcstoll`, `wcstoull`, `wcstoimax` and `wcstoumax` of
+libmingwex to convert "0x" without a hex digit as 0 with the end after the "0".
+
+`test/fuzz/format.c` compares these with ucrtbase.dll, `__stdio_common_vsprintf` in its C mode and its legacy
+modes. Differences it does not report, where UCRT or mingw-w64 is the one off:
+
+- UCRT rounds exact decimal ties of printf away from zero (`%.0f` of 2.5 is 3, NtCRT: 2, ties to even), and those
+  of `strtof`; it reads no more than 768 significant digits in `strtod`, the fuzz checks those inputs, midpoints
+  of two doubles or floats and a digit more or less, against the exact result instead
+- UCRT `%#E` of infinity is `I.NF`; it counts the width of a narrow `%ls` in `wchar_t`
+- the wide printf of mingw-w64 writes nothing for `%c` or `%lc` of the null character
+- the scanf of mingw-w64 takes a prefix of a number that is not a number (`"1e"`, `"0x"`, `"nan("`) where C has a
+  matching failure, and its narrow `%lf` rounds to long double first, then to double: a number whose long double
+  is halfway between two doubles is 1 ulp off (the wide scanf calls `wcstod`)
+- UCRT `strtol` of "0x" without a hex digit converts nothing (C: 0, the end after "0")
 
 `btowc` and `wctob` of libmingwex are wrapped to NtCRT the same way, and `ftruncate64` (used by
 `std::filesystem::resize_file`), which checks the free space of the volume by kernel32 functions NtCRT does not
@@ -215,3 +251,6 @@ Derived from [KNSoft.NtCRT](https://github.com/KNSoft/KNSoft.NtCRT) at commit
 `dc8159b829f3274127225f527069a2664847052d`, under the MIT license, see `LICENSE`. `polyfill/` and
 `test/upstream/` are copied from it, `include/KNSoft/NDK/` follows
 [KNSoft.NDK](https://github.com/KNSoft/KNSoft.NDK) (MIT).
+
+`src/Float.cpp` and `src/FloatPow10.inl` are ported from the Go 1.27 source (`src/internal/strconv`), under the
+BSD 3-clause license of The Go Authors, whose notice is in `src/Float.cpp`.

@@ -21,8 +21,6 @@ EXTERN_C double __cdecl _NtCRT__wtof(const wchar_t*);
 EXTERN_C double __cdecl _NtCRT_atof(const char*);
 EXTERN_C double __cdecl _NtCRT_strtod(const char*, char**);
 EXTERN_C double __cdecl _NtCRT_wcstod(const wchar_t*, wchar_t**);
-EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE*, char*);
-EXTERN_C int __cdecl _NtCRT__atoldbl(_LDOUBLE*, char*);
 EXTERN_C intmax_t __cdecl _NtCRT_strtoimax(const char*, char**, int);
 EXTERN_C long __cdecl _NtCRT_strtol(const char*, char**, int);
 EXTERN_C long __cdecl _NtCRT_wcstol(const wchar_t*, wchar_t**, int);
@@ -34,6 +32,72 @@ EXTERN_C unsigned long __cdecl _NtCRT_strtoul(const char*, char**, int);
 EXTERN_C unsigned long __cdecl _NtCRT_wcstoul(const wchar_t*, wchar_t**, int);
 EXTERN_C unsigned long long __cdecl _NtCRT_strtoull(const char*, char**, int);
 EXTERN_C unsigned long long __cdecl _NtCRT_wcstoull(const wchar_t*, wchar_t**, int);
+
+/*
+ * The conversions of msvcrt without "_l". Returns _OVERFLOW or _UNDERFLOW of <math.h> on range errors. Not in
+ * String.cpp: lld loads it for its __wrap_ functions, and the gdtoa of libmingwex with it for __mingw_strtold.
+ */
+EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE* value, char* str)
+{
+    int Saved = NTCRT_ERRNO, Ret = 0;
+
+    NTCRT_ERRNO = 0;
+    value->x = _NtCRT_strtod(str, NULL);
+    if (NTCRT_ERRNO == ERANGE)
+    {
+        Ret = value->x == 0 ? _UNDERFLOW : _OVERFLOW;
+    }
+    NTCRT_ERRNO = Saved;
+    return Ret;
+}
+
+EXTERN_C int __cdecl _NtCRT__atoldbl(_LDOUBLE* value, char* str)
+{
+    int Saved = NTCRT_ERRNO, Ret = 0;
+    long double x;
+
+    NTCRT_ERRNO = 0;
+    x = __mingw_strtold(str, NULL);
+    if (NTCRT_ERRNO == ERANGE)
+    {
+        Ret = x == 0 ? _UNDERFLOW : _OVERFLOW;
+    }
+    memcpy(value->ld, &x, sizeof(value->ld));
+    NTCRT_ERRNO = Saved;
+    return Ret;
+}
+
+/* Flags of __STRINGTOLD */
+#define NTCRT_SLD_UNDERFLOW 1
+#define NTCRT_SLD_OVERFLOW 2
+#define NTCRT_SLD_NODIGITS 4
+
+/* The conversion of _atoldbl with the end of the number, mult12 is not used by msvcrt */
+EXTERN_C unsigned int __cdecl _NtCRT___STRINGTOLD(_LDOUBLE* pld, char** end, const char* str, int mult12)
+{
+    int Saved = NTCRT_ERRNO;
+    unsigned int Ret = 0;
+    char* End;
+    long double x;
+
+    UNREFERENCED_PARAMETER(mult12);
+    NTCRT_ERRNO = 0;
+    x = __mingw_strtold(str, &End);
+    if (End == str)
+    {
+        Ret = NTCRT_SLD_NODIGITS;
+    } else if (NTCRT_ERRNO == ERANGE)
+    {
+        Ret = x == 0 ? NTCRT_SLD_UNDERFLOW : NTCRT_SLD_OVERFLOW;
+    }
+    memcpy(pld->ld, &x, sizeof(pld->ld));
+    if (end != NULL)
+    {
+        *end = End;
+    }
+    NTCRT_ERRNO = Saved;
+    return Ret;
+}
 
 /* msvcrt has the "_l" form only */
 EXTERN_C int __cdecl _NtCRT__atoflt(_CRT_FLOAT* value, char* str)
@@ -208,6 +272,9 @@ EXTERN_C unsigned long long __cdecl _NtCRT__wcstoui64_l(const wchar_t* str, wcha
     return _NtCRT_wcstoull(str, end, base);
 }
 
+NTCRT_IMPORT(_atodbl, _NtCRT__atodbl);
+NTCRT_IMPORT(_atoldbl, _NtCRT__atoldbl);
+NTCRT_IMPORT(__STRINGTOLD, _NtCRT___STRINGTOLD);
 NTCRT_IMPORT(_atof_l, _NtCRT__atof_l);
 NTCRT_IMPORT(_atoi_l, _NtCRT__atoi_l);
 NTCRT_IMPORT(_atol_l, _NtCRT__atol_l);

@@ -99,6 +99,9 @@ extern "C" char* _NtCRT_LocaleName(int Category, const BOOL* Utf8, char* Buffer)
 extern "C" unsigned short* _NtCRT_CtypeUtf8(void);
 extern "C" void _NtCRT_GetLocaleUtf8(BOOL* Utf8);
 
+/* Float.cpp: the exponent of %e of a finite double with Digits significant digits, and its trailing zeros */
+extern "C" int _NtCRT_DecimalExponent(double Value, int Digits, int* Zeros);
+
 /* _ctype, the character classes of "C" (Ctype.cpp) */
 struct NTCRT_CTYPE_TABLE
 {

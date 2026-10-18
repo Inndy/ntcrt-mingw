@@ -24,7 +24,7 @@ OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 members, linked before it
 START_SRCS := $(wildcard src/start/*.cpp)
 START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
-HEADERS  := src/NtCRT.h $(wildcard include/KNSoft/NDK/*) $(wildcard polyfill/*.inl)
+HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/KNSoft/NDK/*) $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
 
 # The compilers of the runtime and of the programs on it
@@ -103,7 +103,7 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
 # printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp, ftruncate64
-# of libmingwex by src/LowIO.cpp, the strtod family of mingw-w64 and wcstoll, wcstoull, wcstoimax and wcstoumax
+# of libmingwex by src/LowIO.cpp, the strtod family of mingw-w64 (src/Float.cpp) and wcstoll, wcstoull, wcstoimax and wcstoumax
 # of libmingwex by src/String.cpp, the scanf of mingw-w64 by src/StdioScanf.cpp
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
@@ -143,15 +143,21 @@ test-upstream: $(BUILD)/Test.exe
 	objdump -p $< | grep 'DLL Name'
 	./$<
 
-# Differential fuzz of the UTF-8 codec against kernel32, FUZZ_ITERATIONS=n for a longer run
+# Differential fuzz of the UTF-8 codec against kernel32 and of printf, scanf, strtod and strtol against
+# ucrtbase.dll, FUZZ_ITERATIONS=n for a longer run
 FUZZ_ITERATIONS ?= 200000
 
 $(BUILD)/fuzz/utf8.exe: test/fuzz/utf8.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 
-test-fuzz: $(BUILD)/fuzz/utf8.exe
-	./$< $(FUZZ_ITERATIONS)
+$(BUILD)/fuzz/format.exe: test/fuzz/format.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< -lkernel32
+
+test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe
+	./$(BUILD)/fuzz/utf8.exe $(FUZZ_ITERATIONS)
+	./$(BUILD)/fuzz/format.exe $(FUZZ_ITERATIONS)
 
 # Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
 $(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(DRIVER)

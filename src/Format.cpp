@@ -272,8 +272,6 @@ _NtCRT_IsZeroOctal(
     return Value == 0;
 }
 
-EXTERN_C int __cdecl __real___mingw_snprintf(char* Buffer, size_t Count, const char* Format, ...);
-
 /*
  * The %e or %f a %g of a finite double without the # flag selects, and its precision without the trailing zeros:
  * with P significant digits and the exponent X of %e, %f if P > X >= -4 with P - 1 - X digits after the point.
@@ -289,9 +287,8 @@ _NtCRT_GeneralFloat(
     _Out_opt_ int* Precision)
 {
     TChar c = Format[Spec->ConvPos];
-    char Digits[512];
     int P = Spec->PrecisionSlot >= 0 ? (int)Slots[Spec->PrecisionSlot] : Spec->Precision;
-    int Count = 0, Zeros = 0, Exponent, Fraction;
+    int Zeros, Exponent, Fraction;
     double Value;
 
     if ((c != 'g' && c != 'G') || (Spec->LengthPos != Spec->ConvPos && Format[Spec->LengthPos] == 'L') ||
@@ -301,7 +298,7 @@ _NtCRT_GeneralFloat(
     }
     memcpy(&Value, &Slots[Spec->ValueSlot], sizeof(Value));
     P = P < 0 ? 6 : P == 0 ? 1 : P;
-    if (!isfinite(Value) || P > 400)
+    if (!isfinite(Value))
     {
         return FALSE;
     }
@@ -309,16 +306,7 @@ _NtCRT_GeneralFloat(
     {
         return TRUE;
     }
-    __real___mingw_snprintf(Digits, sizeof(Digits), "%.*e", P - 1, fabs(Value));
-    for (const char* d = Digits; *d != 'e'; d++)
-    {
-        if (*d != '.')
-        {
-            Zeros = *d == '0' ? Zeros + 1 : 0;
-            Count++;
-        }
-    }
-    Exponent = atoi(strchr(Digits, 'e') + 1);
+    Exponent = _NtCRT_DecimalExponent(Value, P, &Zeros);
     if (P > Exponent && Exponent >= -4)
     {
         *Conv = c == 'g' ? 'f' : 'F';
