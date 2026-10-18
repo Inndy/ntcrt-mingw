@@ -190,6 +190,15 @@ test-go: $(BUILD)/gofloat/float.dll
 	        NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz "^$$f\$$" -fuzztime $(GO_FUZZTIME) . || exit 1; \
 	    done
 
+# strtod, strtof and wcstod against parse-number-fxx-test-data, FLOAT_CORPUS=its data directory. Not in "test", the
+# data is 270 MB: git clone https://github.com/nigeltao/parse-number-fxx-test-data
+$(BUILD)/float/corpus.exe: test/float/corpus.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
+test-float-corpus: $(BUILD)/float/corpus.exe
+	./$< $(FLOAT_CORPUS)/*.txt
+
 # printf where the fuzz cannot compare with UCRT: long double, positional arguments, %Z, %n, errors
 $(BUILD)/printf/printf.exe: test/printf/printf.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
@@ -258,4 +267,4 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-printf test-console test-cxx test-start size compare clean
+.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-start size compare clean

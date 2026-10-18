@@ -23,6 +23,9 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/upstream/` the KNSoft.NtCRT test suite
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
+- `test/float/` `strtod`, `strtof` and `wcstod` against the 5.3 million lines of
+  [parse-number-fxx-test-data](https://github.com/nigeltao/parse-number-fxx-test-data), and printf `%.17g`,
+  `%.9g` and `%a` read back (`make test-float-corpus FLOAT_CORPUS=<its data directory>`)
 - `test/printf/` printf against exact expected strings (`make test-printf`)
 - `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
   tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` (`math/big` past its
@@ -33,6 +36,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/start/` pseudo relocations of data auto-imported from a DLL and `_matherr` (`make test-start`)
 - `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
+- `IDEAS.md` proposals not started yet
 
 ## Size
 
