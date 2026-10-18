@@ -103,16 +103,17 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
 # Functions of libmingwex replaced by libntcrt: the printf of mingw-w64 by src/FormatNarrow.cpp and
-# src/FormatWide.cpp, wcstoll, wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by
-# src/Multibyte.cpp and ftruncate64 by src/LowIO.cpp. libntcrt defines them under their names too, for lld.
+# src/FormatWide.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll, wcstoull, wcstoimax and
+# wcstoumax by src/Integer.cpp, btowc and wctob by src/Multibyte.cpp and ftruncate64 by src/LowIO.cpp. libntcrt
+# defines them under their names too, for lld.
 WRAPS_REPLACED := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                               vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
-                  $(foreach f,wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
+                  $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
+                  $(foreach f,strtold wcstold wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
                   --wrap=btowc --wrap=wctob --wrap=ftruncate64
-# Functions of libmingwex corrected by libntcrt, which calls them as __real_: the strtod family of mingw-w64 by
-# src/Float.cpp (only strtold), the scanf of mingw-w64 by src/ScanfWrap.cpp
-WRAPS_CORRECTED := $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
-                   $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f))
+# Functions of libmingwex corrected by libntcrt, which calls them as __real_: the scanf of mingw-w64 by
+# src/ScanfWrap.cpp
+WRAPS_CORRECTED := $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f))
 WRAPS := $(WRAPS_REPLACED) $(WRAPS_CORRECTED)
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
@@ -159,9 +160,19 @@ $(BUILD)/fuzz/format.exe: test/fuzz/format.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< -lkernel32
 
-test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe
+# strtold and wcstold against the gdtoa of libmingwex in a DLL built with the default runtime
+$(BUILD)/fuzz/gdtoa.dll: test/fuzz/gdtoa.c
+	mkdir -p $(@D)
+	$(CC) -O2 -shared -o $@ $<
+
+$(BUILD)/fuzz/strtold.exe: test/fuzz/strtold.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< -lkernel32
+
+test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe $(BUILD)/fuzz/strtold.exe $(BUILD)/fuzz/gdtoa.dll
 	./$(BUILD)/fuzz/utf8.exe $(FUZZ_ITERATIONS)
 	./$(BUILD)/fuzz/format.exe $(FUZZ_ITERATIONS)
+	./$(BUILD)/fuzz/strtold.exe $(FUZZ_ITERATIONS) $(BUILD)/fuzz/gdtoa.dll
 
 # strtod, strtof, wcstod and the floating point conversions of printf in a DLL, tested by Go: the tables of Go
 # strconv, fuzz against strconv and math/big, GO_FUZZTIME=d for longer fuzzing. Not in "test", it needs go.

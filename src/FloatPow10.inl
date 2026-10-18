@@ -3,10 +3,7 @@
  * from pow10tab.go of internal/strconv of Go 1.27, see Float.cpp for its license.
  */
 
-#define NTCRT_POW10_MIN (-348)
-#define NTCRT_POW10_MAX 347
-
-static const NTCRT_POW10 g_Pow10[] = {
+extern "C" const NTCRT_POW10 _NtCRT_Pow10[] = {
     { 0xfa8fd5a0081c0289ull, 0xe8cd3796329f1bacull }, /* 1e-348 * 2**1284 */
     { 0x9c99e58405118196ull, 0xf18042bddfa3714bull }, /* 1e-347 * 2**1280 */
     { 0xc3c05ee50655e1fbull, 0xade0536d578c4d9eull }, /* 1e-346 * 2**1277 */

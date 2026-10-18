@@ -22,7 +22,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `test/upstream/` the KNSoft.NtCRT test suite
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
-  printf and scanf families, strtod and strtol against ucrtbase.dll
+  printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
 - `test/printf/` printf against exact expected strings (`make test-printf`)
 - `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
   tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` with the syntax of C
@@ -129,7 +129,7 @@ takes the conventions of msvcrt beside:
 
 - C: the flags, width and precision (also `*` and `*m$`), positional arguments (`%n$`, POSIX), `hh`, `h`, `l`,
   `ll`, `j`, `z`, `t` and `L` (an 80-bit long double), `%a`, `%n`. Floating point numbers are exact and round ties
-  to even, by the digits of `src/Float.cpp` (the ftoa of Go 1.27: unrounded scaling for up to 18 digits, the
+  to even, by the digits of `src/FloatFormat.cpp` (the ftoa of Go 1.27: unrounded scaling for up to 18 digits, the
   multiprecision decimal for more and for long double). A length beyond `INT_MAX` fails with `EOVERFLOW`.
 - msvcrt: the length modifiers `I`, `I32`, `I64` and `w`, `%S`/`%C` (the other width than the function), `%Z`
   (`ANSI_STRING`, `%wZ` `UNICODE_STRING`), `%p` as 16 uppercase digits, and in the wide functions of msvcrt
@@ -142,11 +142,13 @@ takes the conventions of msvcrt beside:
   `wchar_t` and never splits a surrogate pair.
 - A conversion it does not know is copied to the output as it is. NaN has its sign (`-nan`).
 
-`strtod`, `strtof`, `wcstod` and `wcstof` (and `__mingw_strtod` and the like, wrapped) are `src/Float.cpp`, a port
-of the floating point parser of Go 1.27 (`internal/strconv`, by Russ Cox: unrounded scaling by a 128-bit power of
-10, the exact multiprecision decimal as fallback) to the syntax of C: correctly rounded, ties to even, with any
-number of digits. `strtold` stays the gdtoa of libmingwex, which the wrapper corrects where it converts nothing
-(0, not -0) or reads a `nan(...)` with other characters than letters, digits and `_`. The scanf of mingw-w64 is
+`strtod`, `strtof`, `wcstod` and `wcstof` (and `__mingw_strtod` and the like, wrapped) are `src/FloatParse.cpp`, a
+port of the floating point parser of Go 1.27 (`internal/strconv`, by Russ Cox: unrounded scaling by a 128-bit power
+of 10, the exact multiprecision decimal as fallback) to the syntax of C: correctly rounded, ties to even, with any
+number of digits. `strtold` and `wcstold` (80-bit) are NtCRT's too, a decimal number as a big integer times or
+divided by a power of 5, the gdtoa of libmingwex is not linked: the scanf of mingw-w64, `_atoldbl` and libstdc++
+call them. They convert nothing to 0 (gdtoa: -0 after a minus sign) and read `nan(...)` with letters, digits and
+`_` only. The scanf of mingw-w64 is
 wrapped to accept `I64` after a width (`%4I64d`), and `wcstoll`, `wcstoull`, `wcstoimax` and `wcstoumax` of
 libmingwex to convert "0x" without a hex digit as 0 with the end after the "0". `make test-go` checks the parser
 with the tests of the Go source it is ported from.
@@ -264,5 +266,6 @@ Derived from [KNSoft.NtCRT](https://github.com/KNSoft/KNSoft.NtCRT) at commit
 `test/upstream/` are copied from it, `include/KNSoft/NDK/` follows
 [KNSoft.NDK](https://github.com/KNSoft/KNSoft.NDK) (MIT).
 
-`src/Float.cpp` and `src/FloatPow10.inl` are ported from the Go 1.27 source (`src/internal/strconv`), under the
-BSD 3-clause license of The Go Authors, whose notice is in `src/Float.cpp`.
+`src/Float.cpp`, `src/Float.inl`, `src/FloatParse.cpp`, `src/FloatFormat.cpp` and `src/FloatPow10.inl` are ported
+from the Go 1.27 source (`src/internal/strconv`), under the BSD 3-clause license of The Go Authors, whose notice is in
+`src/Float.cpp`.
