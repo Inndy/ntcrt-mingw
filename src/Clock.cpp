@@ -63,6 +63,16 @@ NTCRT_API int __cdecl clock_gettime(clockid_t clock_id, struct timespec* tp)
     return 0;
 }
 
+/* C11, declared by <threads.h> of NtCRT */
+NTCRT_API int timespec_get(struct timespec* ts, int base)
+{
+    if (base != 1 /* TIME_UTC */ || clock_gettime(CLOCK_REALTIME, ts) != 0)
+    {
+        return 0;
+    }
+    return base;
+}
+
 NTCRT_API int __cdecl clock_getres(clockid_t clock_id, struct timespec* res)
 {
     ULONG Maximum, Minimum, Current;

@@ -27,7 +27,8 @@ OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 members, linked before it
 START_SRCS := $(wildcard src/start/*.cpp)
 START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
-HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/KNSoft/NDK/*) $(wildcard polyfill/*.inl)
+HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/*.h) $(wildcard include/KNSoft/NDK/*) \
+            $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
 
 # The compilers of the runtime and of the programs on it
@@ -130,9 +131,10 @@ WRAPS := $(WRAPS_REPLACED) $(WRAPS_CORRECTED)
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
 # _matherr of libmingw32, which would link the printf family into every program. libntcrt has the pthread functions,
-# winpthreads is not linked.
+# winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
-	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" > $@
+	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
+	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
 	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
@@ -149,6 +151,7 @@ NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS_CORRECTED) --gc-sections) \
 
 $(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
 	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs > $@
+	printf '"%s"\n' "-isystem$(CURDIR)/include" >> $@
 	printf '"%s"\n' "-L$(CURDIR)/$(BUILD)" >> $@
 	printf '$$%s\n' $(NTCRT_LINK) >> $@
 
