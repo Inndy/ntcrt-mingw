@@ -93,7 +93,19 @@ $(BUILD)/fuzz/utf8.exe: test/fuzz/utf8.c $(LIBS) $(BUILD)/ntcrt.specs
 test-fuzz: $(BUILD)/fuzz/utf8.exe
 	./$< $(FUZZ_ITERATIONS)
 
-test: test-upstream test-fuzz
+# Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
+$(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(BUILD)/ntcrt.specs
+	mkdir -p $(@D)
+	$(CC) -std=c17 -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $< -lkernel32
+
+$(BUILD)/console/conpty.exe: test/console/conpty.c
+	mkdir -p $(@D)
+	$(CC) -std=c17 -O2 -o $@ $<
+
+test-console: $(BUILD)/console/conpty.exe $(BUILD)/console/child.exe
+	./$< $(BUILD)/console/child.exe
+
+test: test-upstream test-fuzz test-console
 
 # Compare with UCRT, needs cl of Visual Studio
 compare: $(LIBS) $(BUILD)/ntcrt.specs
@@ -102,4 +114,4 @@ compare: $(LIBS) $(BUILD)/ntcrt.specs
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz compare clean
+.PHONY: all test test-upstream test-fuzz test-console compare clean

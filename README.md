@@ -5,7 +5,7 @@ functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs
-make test       # build and run test/upstream and the fuzz test
+make test       # build and run test/upstream, the fuzz test and the console test
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 ```
@@ -17,6 +17,8 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `test/upstream/` the KNSoft.NtCRT test suite
 - `test/fuzz/` differential fuzz of the UTF-8 codec against kernel32 (`make test-fuzz`, `FUZZ_ITERATIONS=n`)
+- `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
+  input and checks the screen
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
 
 ## Behavior
@@ -72,6 +74,9 @@ The specs wrap these (`--wrap`) so that the conversions between narrow and wide 
   `ReadConsoleW` whatever the console code page is: a character split between writes is kept until it is
   complete, reads translate CRLF to LF and a Ctrl+Z at the start of a line is the end of the file. The console
   functions of `<conio.h>` (`_cputs`, `_getch`, ...) use UTF-8 likewise.
+- `_getch` and `_getwch` take Alt and keypad digits as the composition of a character, which the console
+  reports with the release of Alt. A pseudo console (Windows Terminal) types a character beyond U+FFFF in this
+  way, one surrogate per composition.
 - `getwc`, `putwc` and `ungetwc` of a narrow stream convert by UTF-8 with a state per stream in "C.UTF-8".
 - `_O_U8TEXT` reads return the characters of complete UTF-8 sequences, a sequence split by the read size is
   completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream is
@@ -95,6 +100,8 @@ The specs wrap these (`--wrap`) so that the conversions between narrow and wide 
     estimates them and `fseek` to its result can land elsewhere
   - `_O_U8TEXT`/`_O_U16TEXT` console fds read by `ReadConsoleW` and write to the handle of the fd, a surrogate
     pair split between writes is kept until it is complete
+- `_getch`, `_getwch` and `_kbhit` take the character reported with the release of Alt, msvcrt reports the
+  keypad digits typed with Alt as Alt+arrow keys and loses the character (UCRT too)
 - In the "C" locale `mblen` is 1 for every non-NUL byte, msvcrt returns -1 for bytes 0x80..0xFF when `n` is 1
 - The `printf` family returns -1 (`EILSEQ`) when a `%ls`, `%lc`, `%hs` or `%hc` argument cannot be converted,
   msvcrt writes a part of the output and returns its length

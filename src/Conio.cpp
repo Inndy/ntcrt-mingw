@@ -436,6 +436,51 @@ _NtCRT_ExtendedKey(
     return FALSE;
 }
 
+/*
+ * The character or the extended key of a key event, 0 for an event that is not a key. Alt and the keypad digits
+ * compose a character that the console reports with the release of Alt, as it does for characters it cannot map
+ * to a key (a character beyond U+FFFF typed into a pseudo console arrives as two of them, one per surrogate).
+ * msvcrt and UCRT report the keypad digits as Alt+arrow keys and lose the character.
+ */
+static
+int
+_NtCRT_KeyEventInput(
+    _In_ const INPUT_RECORD* Record,
+    _Out_ wint_t* Char,
+    _Out_ PUCHAR Lead,
+    _Out_ PUCHAR Code)
+{
+    const KEY_EVENT_RECORD* Key = &Record->Event.KeyEvent;
+    DWORD State = Key->dwControlKeyState;
+    WORD Scan = Key->wVirtualScanCode;
+
+    if (Record->EventType != KEY_EVENT)
+    {
+        return 0;
+    }
+    if (!Key->bKeyDown)
+    {
+        if (Key->wVirtualKeyCode != VK_MENU || Key->uChar.UnicodeChar == UNICODE_NULL)
+        {
+            return 0;
+        }
+        *Char = Key->uChar.UnicodeChar;
+        return 1;
+    }
+    if (Key->uChar.UnicodeChar != UNICODE_NULL)
+    {
+        *Char = Key->uChar.UnicodeChar;
+        return 1;
+    }
+    /* Keypad 7 8 9, 4 5 6, 1 2 3 and 0 */
+    if ((State & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) && !(State & ENHANCED_KEY) &&
+        ((Scan >= 0x47 && Scan <= 0x49) || (Scan >= 0x4B && Scan <= 0x4D) || (Scan >= 0x4F && Scan <= 0x52)))
+    {
+        return 0;
+    }
+    return _NtCRT_ExtendedKey(Key, Lead, Code) ? 2 : 0;
+}
+
 /* Character pending for the next _getch (extended key code or _ungetch), or EOF */
 static int g_PendingChar = EOF;
 /* Bytes of a multibyte character pending for the next _getch after g_PendingChar */
@@ -464,21 +509,17 @@ _NtCRT_ReadKey(
         INPUT_RECORD Record;
         DWORD Read;
         UCHAR Lead, Extended;
+        int Kind;
 
         if (!g_ConsoleApi.ReadConsoleInputW(Console, &Record, 1, &Read) || Read == 0)
         {
             break;
         }
-        if (Record.EventType != KEY_EVENT || !Record.Event.KeyEvent.bKeyDown)
+        Kind = _NtCRT_KeyEventInput(&Record, &Result, &Lead, &Extended);
+        if (Kind == 1)
         {
-            continue;
-        }
-        if (Record.Event.KeyEvent.uChar.UnicodeChar != UNICODE_NULL)
-        {
-            Result = Record.Event.KeyEvent.uChar.UnicodeChar;
             break;
-        }
-        if (_NtCRT_ExtendedKey(&Record.Event.KeyEvent, &Lead, &Extended))
+        } else if (Kind == 2)
         {
             Result = Lead;
             *Code = Extended;
@@ -681,10 +722,9 @@ EXTERN_C int __cdecl _NtCRT__kbhit(void)
         for (DWORD i = 0; i < Read; i++)
         {
             UCHAR Lead, Code;
+            wint_t Char;
 
-            if (Records[i].EventType == KEY_EVENT && Records[i].Event.KeyEvent.bKeyDown &&
-                (Records[i].Event.KeyEvent.uChar.UnicodeChar != UNICODE_NULL ||
-                 _NtCRT_ExtendedKey(&Records[i].Event.KeyEvent, &Lead, &Code)))
+            if (_NtCRT_KeyEventInput(&Records[i], &Char, &Lead, &Code) != 0)
             {
                 Ret = 1;
                 break;
