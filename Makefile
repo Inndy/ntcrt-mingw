@@ -159,6 +159,18 @@ test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe
 	./$(BUILD)/fuzz/utf8.exe $(FUZZ_ITERATIONS)
 	./$(BUILD)/fuzz/format.exe $(FUZZ_ITERATIONS)
 
+# strtod, strtof and wcstod in a DLL, tested by Go: the tables of Go strconv and a fuzz against strconv.ParseFloat,
+# GO_FUZZTIME=d for a longer fuzz. Not in "test", it needs go.
+GO ?= go
+GO_FUZZTIME ?= 30s
+
+$(BUILD)/gofloat/float.dll: test/gofloat/dll/float.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -shared -o $@ $<
+
+test-go: $(BUILD)/gofloat/float.dll
+	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run Test . && 	    NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz FuzzStrtod -fuzztime $(GO_FUZZTIME) .
+
 # Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
 $(BUILD)/console/child.exe: test/console/child.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
@@ -219,4 +231,4 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-console test-cxx test-start size compare clean
+.PHONY: all test test-upstream test-fuzz test-go test-console test-cxx test-start size compare clean

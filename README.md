@@ -23,6 +23,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/upstream/` the KNSoft.NtCRT test suite
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll
+- `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
+  tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` with the syntax of C
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
@@ -139,7 +141,8 @@ of the floating point parser of Go 1.27 (`internal/strconv`, by Russ Cox: unroun
 number of digits. `strtold` stays the gdtoa of libmingwex, which the wrapper corrects where it converts nothing
 (0, not -0) or reads a `nan(...)` with other characters than letters, digits and `_`. The scanf of mingw-w64 is
 wrapped to accept `I64` after a width (`%4I64d`), and `wcstoll`, `wcstoull`, `wcstoimax` and `wcstoumax` of
-libmingwex to convert "0x" without a hex digit as 0 with the end after the "0".
+libmingwex to convert "0x" without a hex digit as 0 with the end after the "0". `make test-go` checks the parser
+with the tests of the Go source it is ported from.
 
 `test/fuzz/format.c` compares these with ucrtbase.dll, `__stdio_common_vsprintf` in its C mode and its legacy
 modes. Differences it does not report, where UCRT or mingw-w64 is the one off:
