@@ -1,157 +1,95 @@
 /*
- * The scanf family, see Stdio.cpp.
+ * The narrow scanf family on streams, by the engine of Scanf.cpp under the lock of the stream: the functions of
+ * msvcrt, their _s forms, and __mingw_vfscanf, __mingw_fscanf, __mingw_vscanf, __mingw_scanf, __ms_vfscanf and
+ * __ms_vscanf of the headers of mingw-w64 (wrapped by the specs, under their names too for lld).
  */
 
 #include "NtCRT.h"
+#include "Stdio.inl"
 
 #include <errno.h>
-#include <fcntl.h>
-#include <io.h>
-#include <share.h>
-#include <sys/stat.h>
-#include <stdio.h>
-#include <string.h>
-#include <wchar.h>
 
-/* Narrow scanf */
-
-EXTERN_C int __cdecl _NtCRT_vfscanf(FILE* stream, const char* format, va_list ap)
+static int _NtCRT_ScanGetc(FILE* Stream)
 {
-    if (stream == NULL || format == NULL)
+    return _NtCRT_getc_nolock(Stream);
+}
+
+static void _NtCRT_ScanUngetc(int Ch, FILE* Stream)
+{
+    _NtCRT_ungetc_nolock(Ch, Stream);
+}
+
+EXTERN_C int _NtCRT_ScanStream(FILE* Stream, const char* Format, va_list ap, ULONG Options)
+{
+    NTCRT_SCANF_INPUT<char> In = {};
+    int Ret;
+
+    if (Stream == NULL || Format == NULL)
     {
         NTCRT_ERRNO = EINVAL;
         return EOF;
     }
-    return __mingw_vfscanf(stream, format, ap);
+    NTCRT_CHECK_STREAM_ANSI(Stream, EOF);
+    In.Stream = Stream;
+    In.Get = _NtCRT_ScanGetc;
+    In.Unget = _NtCRT_ScanUngetc;
+    _NtCRT_lock_file(Stream);
+    Ret = _NtCRT_Scan(&In, Format, ap, Options);
+    _NtCRT_unlock_file(Stream);
+    return Ret;
 }
 
-EXTERN_C int __cdecl _NtCRT_fscanf(FILE* stream, const char* format, ...)
+EXTERN_C int __cdecl _NtCRT_vfscanf(FILE* stream, const char* format, va_list ap)
 {
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfscanf(stream, format, ap);
-    va_end(ap);
-    return Ret;
+    return _NtCRT_ScanStream(stream, format, ap, 0);
 }
 
 EXTERN_C int __cdecl _NtCRT_vscanf(const char* format, va_list ap)
 {
-    return _NtCRT_vfscanf(&_NtCRT_iob[0], format, ap);
+    return _NtCRT_ScanStream(&_NtCRT_iob[0], format, ap, 0);
 }
 
-EXTERN_C int __cdecl _NtCRT_scanf(const char* format, ...)
+EXTERN_C int __cdecl _NtCRT_vfscanf_s(FILE* stream, const char* format, va_list ap)
 {
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfscanf(&_NtCRT_iob[0], format, ap);
-    va_end(ap);
-    return Ret;
+    return _NtCRT_ScanStream(stream, format, ap, NTCRT_SCANF_SECURE);
 }
 
-EXTERN_C int __cdecl _NtCRT_vsscanf(const char* str, const char* format, va_list ap)
+EXTERN_C int __cdecl _NtCRT_vscanf_s(const char* format, va_list ap)
 {
-    if (str == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    return __mingw_vsscanf(str, format, ap);
+    return _NtCRT_ScanStream(&_NtCRT_iob[0], format, ap, NTCRT_SCANF_SECURE);
 }
 
-EXTERN_C int __cdecl _NtCRT_sscanf(const char* str, const char* format, ...)
-{
-    va_list ap;
-    int Ret;
+NTCRT_WRAP_VARIADIC(_NtCRT_fscanf,
+                    _NtCRT_vfscanf,
+                    (FILE * stream, const char* format, ...),
+                    format,
+                    (stream, format, ap))
+NTCRT_WRAP_VARIADIC(_NtCRT_scanf, _NtCRT_vscanf, (const char* format, ...), format, (format, ap))
+NTCRT_WRAP_VARIADIC(_NtCRT_fscanf_s,
+                    _NtCRT_vfscanf_s,
+                    (FILE * stream, const char* format, ...),
+                    format,
+                    (stream, format, ap))
+NTCRT_WRAP_VARIADIC(_NtCRT_scanf_s, _NtCRT_vscanf_s, (const char* format, ...), format, (format, ap))
 
-    va_start(ap, format);
-    Ret = _NtCRT_vsscanf(str, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-/* Wide scanf */
-
-EXTERN_C int __cdecl _NtCRT_vfwscanf(FILE* stream, const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (stream == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    NTCRT_WIDE_FORMAT(format, TRUE);
-    Ret = __mingw_vfwscanf(stream, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_fwscanf(FILE* stream, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwscanf(stream, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vwscanf(const wchar_t* format, va_list ap)
-{
-    return _NtCRT_vfwscanf(&_NtCRT_iob[0], format, ap);
-}
-
-EXTERN_C int __cdecl _NtCRT_wscanf(const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vfwscanf(&_NtCRT_iob[0], format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_vswscanf(const wchar_t* str, const wchar_t* format, va_list ap)
-{
-    int Ret;
-
-    if (str == NULL || format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    NTCRT_WIDE_FORMAT(format, TRUE);
-    Ret = __mingw_vswscanf(str, _Format, ap);
-    NTCRT_WIDE_FORMAT_FREE();
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT_swscanf(const wchar_t* str, const wchar_t* format, ...)
-{
-    va_list ap;
-    int Ret;
-
-    va_start(ap, format);
-    Ret = _NtCRT_vswscanf(str, format, ap);
-    va_end(ap);
-    return Ret;
-}
+EXTERN_C int __cdecl __wrap___mingw_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
+EXTERN_C int __cdecl __wrap___mingw_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
+EXTERN_C int __cdecl __wrap___mingw_fscanf(FILE*, const char*, ...) __attribute__((alias("_NtCRT_fscanf")));
+EXTERN_C int __cdecl __wrap___mingw_scanf(const char*, ...) __attribute__((alias("_NtCRT_scanf")));
+EXTERN_C int __cdecl __wrap___ms_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
+EXTERN_C int __cdecl __wrap___ms_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
+EXTERN_C int __cdecl __mingw_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
+EXTERN_C int __cdecl __mingw_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
+EXTERN_C int __cdecl __mingw_fscanf(FILE*, const char*, ...) __attribute__((alias("_NtCRT_fscanf")));
+EXTERN_C int __cdecl __mingw_scanf(const char*, ...) __attribute__((alias("_NtCRT_scanf")));
+EXTERN_C int __cdecl __ms_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
+EXTERN_C int __cdecl __ms_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
 
 NTCRT_IMPORT_ONLY(vfscanf, _NtCRT_vfscanf);
 NTCRT_IMPORT(fscanf, _NtCRT_fscanf);
 NTCRT_IMPORT_ONLY(vscanf, _NtCRT_vscanf);
 NTCRT_IMPORT(scanf, _NtCRT_scanf);
-NTCRT_IMPORT_ONLY(vsscanf, _NtCRT_vsscanf);
-NTCRT_IMPORT(sscanf, _NtCRT_sscanf);
-NTCRT_IMPORT_ONLY(vfwscanf, _NtCRT_vfwscanf);
-NTCRT_IMPORT(fwscanf, _NtCRT_fwscanf);
-NTCRT_IMPORT_ONLY(vwscanf, _NtCRT_vwscanf);
-NTCRT_IMPORT(wscanf, _NtCRT_wscanf);
-NTCRT_IMPORT_ONLY(vswscanf, _NtCRT_vswscanf);
-NTCRT_IMPORT(swscanf, _NtCRT_swscanf);
+NTCRT_IMPORT(vfscanf_s, _NtCRT_vfscanf_s);
+NTCRT_IMPORT(fscanf_s, _NtCRT_fscanf_s);
+NTCRT_IMPORT(vscanf_s, _NtCRT_vscanf_s);
+NTCRT_IMPORT(scanf_s, _NtCRT_scanf_s);

@@ -115,18 +115,18 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
 # Functions of libmingwex replaced by libntcrt: the printf of mingw-w64 by src/FormatNarrow.cpp and
-# src/FormatWide.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll, wcstoull, wcstoimax and
-# wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp and ftruncate64 by src/LowIOFile.cpp.
-# libntcrt defines them under their names too, for lld.
-WRAPS_REPLACED := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
-                              vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
-                  $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
-                  $(foreach f,strtold wcstold wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
-                  --wrap=btowc --wrap=wctob --wrap=ftruncate64
-# Functions of libmingwex corrected by libntcrt, which calls them as __real_: the scanf of mingw-w64 by
-# src/ScanfWrap.cpp
-WRAPS_CORRECTED := $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f))
-WRAPS := $(WRAPS_REPLACED) $(WRAPS_CORRECTED)
+# src/FormatWide.cpp, its scanf (and the __ms_v*scanf that call msvcrt) by src/Scanf.cpp, src/ScanfWide.cpp,
+# src/StdioScanf.cpp and src/StdioWscanf.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll,
+# wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp and ftruncate64 by
+# src/LowIOFile.cpp. libntcrt defines them under their names too, for lld.
+WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
+                     vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
+         $(foreach f,vfscanf vscanf vsscanf fscanf scanf sscanf vfwscanf vwscanf vswscanf fwscanf wscanf swscanf, \
+                     --wrap=__mingw_$(f)) \
+         $(foreach f,vfscanf vscanf vsscanf vfwscanf vwscanf vswscanf,--wrap=__ms_$(f)) \
+         $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
+         $(foreach f,strtold wcstold wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
+         --wrap=btowc --wrap=wctob --wrap=ftruncate64
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
@@ -145,8 +145,7 @@ $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 # the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for the functions it
 # replaces, without --wrap (with it lld would load the members of libmingwex and every object of a __wrap_
 # function). The math functions both libmingwex and ntdll define are of libmingwex.
-comma := ,
-NTCRT_LINK := $(addprefix -Wl$(comma),$(WRAPS_CORRECTED) --gc-sections) \
+NTCRT_LINK := -Wl,--gc-sections \
               $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
 $(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
@@ -221,6 +220,19 @@ $(BUILD)/printf/printf.exe: test/printf/printf.c $(LIBS) $(DRIVER)
 	$(NTCRT_CC) -std=c17 -O2 -Wno-format -static -o $@ $<
 
 test-printf: $(BUILD)/printf/printf.exe
+	./$<
+
+# scanf where the fuzz cannot compare with UCRT: the examples of C11, streams, the wide, _s and _l functions, msvcrt,
+# the locale and floating point numbers that would round twice. The map shows that libmingwex gives no scanf, the
+# test makes malloc and realloc of the library fail by --wrap.
+$(BUILD)/scanf/scanf.exe: test/scanf/scanf.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -Wno-format -static -o $@ $< -Wl,-Map=$(BUILD)/scanf/scanf.map \
+	    -Wl,--wrap=_NtCRT_malloc,--wrap=_NtCRT_realloc
+
+test-scanf: $(BUILD)/scanf/scanf.exe
+	if grep -E 'libmingwex_a-[a-z0-9_]*(scanf|gdtoa|pformat|strtod|strtof)' $(BUILD)/scanf/scanf.map; then \
+	    echo "scanf of libmingwex is linked"; exit 1; fi
 	./$<
 
 # Console reads and writes in a pseudo console, conpty.exe is built with the default runtime
@@ -330,7 +342,7 @@ $(WINE)/%.exe: $(WINE)/%.c $(WINE)/table.c test/wine/crt.c test/wine/compat.h te
 test-wine: $(WINE_TESTS:%=$(WINE)/%.exe)
 	sh test/wine/run.sh $(WINE) $(WINE_TESTS)
 
-test: test-upstream test-fuzz test-printf test-console test-cxx test-thread test-start
+test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -351,5 +363,5 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-thread \
+.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
         test-start test-wine size compare clean

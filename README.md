@@ -28,6 +28,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
   [parse-number-fxx-test-data](https://github.com/nigeltao/parse-number-fxx-test-data), and printf `%.17g`,
   `%.9g` and `%a` read back (`make test-float-corpus FLOAT_CORPUS=<its data directory>`)
 - `test/printf/` printf against exact expected strings (`make test-printf`)
+- `test/scanf/` scanf where the fuzz cannot compare with UCRT (`make test-scanf`), its link map shows no scanf of
+  libmingwex
 - `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
   tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` (`math/big` past its
   limits) with the syntax of C
@@ -60,8 +62,11 @@ split so that the startup code and small programs link few and small objects:
   use (`FilePath.cpp`) beside the rest
 - the printf engine is a template (`Printf.inl`) instantiated for narrow (`Printf.cpp`) and wide (`PrintfWide.cpp`)
   output, the multibyte functions keep the codec, `mbrtowc` and `wcrtomb` that printf uses in `MultibyteChar.cpp`
-- the `_l` functions are beside the functions they call or in `Locale*.cpp`, locale objects, character class
-  tables and scanf are objects of their own, and stdio is flushed at exit by a pointer that stdio sets
+- the scanf engine likewise (`Scanf.inl`): narrow (`Scanf.cpp`) and wide (`ScanfWide.cpp`) with the functions that
+  scan a string, the streams apart (`StdioScanf.cpp`, `StdioWscanf.cpp`), the console and `_l` functions in
+  `LocaleScanf.cpp`: `sscanf` links neither the wide engine nor the streams, printf, `printf_s` and `_getch` no scanf
+- the `_l` functions are beside the functions they call or in `Locale*.cpp`, locale objects and character class
+  tables are objects of their own, and stdio is flushed at exit by a pointer that stdio sets
 - the pthread functions are objects by use (`Pthread*.cpp`): mutexes, condition variables, read-write locks,
   barriers and spin locks, semaphores, once, keys, the waits by address, threads, names; libstdc++ links the
   first ones in every C++ program (`std::cout` too), a program without threads none
@@ -77,12 +82,11 @@ object. What lld keeps is what the startup code reaches and the sections that ar
 loads, so:
 
 - the export stubs (`__imp_Name` and the jump `Name`) are COMDAT
-- the functions of libmingwex that libntcrt replaces (printf, `wcstoll`, `btowc`, ...) are not wrapped for lld,
-  which takes them from libntcrt, the first library that defines them: with `--wrap` it loads the member of
-  libmingwex for a reference and every object of a `__wrap_` function. The wrappers left (scanf, the strtod
-  family) refer to libmingwex by `__real_` only (which loads nothing, see "LLVM"), and the objects with functions
-  that call libmingwex are apart: `ScanfWrap.cpp` from `StdioScanf.cpp`, `Integer.cpp` and `Perror.cpp` from
-  `String.cpp`, `_atoldbl` in `LocaleConv.cpp`
+- the functions of libmingwex that libntcrt replaces (printf, scanf, the strtod family, `wcstoll`, `btowc`, ...)
+  are not wrapped for lld, which takes them from libntcrt, the first library that defines them: with `--wrap` it
+  loads the member of libmingwex for a reference and every object of a `__wrap_` function. The objects with
+  functions that call libmingwex are apart: `Integer.cpp` and `Perror.cpp` from `String.cpp`, `_atoldbl` in
+  `LocaleConv.cpp`
 - no `.CRT$XI*` initializer for data that can be constant, `_ctype` is initialized data
 - the functions the startup code refers to in every program (`_amsg_exit`, `abort`, `_matherr`) write their ASCII
   messages to the handle of fd 2 as msvcrt does, `_write` would link the console and text mode conversions
@@ -95,6 +99,7 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 | `puts` | 248832 | 445440 | 47616 | 35328 | 14336 |
 | `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
 | `wprintf` | 248832 | 445440 | 82432 | 69120 | 41472 |
+| `sscanf("%d %lf %s")` | | | 96768 | 61440 | 56320 |
 | `std::cout` | 1257472 | 1420800 | 1155584 | 720896 | 1035776 |
 | `std::thread` | | | 187392 | 100352 | 135168 |
 
@@ -102,7 +107,9 @@ The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it 
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
 `src/Float.cpp`, with ld all of them. What ld links beyond lld is the unused functions of these objects, most of all
 the code page conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of
-`argv`, one object of the shared sources).
+`argv`, one object of the shared sources). A program with sscanf links the narrow scanf engine (`src/Scanf.cpp`)
+and the parser of `src/FloatParse.cpp`. With the scanf of libmingwex behind a format rewrite, the narrow and wide
+scanf of mingw-w64 and the streams, it was 213504 bytes (lld 95232).
 
 With winpthreads, before the pthread functions of NtCRT, `std::cout` was 1183232 bytes (lld 752640) and
 `test/size/thread.cpp` (`std::thread` and `std::mutex`) 248832 (lld 165888): winpthreads linked the kernel32 shims
@@ -120,9 +127,9 @@ does what the specs do and links by lld. clang uses the headers and libraries of
   libmingwex, so `btowc`, `wctob` and `ftruncate64` are those of NtCRT without `--wrap`. The math functions that
   both libmingwex and ntdll define (`sin`, `cos`, `log`, `pow`, `sqrt`, ...) are those of libmingwex for NtCRT too:
   `_j0`, `_y0` and the other Bessel functions may differ from the GCC build in the last bits.
-- With `--wrap=X`, lld resolves `__real_X` to the `X` of an archive member only if something else loads that
-  member (a reference to `X`); otherwise to address 0, without an error. GNU ld loads it. A `__wrap_X` reached
-  only through `X` is safe, NtCRT calls no `__real_` function from elsewhere.
+- `ntcrt.cfg` wraps nothing: libntcrt defines the functions that the specs wrap under their names too. With
+  `--wrap=X`, lld would load the member of libmingwex for a reference to `X`, and resolve `__real_X` to it only if
+  something else loads that member (otherwise to address 0, without an error); NtCRT calls no `__real_` function.
 - The `__cpuidex` of MinGW-w64 headers before 12 clashes with `<cpuid.h>` of clang and is left out
   (`-D__INTRINSIC_DEFINED___cpuidex`).
 - Thread-local variables are emulated (`-femulated-tls`) as GCC does: libstdc++ keeps the state of
@@ -183,30 +190,66 @@ takes the conventions of msvcrt beside:
   `wchar_t` and never splits a surrogate pair.
 - A conversion it does not know is copied to the output as it is. NaN has its sign (`-nan`).
 
+The scanf family is NtCRT's own too (`src/Scanf.inl`): the functions of msvcrt, their `_s` and `_l` forms, and the
+`__mingw_*scanf` (and the `__ms_v*scanf` of libmingwex) that MinGW-w64 calls in C++ and with
+`__USE_MINGW_ANSI_STDIO`, wrapped by the specs and defined by libntcrt for lld. The scanf of libmingwex is not
+linked. A string is read in place, a stream under its lock by `_getc_nolock` and `_getwc_nolock` with one character
+of pushback at most, the console functions (`_cscanf`, ...) read a line and scan it. It follows C (7.21.6.2,
+7.29.2.2) and takes the conventions of msvcrt beside:
+
+- C: the input item is the longest prefix of a matching sequence within the width. A prefix that is not a matching
+  sequence (`"1e"` for `%f`, `"0x"` for `%x`, `"-"` for `%d`, `"infi"`, `"nan(x"`) is a matching failure and its
+  characters are consumed, as the `"100ergs"` of the examples of C. EOF is returned for an input failure (the end of
+  the input, an encoding error of a stream) before the first conversion, a suppressed one (`%*d`) and `%n` count.
+  `%c`, `%[` and `%n` do not skip white space, `%%` does. `hh`, `h`, `l`, `ll`, `j`, `z`, `t` and `L`, `%a`, `%p`
+  (16 hex digits as printf writes them, with or without `0x`), positional arguments (`%n$`) and `m` (`%ms`, an
+  allocated string, POSIX: no memory is an error, `ENOMEM` and EOF before the first conversion).
+- Integers are the result of `strtoll` (`%d`, `%i`) or `strtoull` (`%u`, `%o`, `%x`, `%p`, which take a sign too),
+  base prefixes for `%i`, stored in the size of the type: the low bits of a number out of its range, `ERANGE` and
+  the limit beyond 64 bits, as UCRT. Floating point numbers are converted by `src/FloatParse.cpp` (below) at the
+  precision of their type, `float`, `double` or the 80-bit long double of `%Lf`, with `inf`, `infinity`, `nan`,
+  `nan(n-char-sequence)` and hex numbers, `ERANGE` as `strtod`.
+- msvcrt: the length modifiers `I`, `I32`, `I64` (also after a width, `%4I64d`) and `w`, `%S`/`%C` (the other width
+  than the function), `%P` as `%p`, the width, `*` and the length modifiers in any order (`%h02d`), an unknown
+  conversion character matches itself (`%"`), and in the wide functions of msvcrt `%s`/`%c`/`%[` wide and
+  `%S`/`%C`/`%hs` narrow, where the C99 ones of MinGW-w64 (`__mingw_swscanf`, ...) take `%s`/`%c`/`%[` narrow and
+  `%ls`/`%S` wide. The `_s` functions take the size of the array after the argument of `%c`, `%s` and `%[` (an
+  `unsigned`, in elements): an input that does not fit is a matching failure with `ENOMEM` and the array emptied
+  (the character that does not fit is read), as msvcrt. A null array stops the scan with `EINVAL` as UCRT (msvcrt
+  crashes).
+- `%ls`, `%lc` and `%l[` of the narrow functions and the narrow strings of the wide functions convert by the current
+  locale (the locale object of the `_l` functions) as `mbrtowc` and `wcrtomb`, a character above U+FFFF is a
+  surrogate pair; an invalid or cut sequence is a matching failure with `EILSEQ`. The width counts the characters of
+  the input: bytes, multibyte characters for a wide string of a narrow function (`%lc` reads one), `wchar_t` in the
+  wide functions (a surrogate pair is two).
+- A scan set has `]` first as a member and `^` for its complement. A `-` between two characters is the range from
+  the one before to the one after if they are in order (`%[a-c-e]` is `a` to `c` and `c` to `e`, as glibc), a
+  reversed one (`%[c-a]`) or one at an end is a member. The scan set of a narrow function is of bytes, of a wide one
+  of `wchar_t`.
+
 `strtod`, `strtof`, `wcstod` and `wcstof` (and `__mingw_strtod` and the like, wrapped) are `src/FloatParse.cpp`, a
 port of the floating point parser of Go 1.27 (`internal/strconv`, by Russ Cox: unrounded scaling by a 128-bit power
 of 10, the exact multiprecision decimal as fallback) to the syntax of C: correctly rounded, ties to even, with any
 number of digits. `strtold` and `wcstold` (80-bit) are NtCRT's too, a decimal number as a big integer times or
-divided by a power of 5, the gdtoa of libmingwex is not linked: the scanf of mingw-w64, `_atoldbl` and libstdc++
-call them. They convert nothing to 0 (gdtoa: -0 after a minus sign) and read `nan(...)` with letters, digits and
-`_` only. The scanf of mingw-w64 is
-wrapped to accept `I64` after a width (`%4I64d`), and `wcstoll`, `wcstoull`, `wcstoimax` and `wcstoumax` of
-libmingwex to convert "0x" without a hex digit as 0 with the end after the "0". `make test-go` checks the parser
-with the tests of the Go source it is ported from.
+divided by a power of 5, the gdtoa of libmingwex is not linked: `_atoldbl` and libstdc++ call them. They convert
+nothing to 0 (gdtoa: -0 after a minus sign) and read `nan(...)` with letters, digits and `_` only. `wcstoll`,
+`wcstoull`, `wcstoimax` and `wcstoumax` of libmingwex are wrapped to convert "0x" without a hex digit as 0 with the
+end after the "0". `make test-go` checks the parser with the tests of the Go source it is ported from.
 
-`test/fuzz/format.c` compares these with ucrtbase.dll, `__stdio_common_vsprintf` in its C mode and its legacy
-modes, `test/printf/printf.c` (`make test-printf`) checks what UCRT does not do (long double, positional
-arguments, `%Z`) against exact expansions. Differences the fuzz does not report, where UCRT or mingw-w64 is the
-one off:
+`test/fuzz/format.c` compares these with ucrtbase.dll, `__stdio_common_vsprintf` and `__stdio_common_vsscanf` in
+their C mode and their legacy modes, `test/printf/printf.c` (`make test-printf`) checks what UCRT does not do (long
+double, positional arguments, `%Z`) against exact expansions, `test/scanf/scanf.c` (`make test-scanf`) the examples
+of C, streams, the `_s`, `_l` and C99 wide functions, the conventions of msvcrt and the locale. Differences the
+fuzz does not report, where UCRT is the one off:
 
 - UCRT rounds exact decimal ties of printf away from zero (`%.0f` of 2.5 is 3, NtCRT: 2, ties to even), and those
   of `strtof`; it reads no more than 768 significant digits in `strtod`, the fuzz checks those inputs, midpoints
   of two doubles or floats and a digit more or less, against the exact result instead
 - UCRT `%#E` of infinity is `I.NF`, of a negative NaN `-nan(ind)`; it counts the width of a narrow `%ls` in
   `wchar_t`; its `%a` without a precision keeps the trailing zeros (`0x1.0000000000000p+0`, NtCRT: `0x1p+0`)
-- the scanf of mingw-w64 takes a prefix of a number that is not a number (`"1e"`, `"0x"`, `"nan("`) where C has a
-  matching failure, and its narrow `%lf` rounds to long double first, then to double: a number whose long double
-  is halfway between two doubles is 1 ulp off (the wide scanf calls `wcstod`)
+- UCRT scanf returns EOF when the input ends in an item that is not a matching sequence (`"1e"` for `%f`, `"-"` for
+  `%d`) and nothing was assigned, C has a matching failure (0); its `%ls` and `%lc` of a narrow function sign-extend
+  the bytes 0x80..0xFF of the "C" locale (`"\xe9"` is U+FFE9)
 - UCRT `strtol` of "0x" without a hex digit converts nothing (C: 0, the end after "0")
 
 `btowc` and `wctob` of libmingwex are replaced by NtCRT the same way, and `ftruncate64` (used by
@@ -333,9 +376,21 @@ NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 hea
 | `strtod` of a denormal | `ERANGE` impl. | no `ERANGE` | no `ERANGE` | as UCRT, `ERANGE` for an underflow to zero only |
 | `strtol("0x", 16)` | 0, ends after `0` | converts nothing | converts nothing | as C |
 | `wcstol` of `L"\x661\x662"` | impl. (other locales) | 12 | 12 | converts nothing |
+| scanf `%f` of `"1ex"`, `"1e"` | a matching failure, `1e` read (0, 0) | `1.0` (1, 1) | as C, EOF at the end (0, EOF) | as C |
+| scanf `%d` of `"-"` | a matching failure (0) | EOF | EOF | as C |
+| scanf `%5c` of `"ab"` | a matching failure (0) | stores `ab` (1) | EOF | as C |
+| scanf `%*d%d` of `"5"` | 0, the input fails after a conversion | 0 | EOF | as C |
+| scanf `%%%d` of `" %5"` | 1, white space is skipped | 0 | 0 | as C |
+| scanf `%f` of `inf`, `0x1p4` | C99 | 0, `0` | as C | as C |
+| scanf `%lf` of 1 + 2⁻⁵³ + 2⁻⁸⁰ (exact) | correctly rounded, as `strtod` | 1, rounds twice | 1 + 2⁻⁵² | as C |
+| scanf `%d` of `99999999999`, `%lld` of `99999999999999999999` | undefined | the low bits | the low bits of `strtoll` (`LLONG_MAX`, `ERANGE`) | as UCRT |
+| scanf `%lc` of a multibyte character | the width counts bytes, 1 if none | a character (2 bytes of code page 936) | in UTF-8 2 bytes, U+FFE4 | a character (4 bytes of UTF-8 are 2 `wchar_t`), as msvcrt |
 | scanf `%[c-a]` | impl. | the range `a-c` | the range `a-c` | `c`, `-`, `a` |
+| scanf `%[a-c-e]` | impl. | `a-c`, `-`, `e` | as msvcrt | `a-c`, `c-e` (glibc) |
 | scanf `%p` of `0x10` | what printf `%p` writes | 0 | 0x10 | 0x10 |
-| scanf `%hhd` | a `char` | stores a `short` | as C | as C |
+| scanf `%P`, `%h02d` (a width after `h`), `%"` | undefined | `%p`, width 2, matches `"` | a matching failure | as msvcrt |
+| scanf `%2$d`, `%ms` | POSIX | a matching failure | a matching failure | POSIX |
+| scanf `%hhd` | a `char` | stores an `int` | as C | as C |
 | `fopen` mode `x` | C11, `EEXIST` | `EINVAL` | as C | as C |
 | `tmpnam` | a name of up to `L_tmpnam` - 1 | `\s<pid>.<n>`, the root of the current drive | the temporary directory, `L_tmpnam` 260 in the headers of the SDK | as msvcrt, `L_tmpnam` 14 in the MinGW-w64 headers |
 | `tmpfile` | impl. | the root of the current drive, fails without write access to it | the temporary directory | the temporary directory |
@@ -367,8 +422,11 @@ Beside the table above:
 - The `printf` family returns -1 (`EILSEQ`) when a `%ls`, `%lc`, `%hs` or `%hc` argument cannot be converted,
   msvcrt writes a part of the output and returns its length
 - `_set_output_format` only records its argument, the exponent of printf has two digits or more
-- The scanf functions of msvcrt are the C99 scanf of MinGW-w64 (see "printf and scanf"), `%Lf` stores an 80-bit
-  long double
+- scanf follows C beside the conventions of msvcrt (see "printf and scanf" and the table above): an item that is a
+  prefix of a number only is a matching failure, numbers are correctly rounded (msvcrt rounds `%lf` twice) and take
+  `inf`, `nan` and hex digits, `%Lf` stores an 80-bit long double, the wide functions return EOF at the end of the
+  input as the narrow ones (msvcrt `swscanf` returns 0), `%p` takes `0x`, and a reversed range of a scan
+  set is its characters
 - The wide integer conversions (`wcstol`, `wcstoul`, `_wtoi`, ...) read ASCII digits only, msvcrt also takes the
   other Unicode decimal digits (U+0660, U+FF10, ...)
 - `_winver`, `_winmajor`, `_winminor` and `_osver` are the version of Windows, msvcrt reports 6.2 to a program
@@ -404,6 +462,10 @@ Where NtCRT differs on purpose (UCRT behavior in parentheses):
 - An unconvertible `%lc` or `%hc` fails the call with -1 (the character is skipped and the length returned)
 - `sscanf("%ls")` and `swscanf("%hs")` convert UTF-8 and the "C" locale correctly (UTF-8 sequences become
   sign-extended bytes or are truncated)
+- scanf: an item that is not a matching sequence at the end of the input is a matching failure (EOF), and so is the
+  end of the input after a suppressed conversion or `%n` (EOF when nothing was assigned); `%%` skips white space (a
+  matching failure); `%P`, a width after a length modifier (`%h02d`), an unknown conversion character, `%n$` and
+  `%ms` are taken (a matching failure)
 - `_wcsicmp`/`_wcsnicmp` compare by Unicode case in "C.UTF-8" (ASCII only for `_wcsicmp`)
 - `_mbstrlen` counts UTF-8 characters, 3 for `a中😀` (6)
 - `ftell` of a `ccs=UTF-8` read stream is exact except inside a surrogate pair (wrong for every position after a

@@ -1133,8 +1133,8 @@ static size_t _NtCRT_AtofLong(const TChar* s, long double* Value, BOOL* Range)
 
 /*
  * The headers of mingw-w64 call __mingw_strtod, __mingw_strtof, __mingw_wcstod, __mingw_wcstof and strtold, wcstold
- * of libmingwex, the specs wrap them and __mingw_strtold, __mingw_wcstold (--wrap). The scanf of
- * mingw-w64, _atoldbl (LocaleConv.cpp) and libstdc++ call these too: the gdtoa of libmingwex is not linked.
+ * of libmingwex, the specs wrap them and __mingw_strtold, __mingw_wcstold (--wrap). _atoldbl (LocaleConv.cpp) and
+ * libstdc++ call these too: the gdtoa of libmingwex is not linked.
  */
 
 static inline BOOL _NtCRT_IsFloatSpace(char c)
@@ -1215,6 +1215,24 @@ _NtCRT_StrToFloat(
         *End = (TChar*)p + n;
     }
     return Value;
+}
+
+/* scanf (Scanf.inl): the item it has read, at the precision of the type, without the double rounding of strtold */
+EXTERN_C BOOL _NtCRT_ScanFloatText(const char* Text, int Kind, void* Value)
+{
+    BOOL Range;
+
+    if (Kind == 0)
+    {
+        _NtCRT_Atof32(Text, (float*)Value, &Range);
+    } else if (Kind == 1)
+    {
+        _NtCRT_Atof64(Text, (double*)Value, &Range);
+    } else
+    {
+        _NtCRT_AtofLong(Text, (long double*)Value, &Range);
+    }
+    return Range;
 }
 
 EXTERN_C float __cdecl __wrap___mingw_strtof(const char* str, char** end)

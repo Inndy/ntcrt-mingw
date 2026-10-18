@@ -2,7 +2,7 @@
  * Console scenarios run by conpty.exe in a pseudo console, built with NtCRT. The console code pages are set to
  * 437, the "C.UTF-8" locale must not depend on them. What is read is printed in hex.
  *
- *   child.exe write | u8write | read | u8read | u16read | getch
+ *   child.exe write | u8write | read | u8read | u16read | getch | scanf
  */
 #include <conio.h>
 #include <fcntl.h>
@@ -115,6 +115,18 @@ int main(int argc, char** argv)
         Wide[0] = _getwch();
         Wide[1] = _getwch();
         hexw("R7", Wide, 2);
+        printf("end\n");
+    } else if (strcmp(Scenario, "scanf") == 0)
+    {
+        wchar_t Wide[8] = { 0 };
+        char Narrow[8] = { 0 };
+        int i = 0, j = 0, r;
+
+        /* stdin of the console, then the next line by _cscanf */
+        r = scanf("%d %ls", &i, Wide);
+        printf("S1:%d %d %04x\n", r, i, Wide[0]);
+        r = _cscanf("%d %7s", &j, Narrow);
+        printf("S2:%d %d %s\n", r, j, Narrow);
         printf("end\n");
     } else
     {

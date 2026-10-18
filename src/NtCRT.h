@@ -265,7 +265,7 @@ extern "C" int _NtCRT_FormatAlloc(char** Result, const char* Format, va_list ap,
 extern "C" int _NtCRT_FormatStream(FILE* Stream, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStreamW(FILE* Stream, const wchar_t* Format, va_list ap, ULONG Options);
 
-/* Streams of Stdio.cpp used by StdioPrintf.cpp and StdioScanf.cpp */
+/* Streams of Stdio.cpp used by StdioPrintf.cpp, StdioScanf.cpp and StdioWscanf.cpp */
 extern "C" FILE _NtCRT_iob[];
 extern "C" void __cdecl _NtCRT_lock_file(FILE* stream);
 extern "C" void __cdecl _NtCRT_unlock_file(FILE* stream);
@@ -273,88 +273,38 @@ extern "C" int __cdecl _NtCRT__fflush_nolock(FILE* stream);
 extern "C" int _NtCRT_FlushPut(const char* Bytes, int Length, FILE* stream);
 extern "C" wint_t _NtCRT_putwc_nolock(wchar_t Ch, FILE* Stream);
 extern "C" int _NtCRT_StreamWrite(FILE* stream, const char* Bytes, size_t Length);
+extern "C" wint_t __cdecl _NtCRT__fgetwc_nolock(FILE* stream);
+extern "C" wint_t __cdecl _NtCRT__ungetwc_nolock(wint_t ch, FILE* stream);
+
 /*
- * The output of a format rewrite. With Out NULL it measures the output and finds whether it differs from Format:
- * until it does, the output is a prefix of Format, which holds Format[Length].
+ * scanf (Scanf.inl, Scanf.cpp and ScanfWide.cpp). The input is a string of at most Left characters up to a null
+ * character, or a stream locked by the caller, read by Get (EOF at its end) and pushed back by Unget, one character
+ * at most. Count is the characters read. The functions return the count of assignments, EOF for an input failure
+ * before the first conversion.
  */
+#define NTCRT_SCANF_LEGACY_WIDE 0x1 /* %s, %c and %[ of a wide format are wide, %S and %C narrow (msvcrt) */
+#define NTCRT_SCANF_SECURE      0x2 /* The size of the array follows the argument of %c, %s and %[ (_s) */
 template<typename TChar>
-struct NTCRT_FORMAT_WRITER
+struct NTCRT_SCANF_INPUT
 {
-    const TChar* Format;
-    TChar* Out;
-    size_t Length;
-    bool Changed;
-
-    void Put(TChar Ch)
-    {
-        if (Out != NULL)
-        {
-            Out[Length] = Ch;
-        } else if (!Changed && Format[Length] != Ch)
-        {
-            Changed = true;
-        }
-        Length++;
-    }
-
-    void End()
-    {
-        Put('\0');
-    }
+    const TChar* Next;
+    size_t Left;
+    FILE* Stream;
+    int (*Get)(FILE* Stream);
+    void (*Unget)(int Ch, FILE* Stream);
+    size_t Count;
+    BOOL Eof;
 };
-
-/*
- * Rewrite(Writer) a format: Format itself if the output is the same, else Buffer if the output and its terminator fit
- * in Size characters, else an allocation returned in *Allocated as well (Format if it fails)
- */
-template<typename TChar, typename TRewrite>
-static inline
-const TChar*
-_NtCRT_RewriteFormat(
-    _In_z_ const TChar* Format,
-    _Out_writes_(Size) TChar* Buffer,
-    _In_ size_t Size,
-    _Outptr_result_maybenull_ TChar** Allocated,
-    _In_ TRewrite Rewrite)
-{
-    NTCRT_FORMAT_WRITER<TChar> Writer = { Format, NULL, 0, false };
-
-    *Allocated = NULL;
-    Rewrite(Writer);
-    if (!Writer.Changed)
-    {
-        return Format;
-    }
-    if (Writer.Length > Size)
-    {
-        Buffer = (TChar*)RtlAllocateHeap(NTCRT_HEAP, 0, Writer.Length * sizeof(TChar));
-        if (Buffer == NULL)
-        {
-            return Format;
-        }
-        *Allocated = Buffer;
-    }
-    Writer = { Format, Buffer, 0, false };
-    Rewrite(Writer);
-    return Buffer;
-}
-
-/* A wide scanf format of msvcrt (%s and %c are wide) as mingw-w64 takes it, see StdioWideFormat.cpp */
-extern "C" PCWSTR _NtCRT_TranslateWideFormat(PCWSTR Format, PWSTR Buffer, size_t BufferCount, BOOL Scan,
-                                             PWSTR* Allocated);
-#define NTCRT_WIDE_FORMAT(Format, Scan)                                                                                \
-    WCHAR _FormatBuffer[256];                                                                                          \
-    PWSTR _FormatAllocated;                                                                                            \
-    PCWSTR _Format =                                                                                                   \
-        _NtCRT_TranslateWideFormat((Format), _FormatBuffer, ARRAYSIZE(_FormatBuffer), (Scan), &_FormatAllocated)
-
-#define NTCRT_WIDE_FORMAT_FREE() \
-    do { \
-        if (_FormatAllocated != NULL) \
-        { \
-            RtlFreeHeap(NTCRT_HEAP, 0, _FormatAllocated); \
-        } \
-    } while (0)
+extern "C" int _NtCRT_Scan(NTCRT_SCANF_INPUT<char>* In, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_ScanW(NTCRT_SCANF_INPUT<wchar_t>* In, const wchar_t* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_ScanString(const char* Input, size_t Count, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_ScanStringW(const wchar_t* Input, size_t Count, const wchar_t* Format, va_list ap,
+                                  ULONG Options);
+extern "C" int _NtCRT_ScanStream(FILE* Stream, const char* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_ScanStreamW(FILE* Stream, const wchar_t* Format, va_list ap, ULONG Options);
+/* FloatParse.cpp: Text, a matching sequence of strtod, to a float (Kind 0), double (1) or long double (2), TRUE if
+   it is out of range as for ERANGE */
+extern "C" BOOL _NtCRT_ScanFloatText(const char* Text, int Kind, void* Value);
 
 /* A variadic function calling its va_list form */
 #define NTCRT_WRAP_VARIADIC(Name, VName, Params, Last, Args) \

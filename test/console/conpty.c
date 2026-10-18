@@ -33,6 +33,7 @@ static const SCENARIO g_Scenarios[] = {
       { "R4:4e2dd83dde00007a000a", "R5:0061d83dde004e2d000a", "end" } },
     { "getch", "\xe4\xb8\xad\xf0\x9f\x98\x80\xc3\xa9\xe4\xb8\xad",
       { "R6:e4b8adf09f9880", "R7:00e94e2d", "end" } },
+    { "scanf", "12 \xe4\xb8\xad\r" "34 ab\r", { "S1:2 12 4e2d", "S2:2 34 ab", "end" } },
 };
 
 typedef struct

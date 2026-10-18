@@ -4,10 +4,6 @@ Proposals not started yet, kept here until they are taken up or dropped.
 
 ## Correctness
 
-- **A scanf engine of NtCRT.** The scanf family is still the one of libmingwex behind a format rewrite. Its
-  narrow `%lf` converts through a long double and rounds twice, 1 ulp off at times: `test/fuzz/format.c` allows
-  that ulp for the narrow functions. One engine for narrow and wide characters, like printf, the numbers by
-  `src/FloatParse.cpp`, would remove the tolerance and the remaining gdtoa and pformat code of libmingwex.
 - **Paths with spaces.** The `--sysroot` line of `ntcrt.cfg` and the `-L` of `ntcrt.specs` break when the path of
   the checkout or the toolchain contains a space.
 - **Wildcards of `__getmainargs`.** msvcrt expands `*` and `?` of the command line when the program sets

@@ -804,24 +804,33 @@ typedef struct
     uint64_t Slots[16];
     int Size[16]; /* bytes stored through Slots[i], 0 for none */
     int Float[16];
+    int WideOut[16]; /* wchar_t of a narrow string conversion */
     int Count;
+    int BadAtEnd; /* the last directive fails on a prefix of a number at the end of the input */
 } SCANF_CASE;
 
 /*
- * A scanf format and its input. Every input item is a matching sequence or fails at its first character: the
- * scanf of mingw-w64 converts a prefix of a number that is not a number ("1e", "0x", "nan(") where C has a
- * matching failure (see README), and an integer out of the range of its type is undefined. Some formats begin with
- * text longer than the buffer of the format the wrappers rewrite.
+ * A scanf format and its input: integers in and out of the range of their type, floating point numbers, strings,
+ * scan sets, characters, %n and literals, a width that may cut a number. The last directive may be a prefix of a
+ * number that is not a number ("1e", "0x", "-"), a matching failure. Some formats begin with long text.
  */
 static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
 {
-    static const char* const Lengths[] = { "", "hh", "h", "l", "ll", "j", "z", "t", "I64", "I32" };
-    static const int LengthSize[] = { 4, 1, 2, 4, 8, 8, 8, 8, 8, 4 };
+    static const char* const Lengths[] = { "", "hh", "h", "l", "ll", "j", "z", "t", "I64", "I32", "I" };
+    static const int LengthSize[] = { 4, 1, 2, 4, 8, 8, 8, 8, 8, 4, 8 };
     static const char* const Sets[] = { "[abc]", "[^,]", "[a-z0-9]", "[^ \n]", "[]x]", "[^]a]", "[-+.0-9]" };
+    static const char* const Specials[] = { "inf", "-INF", "infinity", "+Infinity", "nan", "-NaN", "nan(abc_1)",
+                                            "NAN()", "0x1.8P+3", "0X.Cp-2", "-0x1p-1074", "0x1.fffffffffffff8p1023",
+                                            "1e400", "-1e-400", "4.9e-324", "2.4703282292062328e-324",
+                                            "1.00000005960464477539062", "0x1.000001p0", "1.e5", ".5E-3" };
+    static const char* const BadIntegers[] = { "-", "+", "0x", "-0X", "+0x" };
+    static const char* const BadFloats[] = { "1e", "1E+", "-2.5e-", "-", ".", "+.", "0x", "0x.", "-0X", "0x1p",
+                                             "0x1.8P-", "nan(", "nan(ab", "in", "infi", "INFINIT", "n", "Na" };
     int n = 1 + rnd(4);
 
     c->Format[0] = c->Input[0] = '\0';
     c->Count = 0;
+    c->BadAtEnd = 0;
     if (rnd(8) == 0)
     {
         int Text = 200 + (int)rnd(400);
@@ -835,10 +844,10 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
         char* f;
         char* in;
         int Width = rnd(3) == 0 ? 1 + (int)rnd(12) : 0;
-        int Kind = rnd(9), Suppress = rnd(8) == 0;
+        int Kind = rnd(10), Suppress = rnd(8) == 0;
 
         /* A string or a scan set may read the separators and the next items, it is the last directive */
-        if ((Kind == 5 || Kind == 6) && i != n - 1)
+        if ((Kind == 5 || Kind == 6 || Kind == 9) && i != n - 1)
             Kind = rnd(5);
         if (i > 0 || rnd(4) == 0)
         {
@@ -850,48 +859,50 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
         in = c->Input + strlen(c->Input);
         if (Kind <= 2)
         {
-            /* An integer in the range of its type */
-            int l = rnd(10);
-            char Conv = "diuoxXi"[rnd(7)];
+            /* An integer, at times out of the range of its type or of 64 bits, a sign also for the unsigned ones */
+            int l = rnd(11);
+            char Conv = "diuoxXip"[rnd(8)];
             int Bits = LengthSize[l] * 8;
-            uint64_t v = rnd64() >> (64 - Bits + rnd(Bits));
-            int Neg = (Conv == 'd' || Conv == 'i') && rnd(2);
+            uint64_t v = rnd(8) == 0 ? rnd64() : rnd64() >> (64 - Bits + rnd(Bits));
+            const char* Sign = rnd(4) == 0 ? (rnd(2) ? "-" : "+") : "";
+            const char* More = rnd(16) == 0 ? "123456789" : "";
 
-            if (Neg || Conv == 'd' || Conv == 'i')
-                v >>= 1;
+            if (Conv == 'p')
+                l = 0;
+            if ((Conv == 'd' || Conv == 'i') && rnd(2))
+                Sign = "-";
             switch (Conv)
             {
             case 'o':
-                sprintf(in, "%s%llo", rnd(4) == 0 ? "0" : "", (unsigned long long)v);
+                sprintf(in, "%s%s%llo%s", Sign, rnd(4) == 0 ? "0" : "", (unsigned long long)v, More);
                 break;
             case 'x':
             case 'X':
-                sprintf(in, "%s%llx", rnd(3) == 0 ? "0x" : "", (unsigned long long)v);
+            case 'p':
+                sprintf(in, rnd(4) == 0 ? "%s%s%016llX%s" : "%s%s%llx%s", Sign, rnd(3) == 0 ? "0x" : "",
+                        (unsigned long long)v, More);
                 break;
             case 'i':
-                sprintf(in, rnd(3) == 0 ? "%s0x%llx" : rnd(3) == 0 ? "%s0%llo" : "%s%llu", Neg ? "-" : "",
-                        (unsigned long long)v);
+                sprintf(in, rnd(3) == 0 ? "%s0x%llx%s" : rnd(3) == 0 ? "%s0%llo%s" : "%s%llu%s", Sign,
+                        (unsigned long long)v, More);
                 break;
             default:
-                sprintf(in, "%s%llu", Neg ? "-" : "", (unsigned long long)v);
+                sprintf(in, "%s%llu%s", Sign, (unsigned long long)v, More);
                 break;
             }
-            /* A width does not cut the number, the next directive would read the rest out of range */
-            if (Width != 0 && Width < (int)strlen(in))
-                Width = 0;
             if (Width != 0)
                 sprintf(f, "%%%s%d%s%c", Suppress ? "*" : "", Width, Lengths[l], Conv);
             else
                 sprintf(f, "%%%s%s%c", Suppress ? "*" : "", Lengths[l], Conv);
             if (!Suppress)
-                c->Size[c->Count] = LengthSize[l];
+                c->Size[c->Count] = Conv == 'p' ? 8 : LengthSize[l];
         } else if (Kind <= 4)
         {
             char Conv = "efgaEFGA"[rnd(8)];
             int Double = rnd(2);
             double d = gen_double();
 
-            switch (rnd(4))
+            switch (rnd(5))
             {
             case 0:
                 sprintf(in, "%a", d);
@@ -902,12 +913,13 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
             case 2:
                 sprintf(in, "%.*f", (int)rnd(8), fabs(d) < 1e30 ? d : 1.0 / d);
                 break;
+            case 3:
+                strcpy(in, Specials[rnd(sizeof(Specials) / sizeof(Specials[0]))]);
+                break;
             default:
                 sprintf(in, "%.17g", d);
                 break;
             }
-            if (Width != 0 && Width < (int)strlen(in))
-                Width = 0;
             if (Width != 0)
                 sprintf(f, "%%%s%d%s%c", Suppress ? "*" : "", Width, Double ? "l" : "", Conv);
             else
@@ -919,33 +931,66 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
             }
         } else if (Kind == 5)
         {
+            /* A narrow or wide string, the bytes of the "C" locale are U+0000..U+00FF */
             static const char* const Words[] = { "word", "a,b", "x", "abc123", "]]x", "-+1.5", "caf\xc3\xa9" };
+            const char* Conv = rnd(2) ? "s" : rnd(4) == 0 ? "ls" : rnd(3) == 0 ? "S" : Sets[rnd(7)];
+
             if (Width != 0)
-                sprintf(f, "%%%s%d%s", Suppress ? "*" : "", Width, rnd(2) ? "s" : Sets[rnd(7)]);
+                sprintf(f, "%%%s%d%s", Suppress ? "*" : "", Width, Conv);
             else
-                sprintf(f, "%%%s%s", Suppress ? "*" : "", rnd(2) ? "s" : Sets[rnd(7)]);
+                sprintf(f, "%%%s%s", Suppress ? "*" : "", Conv);
             strcpy(in, Words[rnd(7)]);
             if (!Suppress)
+            {
                 c->Size[c->Count] = 64;
+                c->WideOut[c->Count] = Conv[0] == 'l' || Conv[0] == 'S';
+            }
         } else if (Kind == 6)
         {
+            const char* Conv = rnd(4) ? "c" : rnd(2) ? "lc" : "C";
+
             if (Width != 0)
-                sprintf(f, "%%%s%dc", Suppress ? "*" : "", Width);
+                sprintf(f, "%%%s%d%s", Suppress ? "*" : "", Width, Conv);
             else
-                sprintf(f, "%%%sc", Suppress ? "*" : "");
+                sprintf(f, "%%%s%s", Suppress ? "*" : "", Conv);
             strcpy(in, "chars, more chars");
             if (!Suppress)
+            {
                 c->Size[c->Count] = 64;
+                c->WideOut[c->Count] = Conv[0] != 'c';
+            }
         } else if (Kind == 7)
         {
-            strcpy(f, "%n");
+            strcpy(f, rnd(2) ? "%n" : rnd(2) ? "%hhn" : "%lln");
             Suppress = 0;
-            c->Size[c->Count] = 4;
-        } else
+            c->Size[c->Count] = f[1] == 'n' ? 4 : f[2] == 'h' ? 1 : 8;
+        } else if (Kind == 8)
         {
             strcpy(f, rnd(2) ? "%%" : ":");
             strcpy(in, rnd(4) ? f[0] == '%' ? "%" : ":" : "?");
             Suppress = 1;
+        } else
+        {
+            /* A prefix of a number that is not one, then the end of the input or a character that ends it */
+            int Float = rnd(2);
+            const char* Bad = Float ? BadFloats[rnd(sizeof(BadFloats) / sizeof(BadFloats[0]))]
+                                    : BadIntegers[rnd(sizeof(BadIntegers) / sizeof(BadIntegers[0]))];
+            char Conv = Float ? "efgaEFGA"[rnd(8)] : Bad[strlen(Bad) - 1] == '-' || Bad[strlen(Bad) - 1] == '+'
+                                                         ? "diuoxXp"[rnd(7)]
+                                                         : "xXip"[rnd(4)];
+            int Double = Float && rnd(2);
+
+            sprintf(f, "%%%s%s%c", Suppress ? "*" : "", Double ? "l" : "", Conv);
+            strcpy(in, Bad);
+            if (rnd(2))
+                strcat(in, rnd(2) ? " 5" : "!");
+            else
+                c->BadAtEnd = 1;
+            if (!Suppress)
+            {
+                c->Size[c->Count] = Float ? (Double ? 8 : 4) : Conv == 'p' ? 8 : 4;
+                c->Float[c->Count] = Float;
+            }
         }
         if (!Suppress)
         {
@@ -955,7 +1000,7 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
     }
 }
 
-/* The vswscanf of msvcrt, %s, %c and %[ are wide: NtCRT rewrites its format for the scanf of mingw-w64 */
+/* The vswscanf of msvcrt, %s, %c and %[ are wide */
 extern int(__cdecl* __imp_vswscanf)(const wchar_t*, const wchar_t*, va_list);
 
 static void compare_scanf(const char* What, const SCANF_CASE* c, int g, int w, unsigned char (*Got)[64],
@@ -967,19 +1012,17 @@ static void compare_scanf(const char* What, const SCANF_CASE* c, int g, int w, u
         if (c->Float[i] && (c->Size[i] == 8 ? isnan(*(double*)Got[i]) && isnan(*(double*)Want[i])
                                             : isnan(*(float*)Got[i]) && isnan(*(float*)Want[i])))
             memcpy(Got[i], Want[i], 64);
-    /*
-     * %lf of the narrow scanf of mingw-w64 rounds to long double, then to double (see README): a long double
-     * halfway between two doubles goes to the even one, 1 ulp from the correct one
-     */
+    /* UCRT sign-extends the bytes 0x80..0xFF of the "C" locale to wchar_t in a narrow function (see README) */
     for (int i = 0; Narrow && i < c->Count; i++)
-    {
-        uint64_t a, b;
-
-        memcpy(&a, Got[i], 8);
-        memcpy(&b, Want[i], 8);
-        if (c->Float[i] && c->Size[i] == 8 && (a & 1) == 0 && (a - b == 1 || b - a == 1))
-            memcpy(Got[i], Want[i], 64);
-    }
+        for (int k = 0; c->WideOut[i] && k < 64; k += 2)
+            if (Want[i][k + 1] == 0xFF && Want[i][k] >= 0x80 && (Got[i][k + 1] == 0 && Got[i][k] == Want[i][k]))
+                Want[i][k + 1] = 0;
+    /*
+     * UCRT returns EOF when the input ends in an item that is not a matching sequence and nothing was assigned, C
+     * has a matching failure, the count of assignments 0 (see README)
+     */
+    if (c->BadAtEnd && w == EOF)
+        w = 0;
     if (g != w || memcmp(Got, Want, 16 * 64) != 0)
     {
         char Detail[1200] = "";
@@ -1005,6 +1048,7 @@ static void check_scanf(void)
 
     memset(c.Size, 0, sizeof(c.Size));
     memset(c.Float, 0, sizeof(c.Float));
+    memset(c.WideOut, 0, sizeof(c.WideOut));
     gen_scanf(&c, Got);
     memset(Got, 0xCC, sizeof(Got));
     memset(Want, 0xCC, sizeof(Want));

@@ -16,8 +16,6 @@ EXTERN_C HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
                                         HANDLE hTemplateFile);
 EXTERN_C int __cdecl _NtCRT__vscwprintf(const wchar_t* format, va_list ap);
 EXTERN_C int __cdecl _NtCRT__vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap);
-EXTERN_C int __cdecl _NtCRT_vsscanf(const char* buffer, const char* format, va_list ap);
-EXTERN_C int __cdecl _NtCRT_vswscanf(const wchar_t* buffer, const wchar_t* format, va_list ap);
 
 typedef BOOL(WINAPI* PNTCRT_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD);
 typedef BOOL(WINAPI* PNTCRT_GET_NUMBER_OF_CONSOLE_INPUT_EVENTS)(HANDLE, LPDWORD);
@@ -952,49 +950,6 @@ EXTERN_C BOOL _NtCRT_ConsoleScanLineA(char* Line, DWORD Size)
     return TRUE;
 }
 
-/* msvcrt scans characters as they are typed, a line is read and scanned here instead */
-EXTERN_C int __cdecl _NtCRT__cwscanf(const wchar_t* format, ...)
-{
-    WCHAR Line[512];
-    va_list ap;
-    int Ret;
-
-    if (format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    if (!_NtCRT_ConsoleScanLineW(Line, ARRAYSIZE(Line)))
-    {
-        return EOF;
-    }
-    va_start(ap, format);
-    Ret = _NtCRT_vswscanf(Line, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
-EXTERN_C int __cdecl _NtCRT__cscanf(const char* format, ...)
-{
-    char Line[1024];
-    va_list ap;
-    int Ret;
-
-    if (format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EOF;
-    }
-    if (!_NtCRT_ConsoleScanLineA(Line, sizeof(Line)))
-    {
-        return EOF;
-    }
-    va_start(ap, format);
-    Ret = _NtCRT_vsscanf(Line, format, ap);
-    va_end(ap);
-    return Ret;
-}
-
 NTCRT_IMPORT(_putwch, _NtCRT__putwch);
 NTCRT_IMPORT(_cputws, _NtCRT__cputws);
 NTCRT_IMPORT(_putch, _NtCRT__putch);
@@ -1014,8 +969,6 @@ NTCRT_IMPORT(_cgets, _NtCRT__cgets);
 NTCRT_IMPORT(_cgetws, _NtCRT__cgetws);
 NTCRT_IMPORT(_cgets_s, _NtCRT__cgets_s);
 NTCRT_IMPORT(_cgetws_s, _NtCRT__cgetws_s);
-NTCRT_IMPORT(_cscanf, _NtCRT__cscanf);
-NTCRT_IMPORT(_cwscanf, _NtCRT__cwscanf);
 
 /* POSIX names */
 NTCRT_IMPORT(putch, _NtCRT__putch);
