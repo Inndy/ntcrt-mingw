@@ -1,0 +1,194 @@
+/*
+ * KNSoft.NtCRT for MinGW-w64, internal header
+ *
+ * MinGW-w64 runtime (crt2.o, libmingw32, libmingwex, libgcc, libstdc++, libwinpthread) and user objects import
+ * functions and variables from kernel32.dll and msvcrt.dll. This library provides them on top of ntdll.dll,
+ * see README.md for how it is linked.
+ */
+
+#pragma once
+
+#define _CRT_NTDDI_MIN NTDDI_VISTA
+#define NT_VERSION_MIN NT_VERSION_VISTA
+
+#include <KNSoft/NDK/NDK.inl>
+
+#include <stdarg.h>
+
+/*
+ * Define an import that MinGW-w64 objects can link against, both "Name" (direct call) and "__imp_Name"
+ * (pointer used by __declspec(dllimport) references) resolve to the extern "C" function "Impl".
+ * The Makefile collects these lines and emits an object for each name, so a name is only linked while it is
+ * still undefined, and kernel32 or msvcrt linked explicitly by the user takes precedence instead of clashing.
+ */
+#define NTCRT_IMPORT(Name, Impl) static_assert(sizeof(&Impl) != 0, #Name)
+
+/* Only "__imp_Name", for a name that the MinGW-w64 runtime defines itself, collected as above */
+#define NTCRT_IMPORT_ONLY(Name, Impl) static_assert(sizeof(&Impl) != 0, #Name)
+
+/* A variable cannot be forwarded by a jump, "Name" and "__imp_Name" are defined in the object of "Impl" */
+#define NTCRT_IMPORT_DATA(Name, Impl) \
+    __asm__(".globl " #Name "\n\t" \
+            ".set " #Name ", " #Impl "\n\t" \
+            ".section .rdata$__imp_" #Name ",\"dr\"\n\t" \
+            ".globl __imp_" #Name "\n\t" \
+            ".p2align 3\n" \
+            "__imp_" #Name ":\n\t" \
+            ".quad " #Impl "\n\t" \
+            ".text")
+
+#define NTCRT_API extern "C" __attribute__((used))
+
+/* Thread exit notification, called by the TLS callback with DLL_THREAD_DETACH / DLL_PROCESS_DETACH */
+extern "C" void _NtCRT_ThreadDetach(void);
+
+/* Per-thread CRT data */
+typedef struct _NTCRT_PTD
+{
+    int Errno;
+    unsigned long Doserrno;
+    unsigned int RandSeed; /* seed ^ 1, so zeroed memory means srand(1) */
+    char* StrtokContext;
+    wchar_t* WcstokContext;
+    unsigned char* MbstokContext;
+    struct tm* TmBuffer;
+    char* AsctimeBuffer;
+    wchar_t* WcserrorBuffer;
+    char* CvtBuffer;
+    int Fpecode;
+    void* PxcptInfoPtrs;
+    RTL_HEAP_WALK_ENTRY HeapWalkEntry; /* Last entry returned by _heapwalk */
+    char StrerrorBuffer[128];
+} NTCRT_PTD, *PNTCRT_PTD;
+
+extern "C" PNTCRT_PTD _NtCRT_GetPtd(void);
+
+/* errno helpers */
+extern "C" int* _NtCRT_errno(void);
+extern "C" void _NtCRT_SetErrnoFromNtStatus(NTSTATUS Status);
+extern "C" void _NtCRT_SetErrnoFromWin32(ULONG Win32Error);
+extern "C" int _NtCRT_Win32ToErrno(ULONG Win32Error);
+#define NTCRT_ERRNO (*_NtCRT_errno())
+
+/* Report an invalid parameter of a "_s" function like msvcrt.dll: set errno and return it */
+extern "C" int _NtCRT_InvalidParameter(int Errno);
+
+/* Heap */
+#define NTCRT_HEAP RtlProcessHeap()
+
+/* Code page of the C runtime ("C" locale uses ACP, as msvcrt does) */
+extern "C" UINT _NtCRT_CodePage(void);
+
+/* Kernel32 replacements used internally */
+extern "C" int WINAPI _NtCRT_MultiByteToWideChar(
+    UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
+extern "C" int WINAPI _NtCRT_WideCharToMultiByte(UINT CodePage,
+                                                 DWORD dwFlags,
+                                                 LPCWCH lpWideCharStr,
+                                                 int cchWideChar,
+                                                 LPSTR lpMultiByteStr,
+                                                 int cbMultiByte,
+                                                 LPCCH lpDefaultChar,
+                                                 LPBOOL lpUsedDefaultChar);
+extern "C" DWORD WINAPI _CRT_GetFileType(HANDLE hFile);
+extern "C" BOOL WINAPI _CRT_GetConsoleMode(HANDLE hConsoleHandle, LPDWORD lpMode);
+extern "C" UINT WINAPI _CRT_GetConsoleOutputCP(VOID);
+extern "C" BOOL WINAPI _NtCRT_WriteConsoleW(HANDLE hConsoleOutput,
+                                            const VOID* lpBuffer,
+                                            DWORD nNumberOfCharsToWrite,
+                                            LPDWORD lpNumberOfCharsWritten);
+
+/* Allocate a NUL-terminated wide string converted from a narrow string in CRT code page, free by RtlFreeHeap */
+extern "C" PWSTR _NtCRT_AnsiToWide(const char* Str);
+/* Allocate a NUL-terminated narrow string converted from a wide string in CRT code page, free by RtlFreeHeap */
+extern "C" char* _NtCRT_WideToAnsi(const wchar_t* Str);
+
+/* Open a file by DOS path with NtCreateFile, returns Win32 error */
+extern "C" ULONG _NtCRT_CreateFile(
+    _Out_ PHANDLE FileHandle,
+    _In_ PCWSTR FileName,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG ShareAccess,
+    _In_ ULONG CreateDisposition,
+    _In_ ULONG CreateOptions,
+    _In_ ULONG FileAttributes,
+    _Out_opt_ PULONG_PTR Information);
+
+/* Lock helpers shared by stdio and low-level I/O */
+#define NTCRT_LOCK_TABLE_SIZE 36
+extern "C" void __cdecl _NtCRT_lock(int locknum);
+extern "C" void __cdecl _NtCRT_unlock(int locknum);
+
+/* Low-level I/O, see LowIO.cpp */
+extern "C" int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count);
+extern "C" int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count);
+extern "C" int __cdecl _NtCRT_close(int fd);
+extern "C" long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origin);
+extern "C" int __cdecl _NtCRT_open_handle(HANDLE Handle, int flags);
+extern "C" int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, int pmode);
+extern "C" intptr_t __cdecl _NtCRT_get_osfhandle(int fd);
+extern "C" int __cdecl _NtCRT_isatty(int fd);
+/* Results of _NtCRT_fd_textmode */
+#define NTCRT_FD_BINARY 0
+#define NTCRT_FD_ANSI   1
+#define NTCRT_FD_UTF8   2
+#define NTCRT_FD_UTF16  3
+extern "C" int __cdecl _NtCRT_fd_textmode(int fd);
+extern "C" int __cdecl _NtCRT_fd_narrow_invalid(int fd);
+extern "C" int __cdecl _NtCRT_fd_crlf(int fd);
+extern "C" void _NtCRT_InitLowIO(void);
+extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _In_ DWORD Count);
+
+/* stdio, see Stdio.cpp */
+extern "C" void _NtCRT_FlushAll(void);
+extern "C" void _NtCRT_CloseAll(void);
+
+/* exit, see Startup.cpp */
+extern "C" __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code);
+extern "C" void __cdecl _NtCRT_amsg_exit(int rterrnum);
+
+/* Globals, see Startup.cpp */
+extern "C" int _NtCRT_fmode;
+extern "C" int _NtCRT_commode;
+
+/* Lock numbers of msvcrt */
+#define _SIGNAL_LOCK    0
+#define _IOB_SCAN_LOCK  1
+#define _TMPNAM_LOCK    2
+#define _INPUT_LOCK     3
+#define _OUTPUT_LOCK    4
+#define _CSCANF_LOCK    5
+#define _CPRINTF_LOCK   6
+#define _CONIO_LOCK     7
+#define _HEAP_LOCK      8
+#define _TIME_LOCK      11
+#define _ENV_LOCK       12
+#define _EXIT_LOCK1     13
+#define _LOCKTAB_LOCK   15
+#define _MB_CP_LOCK     25
+
+/* threadmbcinfostruct of msvcrt, incomplete in the headers of MinGW-w64, see Mbcs.cpp */
+typedef struct _NTCRT_MBCINFO
+{
+    int refcount;
+    int mbcodepage;
+    int ismbcodepage;
+    int mblcid;
+    unsigned short mbulinfo[6];
+    unsigned char mbctype[257];
+    unsigned char mbcasemap[256];
+} NTCRT_MBCINFO;
+
+/* The multibyte code page set by _setmbcp if Current, else the single-byte one of the "C" locale */
+extern "C" void _NtCRT_GetMbcInfo(NTCRT_MBCINFO* Info, BOOL Current);
+
+/* kernel32 replacements used internally */
+extern "C" BOOL WINAPI _K32_IsDBCSLeadByteEx(UINT CodePage, BYTE TestChar);
+extern "C" BOOL WINAPI _K32_DeleteFileW(LPCWSTR lpFileName);
+extern "C" BOOL WINAPI _K32_MoveFileExW(LPCWSTR lpExistingFileName, LPCWSTR lpNewFileName, DWORD dwFlags);
+extern "C" DWORD WINAPI _K32_GetTempPathW(DWORD nBufferLength, LPWSTR lpBuffer);
+extern "C" DWORD WINAPI _K32_GetFileAttributesW(LPCWSTR lpFileName);
+extern "C" BOOL WINAPI _K32_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags);
+
+/* Resolve a kernel32 export at runtime, for what ntdll cannot do (console input, process creation) */
+extern "C" PVOID _NtCRT_GetKernel32Function(PCSTR Name);

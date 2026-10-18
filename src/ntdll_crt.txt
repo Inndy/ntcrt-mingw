@@ -1,0 +1,144 @@
+__C_specific_handler
+__isascii
+__iscsym
+__iscsymf
+__toascii
+_atoi64
+_errno
+_i64toa
+_i64tow
+_itoa
+_itow
+_local_unwind
+_ltoa
+_ltow
+_memccpy
+_memicmp
+_setjmp
+_setjmpex
+_snprintf
+_snwprintf
+_splitpath
+_strcmpi
+_stricmp
+_strlwr
+_strnicmp
+_strupr
+_swprintf
+_ui64toa
+_ui64tow
+_ultoa
+_ultow
+_vsnprintf
+_vsnwprintf
+_vswprintf
+_wcsicmp
+_wcslwr
+_wcsnicmp
+_wcstoi64
+_wcstoui64
+_wcsupr
+_wtoi
+_wtoi64
+_wtol
+abs
+atan
+atan2
+atoi
+atol
+bsearch
+ceil
+cos
+fabs
+floor
+isalnum
+isalpha
+iscntrl
+isdigit
+isgraph
+islower
+isprint
+ispunct
+isspace
+isupper
+iswalnum
+iswalpha
+iswctype
+iswdigit
+iswgraph
+iswlower
+iswprint
+iswspace
+iswxdigit
+isxdigit
+labs
+log
+longjmp
+mbstowcs
+memchr
+memcmp
+memcpy
+memmove
+memset
+pow
+qsort
+sin
+sprintf
+sqrt
+sscanf
+strcat
+strchr
+strcmp
+strcpy
+strcspn
+strlen
+strncat
+strncmp
+strncpy
+strpbrk
+strrchr
+strspn
+strstr
+strtol
+strtoul
+swprintf
+tan
+tolower
+toupper
+towlower
+towupper
+vsprintf
+wcscat
+wcschr
+wcscmp
+wcscpy
+wcscspn
+wcslen
+wcsncat
+wcsncmp
+wcsncpy
+wcspbrk
+wcsrchr
+wcsspn
+wcsstr
+wcstol
+wcstombs
+wcstoul
+; POSIX names of the functions above
+itoa == _itoa
+ltoa == _ltoa
+memccpy == _memccpy
+memicmp == _memicmp
+stricmp == _stricmp
+strcmpi == _strcmpi
+strcasecmp == _stricmp
+strnicmp == _strnicmp
+strncasecmp == _strnicmp
+strlwr == _strlwr
+strupr == _strupr
+wcsicmp == _wcsicmp
+wcscmpi == _wcsicmp
+wcsnicmp == _wcsnicmp
+wcslwr == _wcslwr
+wcsupr == _wcsupr
+setjmp == _setjmp
