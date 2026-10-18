@@ -48,6 +48,31 @@ __declspec(dllexport) size_t wcstod_bits(const wchar_t* s, uint64_t* Bits, int* 
     return (size_t)(End - s);
 }
 
+/* The 80-bit long double of strtold and wcstold goes to Go as its 10 bytes */
+__declspec(dllexport) size_t strtold_bytes(const char* s, unsigned char* Bytes, int* Err)
+{
+    char* End;
+    long double x;
+
+    errno = 0;
+    x = strtold(s, &End);
+    *Err = errno;
+    memcpy(Bytes, &x, 10);
+    return (size_t)(End - s);
+}
+
+__declspec(dllexport) size_t wcstold_bytes(const wchar_t* s, unsigned char* Bytes, int* Err)
+{
+    wchar_t* End;
+    long double x;
+
+    errno = 0;
+    x = wcstold(s, &End);
+    *Err = errno;
+    memcpy(Bytes, &x, 10);
+    return (size_t)(End - s);
+}
+
 /* wcstod skips the characters iswspace takes */
 __declspec(dllexport) int is_wspace(int c)
 {

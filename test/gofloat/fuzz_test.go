@@ -1,10 +1,11 @@
 // Fuzz strtod, strtof and wcstod of NtCRT against the reference (ref_test.go):
-// go test -fuzz FuzzStrtod
+// go test -fuzz FuzzStrtod, FuzzStrtodLong
 
 package gofloat
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -17,8 +18,43 @@ var fuzzSeeds = []string{
 	"8.68203285000000048828125e12", "6.5171236328125e4", "1.00000000000000011102230246251565404236316680908203125",
 }
 
+// Past the limits of ParseFloat, converted by math/big (long_test.go): a fuzz of their own, the mutations of long
+// numbers are slow
+var fuzzLongSeeds = []string{
+	"100000000000000011102230246251565404236316680908203125" + strings.Repeat("0", 747) + "1e-801",
+	"1000000059604644775390625" + strings.Repeat("0", 800) + "1e-825",
+	strings.Repeat("9", 1000) + "e-692", "1" + strings.Repeat("0", 900) + ".5e-900",
+	"0x" + strings.Repeat("0", 100) + "1" + strings.Repeat("0", 700) + "p-2800", "1e-10000", "0x1p+10000", "0.00001e10003",
+	"0." + strings.Repeat("0", 999) + "1e99999999999", "1e2147483648", "1e-99999999999999999999", "0x1p2147483648",
+	"-0x1p-99999999999", "1e0000000000000000000000000000000000000000308", "0x1.fffffffffffff8p+000000000000000000001023",
+}
+
+// FuzzStrtod checks the numbers inside the limits of ParseFloat only: the fuzz instruments math/big too, whose
+// coverage would stall it in the minimization of inputs that are new to math/big alone
 func FuzzStrtod(f *testing.F) {
 	for _, s := range fuzzSeeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		if !refByParseFloat(s) {
+			return
+		}
+		checkStrtod(t, s)
+	})
+}
+
+// refByParseFloat is whether the reference converts s without math/big
+func refByParseFloat(s string) bool {
+	if i := strings.IndexByte(s, 0); i >= 0 {
+		s = s[:i]
+	}
+	c := scanC(s, isCSpace)
+	return c.end == 0 || c.nan || strings.HasSuffix(c.token, "Inf") || c.num.goSafe()
+}
+
+// FuzzStrtodLong checks any number, past the limits of ParseFloat by math/big
+func FuzzStrtodLong(f *testing.F) {
+	for _, s := range fuzzLongSeeds {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -60,7 +96,7 @@ func sameFloat32(got, want uint32, nan bool) bool {
 }
 
 func TestSeeds(t *testing.T) {
-	for _, s := range fuzzSeeds {
+	for _, s := range append(fuzzSeeds, fuzzLongSeeds...) {
 		checkStrtod(t, s)
 	}
 }

@@ -13,13 +13,15 @@ import (
 )
 
 var (
-	dll        = syscall.NewLazyDLL(dllPath())
-	procStrtod = dll.NewProc("strtod_bits")
-	procStrtof = dll.NewProc("strtof_bits")
-	procWcstod = dll.NewProc("wcstod_bits")
-	procWspace = dll.NewProc("is_wspace")
-	procFmtD   = dll.NewProc("format_double")
-	procFmtLD  = dll.NewProc("format_long_double")
+	dll         = syscall.NewLazyDLL(dllPath())
+	procStrtod  = dll.NewProc("strtod_bits")
+	procStrtof  = dll.NewProc("strtof_bits")
+	procWcstod  = dll.NewProc("wcstod_bits")
+	procStrtold = dll.NewProc("strtold_bytes")
+	procWcstold = dll.NewProc("wcstold_bytes")
+	procWspace  = dll.NewProc("is_wspace")
+	procFmtD    = dll.NewProc("format_double")
+	procFmtLD   = dll.NewProc("format_long_double")
 )
 
 const erange = 34
@@ -64,6 +66,29 @@ func cWcstod(s string) (bits uint64, end int, errno int) {
 	var e int32
 	n, _, _ := procWcstod.Call(uintptr(unsafe.Pointer(&w[0])), uintptr(unsafe.Pointer(&bits)), uintptr(unsafe.Pointer(&e)))
 	return bits, int(n), int(e)
+}
+
+// cStrtold returns strtold(s) as an 80-bit long double, the number of bytes it converts and errno
+func cStrtold(s string) (x ld80, end int, errno int) {
+	b := cString(s)
+	return callLong(procStrtold, unsafe.Pointer(&b[0]))
+}
+
+// cWcstold converts the bytes of s as wide characters U+0000..U+00FF, end counts them
+func cWcstold(s string) (x ld80, end int, errno int) {
+	b := cString(s)
+	w := make([]uint16, len(b))
+	for i, c := range b {
+		w[i] = uint16(c)
+	}
+	return callLong(procWcstold, unsafe.Pointer(&w[0]))
+}
+
+func callLong(proc *syscall.LazyProc, s unsafe.Pointer) (x ld80, end int, errno int) {
+	var b [16]byte
+	var e int32
+	n, _, _ := proc.Call(uintptr(s), uintptr(unsafe.Pointer(&b[0])), uintptr(unsafe.Pointer(&e)))
+	return ld80{binary.LittleEndian.Uint64(b[:]), binary.LittleEndian.Uint16(b[8:])}, int(n), int(e)
 }
 
 // cIsWspace is iswspace of NtCRT

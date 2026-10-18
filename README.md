@@ -25,7 +25,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
 - `test/printf/` printf against exact expected strings (`make test-printf`)
 - `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
-  tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` with the syntax of C
+  tables and test data of Go strconv, and `go test -fuzz` against `strconv.ParseFloat` (`math/big` past its
+  limits) with the syntax of C
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
