@@ -5,7 +5,7 @@ functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs
-make test       # build and run test/upstream, the fuzz, console, libstdc++ and startup tests
+make test       # build and run test/upstream, the fuzz, console, libstdc++, thread and startup tests
 make size       # the size of the programs of test/size
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
@@ -20,6 +20,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `src/start/` replacements of libmingw32 members in `libntcrt_start.a`, linked before libmingw32
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
+- `include/threads.h` C11 threads, the drivers add `include/` to the system include path of programs
 - `test/upstream/` the KNSoft.NtCRT test suite, and `Msvcrt.cpp` with what the tests of Wine found
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
@@ -33,6 +34,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `test/console/` console reads and writes in a pseudo console (`make test-console`), `conpty.exe` types the
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
+- `test/thread/` the pthread functions, `<threads.h>` and the threads of libstdc++ (`make test-thread`)
 - `test/start/` pseudo relocations of data auto-imported from a DLL and `_matherr` (`make test-start`)
 - `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
@@ -60,6 +62,9 @@ split so that the startup code and small programs link few and small objects:
   output, the multibyte functions keep the codec, `mbrtowc` and `wcrtomb` that printf uses in `MultibyteChar.cpp`
 - the `_l` functions are beside the functions they call or in `Locale*.cpp`, locale objects, character class
   tables and scanf are objects of their own, and stdio is flushed at exit by a pointer that stdio sets
+- the pthread functions are objects by use (`Pthread*.cpp`): mutexes, condition variables, read-write locks,
+  barriers and spin locks, semaphores, once, keys, the waits by address, threads, names; libstdc++ links the
+  first ones in every C++ program (`std::cout` too), a program without threads none
 - GCC builds without `-fdata-sections`, which puts zero data in `.data$` sections that take space in the file
   (`.bss` does not)
 
@@ -86,17 +91,22 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 37376 | 25088 | 14336 |
-| `puts` | 248832 | 445440 | 48128 | 35328 | 14336 |
+| `return 0` | 248832 | 445440 | 37376 | 24576 | 14336 |
+| `puts` | 248832 | 445440 | 47616 | 35328 | 14336 |
 | `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
 | `wprintf` | 248832 | 445440 | 82432 | 69120 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1183232 | 752640 | 1035776 |
+| `std::cout` | 1257472 | 1420800 | 1155584 | 720896 | 1035776 |
+| `std::thread` | | | 187392 | 100352 | 135168 |
 
-The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links the
-narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of `src/Float.cpp`, with ld
-all of them. What ld links beyond lld is the unused functions of these objects, most of all the code page
-conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of `argv`,
-one object of the shared sources).
+The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
+with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
+`src/Float.cpp`, with ld all of them. What ld links beyond lld is the unused functions of these objects, most of all
+the code page conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of
+`argv`, one object of the shared sources).
+
+With winpthreads, before the pthread functions of NtCRT, `std::cout` was 1183232 bytes (lld 752640) and
+`test/size/thread.cpp` (`std::thread` and `std::mutex`) 248832 (lld 165888): winpthreads linked the kernel32 shims
+of events and waits and its own objects whole.
 
 ## LLVM
 
@@ -115,6 +125,10 @@ does what the specs do and links by lld. clang uses the headers and libraries of
   only through `X` is safe, NtCRT calls no `__real_` function from elsewhere.
 - The `__cpuidex` of MinGW-w64 headers before 12 clashes with `<cpuid.h>` of clang and is left out
   (`-D__INTRINSIC_DEFINED___cpuidex`).
+- Thread-local variables are emulated (`-femulated-tls`) as GCC does: libstdc++ keeps the state of
+  `std::call_once` in its emulated `thread_local` variables.
+- The directory of the libraries is a `-L` of the driver, which precedes the directories of the toolchain:
+  `-lpthread` finds the empty `libpthread.a` of NtCRT, not winpthreads.
 
 ## Behavior
 
@@ -207,11 +221,76 @@ the "C.UTF-8" locale set by `setlocale`:
 - `std::wcout`/`std::wcin` (by `putwc`/`getwc`), `std::wofstream`/`std::wifstream` and
   `std::codecvt<wchar_t, char, mbstate_t>` convert UTF-8, an invalid sequence is a conversion error
 - a narrow file name (`std::ofstream`, `std::filesystem::path` from `std::string`, `path::string()`) is UTF-8
-- `std::format`, `std::to_string`, exceptions, `std::thread` and `std::filesystem` work, the program imports
-  ntdll.dll only
+- `std::format`, `std::to_string`, exceptions, `std::thread` (see "Threads") and `std::filesystem` work, the
+  program imports ntdll.dll only
 
 `std::locale("C.UTF-8")` and other named locales throw `std::runtime_error`: the generic model of libstdc++
 knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use the classic `std::locale`.
+
+### Threads
+
+libntcrt has the POSIX threads of `<pthread.h>`, `<semaphore.h>`, `<sched.h>` and `<pthread_time.h>` with the ABI
+of the winpthreads headers of MinGW-w64 (the types and their static initializers), and C11 `<threads.h>` on them.
+libstdc++ (`std::thread`, `std::mutex`, `std::condition_variable`, `std::shared_mutex`, `std::call_once`, futures,
+`std::jthread`, `std::counting_semaphore`, ...) and libgcc (emutls, the `thread_local` of GCC) call them. winpthreads
+is not linked: the specs and `ntcrt.cfg` have no `-lpthread`, and the empty `libpthread.a` and `libwinpthread.a` of
+the build directory take its place for `-lpthread` and `-lwinpthread` (`-pthread` adds nothing). The kernel32
+functions winpthreads used (events, semaphores, `WaitForMultipleObjects`, ...) stay in `src/Kernel32.cpp` for other
+code.
+
+- A mutex, condition variable, read-write lock, spin lock, barrier or semaphore is the word of its type, nothing is
+  allocated and no kernel object created: a static initializer or 0 is a valid object and `pthread_*_destroy` only
+  checks. A thread waits by address (`src/PthreadWait.cpp`) on the keyed event of the system
+  (`NtWaitForKeyedEvent`, Vista and later) with its node in a table of buckets, as `RtlWaitOnAddress` of Windows 8.
+- Mutexes are normal (`PTHREAD_MUTEX_DEFAULT`, a normal mutex locked again by its owner deadlocks, any thread may
+  unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels),
+  timed by `pthread_mutex_timedlock`. A condition wait unlocks a recursive mutex whatever its count and restores it.
+- Condition variables wait by `CLOCK_REALTIME` or `CLOCK_MONOTONIC` (`pthread_condattr_setclock`), or a relative
+  time (`pthread_cond_timedwait_relative_np`). An absolute `CLOCK_REALTIME` time follows changes of the clock.
+- Read-write locks prefer readers: a thread may take a read lock again while a writer waits, so writers can starve. A
+  writer locking again gets `EDEADLK` (`EBUSY` from the try functions). A barrier counts up to 2^22 - 1 threads
+  (`EINVAL` beyond).
+- `pthread_once` (and `call_once`, `std::call_once`) is reset when the routine exits by an exception (an unwind
+  handler of x64 SEH on the frame that calls it) or is cancelled, another call runs the routine again (with
+  winpthreads `std::call_once` deadlocks after an exception).
+- Keys are TLS slots (`TlsAlloc`, 1088 for all users). The destructors run at the exit of any thread, also of
+  `CreateThread`, `_beginthreadex` and `_endthreadex`, in the TLS callback of NtCRT after that of libmingw32, which
+  runs the `thread_local` destructors of C++: emutls frees their memory in a key destructor.
+  `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set again. They run under the loader lock, a
+  destructor must not wait for a thread that starts or ends.
+- `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
+  a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
+  created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
+  joined (`EINVAL`).
+- Cancellation is deferred, at `pthread_testcancel`, `pthread_join`, `pthread_cond_wait`, `pthread_cond_timedwait`,
+  `sem_wait`, `sem_timedwait`, `nanosleep`, `clock_nanosleep` and `pthread_delay_np`. These wait alertably and
+  `pthread_cancel` alerts the thread (`NtAlertThread`), so a user APC queued to a thread also runs in them, as a
+  spurious wakeup (an APC may post or signal what its thread waits for; a wake that the waiter does not take within
+  1 ms, as in an APC, alerts it). A cancelled thread passes on a signal or a post it was woken by, runs its cleanup
+  handlers (`pthread_cleanup_push`) with cancellation disabled and its key destructors; the stack is not unwound (no C++
+  destructors run). `PTHREAD_CANCEL_ASYNCHRONOUS` is kept and acts as deferred.
+- Priorities are those of Windows as in winpthreads: `sched_priority` from `THREAD_PRIORITY_IDLE` (-15) to
+  `THREAD_PRIORITY_TIME_CRITICAL` (15), between the levels toward normal; `SCHED_OTHER` only (`ENOTSUP` for
+  `SCHED_FIFO` and `SCHED_RR`). `PTHREAD_INHERIT_SCHED` gives a thread the priority of its creator.
+  `pthread_getschedparam` reads the priority of the thread (5 set is 2, `THREAD_PRIORITY_HIGHEST`), winpthreads
+  returns the value set.
+- `pthread_setname_np` and `pthread_getname_np` set and read the description of the thread (Windows 10 1607 and
+  later, `ENOTSUP` before) in the ANSI code page. `pthread_num_processors_np` counts the affinity of the process.
+- Clocks: `CLOCK_REALTIME` and `CLOCK_REALTIME_COARSE` are the system time (the resolution of the clock tick, as
+  `time` and `GetSystemTimeAsFileTime`), `CLOCK_MONOTONIC` is `QueryPerformanceCounter`, the CPU time clocks are of the
+  process and the thread. `nanosleep` and `clock_nanosleep` are not interrupted (no `EINTR`, `remain` is not written)
+  and sleep the resolution of the clock tick at least. `timespec_get` (`TIME_UTC`), which `<time.h>` declares for
+  UCRT only, is declared by `<threads.h>`.
+- C11: `thrd_t` is a `pthread_t`, `mtx_t` a `pthread_mutex_t` (every mutex is timed, `mtx_recursive` recursive),
+  `cnd_t` a `pthread_cond_t`, `tss_t` a key and `once_flag` a `pthread_once_t`; `TSS_DTOR_ITERATIONS` is 256.
+
+Not supported: process-shared objects (`PTHREAD_PROCESS_SHARED` is `ENOTSUP`, `sem_init` with `pshared` `ENOSYS`; the
+waits are of the process, spin locks work anyway), named semaphores (`sem_open`, `sem_close` and `sem_unlink` fail
+with `ENOSYS`), signals (`pthread_kill` of a signal other than 0 is `EINVAL`, `pthread_sigmask` and `pthread_atfork`
+are macros of the header), asynchronous cancellation, and the internals of winpthreads (`thread_print`, `cond_print`,
+`rwl_print`, `pthread_create_wrapper`, `_pthread_invoke_cancel`, `_pthread_cleanup_dest`, `__pthread_shallcancel`,
+`_pthread_key_dest`, ...). `pthread_mutexattr_setprotocol`, `pthread_mutexattr_setprioceiling`,
+`pthread_attr_setscope` and `pthread_setconcurrency` keep their value, which has no effect.
 
 ### File names, console and streams
 

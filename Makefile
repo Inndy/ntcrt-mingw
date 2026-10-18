@@ -243,6 +243,28 @@ $(BUILD)/cxx/stdcxx.exe: test/cxx/stdcxx.cpp $(LIBS) $(DRIVER)
 test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
 
+# The pthread functions, <threads.h> and the threads of libstdc++. -lpthread and -pthread link no winpthreads.
+THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe
+
+$(BUILD)/thread/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -pthread -o $@ $< -lpthread
+
+$(BUILD)/thread/c11.exe: test/thread/c11.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
+$(BUILD)/thread/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< -Wl,-Map=$(BUILD)/thread/cxx.map
+
+test-thread: $(THREAD_TESTS)
+	if grep -i winpthread $(BUILD)/thread/cxx.map; then echo "winpthreads is linked"; exit 1; fi
+	for t in $(THREAD_TESTS); do \
+	    objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll && { echo "$$t imports more than ntdll.dll"; exit 1; }; \
+	    ./$$t || exit 1; \
+	done
+
 # libntcrt_start: pseudo relocations of data auto-imported from a DLL (built with the default runtime), _matherr
 $(BUILD)/start/data.dll: test/start/data.c
 	mkdir -p $(@D)
@@ -308,7 +330,7 @@ $(WINE)/%.exe: $(WINE)/%.c $(WINE)/table.c test/wine/crt.c test/wine/compat.h te
 test-wine: $(WINE_TESTS:%=$(WINE)/%.exe)
 	sh test/wine/run.sh $(WINE) $(WINE_TESTS)
 
-test: test-upstream test-fuzz test-printf test-console test-cxx test-start
+test: test-upstream test-fuzz test-printf test-console test-cxx test-thread test-start
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -329,5 +351,5 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-start test-wine \
-        size compare clean
+.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-console test-cxx test-thread \
+        test-start test-wine size compare clean
