@@ -182,15 +182,12 @@ EXTERN_C int __cdecl _NtCRT_fstat64(int fd, struct _stat64* buffer)
         return -1;
     }
     memset(buffer, 0, sizeof(*buffer));
+    /* As msvcrt and UCRT: st_dev is the fd for a device or a pipe, 0 for a file, a pipe has no permissions */
     if (Entry->Flags & (FDEV | FPIPE))
     {
         buffer->st_mode = (Entry->Flags & FDEV) ? _S_IFCHR : _S_IFIFO;
         buffer->st_nlink = 1;
         buffer->st_dev = buffer->st_rdev = (_dev_t)fd;
-        if (Entry->Flags & FPIPE)
-        {
-            buffer->st_mode |= _S_IREAD | _S_IWRITE;
-        }
         goto _Exit;
     }
     Status = NtQueryInformationFile(Entry->Handle, &IoStatusBlock, &Basic, sizeof(Basic), FileBasicInformation);
@@ -208,7 +205,6 @@ EXTERN_C int __cdecl _NtCRT_fstat64(int fd, struct _stat64* buffer)
         Result = -1;
         goto _Exit;
     }
-    buffer->st_dev = buffer->st_rdev = (_dev_t)fd;
     buffer->st_mode = _NtCRT_ModeFromAttributes(Basic.FileAttributes, NULL);
     buffer->st_nlink = (short)Standard.NumberOfLinks;
     buffer->st_size = Standard.EndOfFile.QuadPart;

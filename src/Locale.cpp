@@ -606,11 +606,10 @@ EXTERN_C int __cdecl _NtCRT___crtGetLocaleInfoW(LCID Locale, LCTYPE Type, LPWSTR
     return GetLocaleInfoW != NULL ? GetLocaleInfoW(Locale, Type, Data, Count) : 0;
 }
 
-EXTERN_C BOOL __cdecl _NtCRT___crtGetStringTypeW(
-    DWORD InfoType, LPCWSTR Src, int SrcCount, LPWORD Types, int CodePage, int Lcid)
+/* The first argument of the msvcrt.dll export is unused, GetStringTypeW follows */
+EXTERN_C BOOL __cdecl _NtCRT___crtGetStringTypeW(DWORD Unused, DWORD InfoType, LPCWSTR Src, int SrcCount, LPWORD Types)
 {
-    UNREFERENCED_PARAMETER(CodePage);
-    UNREFERENCED_PARAMETER(Lcid);
+    UNREFERENCED_PARAMETER(Unused);
     return _CRT_GetStringTypeW(InfoType, Src, SrcCount, Types);
 }
 

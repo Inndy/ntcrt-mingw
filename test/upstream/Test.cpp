@@ -6,6 +6,7 @@ extern "C" BOOL TestConsole(VOID);
 extern "C" BOOL TestCodePage(VOID);
 extern "C" BOOL TestConversion(VOID);
 extern "C" BOOL TestSmoke(VOID);
+extern "C" BOOL TestMsvcrt(VOID);
 
 int
 __cdecl
@@ -39,6 +40,11 @@ main()
     if (!TestSmoke())
     {
         return 6;
+    }
+
+    if (!TestMsvcrt())
+    {
+        return 7;
     }
 
     return 0;

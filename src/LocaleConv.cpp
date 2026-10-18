@@ -34,8 +34,9 @@ EXTERN_C unsigned long long __cdecl _NtCRT_strtoull(const char*, char**, int);
 EXTERN_C unsigned long long __cdecl _NtCRT_wcstoull(const wchar_t*, wchar_t**, int);
 
 /*
- * The conversions of msvcrt without "_l". Returns _OVERFLOW or _UNDERFLOW of <math.h> on range errors. Not in
- * String.cpp: lld loads it for its __wrap_ functions, and the gdtoa of libmingwex with it for __mingw_strtold.
+ * The conversions of msvcrt without "_l". Returns _OVERFLOW of <math.h> for an infinity and _UNDERFLOW for zero or a
+ * denormal, which strtod reports by ERANGE alike. Not in String.cpp: lld loads it for its __wrap_ functions, and the
+ * gdtoa of libmingwex with it for __mingw_strtold.
  */
 EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE* value, char* str)
 {
@@ -45,7 +46,7 @@ EXTERN_C int __cdecl _NtCRT__atodbl(_CRT_DOUBLE* value, char* str)
     value->x = _NtCRT_strtod(str, NULL);
     if (NTCRT_ERRNO == ERANGE)
     {
-        Ret = value->x == 0 ? _UNDERFLOW : _OVERFLOW;
+        Ret = isinf(value->x) ? _OVERFLOW : _UNDERFLOW;
     }
     NTCRT_ERRNO = Saved;
     return Ret;
@@ -60,7 +61,7 @@ EXTERN_C int __cdecl _NtCRT__atoldbl(_LDOUBLE* value, char* str)
     x = __mingw_strtold(str, NULL);
     if (NTCRT_ERRNO == ERANGE)
     {
-        Ret = x == 0 ? _UNDERFLOW : _OVERFLOW;
+        Ret = isinf(x) ? _OVERFLOW : _UNDERFLOW;
     }
     memcpy(value->ld, &x, sizeof(value->ld));
     NTCRT_ERRNO = Saved;
@@ -88,7 +89,8 @@ EXTERN_C unsigned int __cdecl _NtCRT___STRINGTOLD(_LDOUBLE* pld, char** end, con
         Ret = NTCRT_SLD_NODIGITS;
     } else if (NTCRT_ERRNO == ERANGE)
     {
-        Ret = x == 0 ? NTCRT_SLD_UNDERFLOW : NTCRT_SLD_OVERFLOW;
+        /* msvcrt: no flag for a denormal */
+        Ret = isinf(x) ? NTCRT_SLD_OVERFLOW : x == 0 ? NTCRT_SLD_UNDERFLOW : 0;
     }
     memcpy(pld->ld, &x, sizeof(pld->ld));
     if (end != NULL)
@@ -109,7 +111,7 @@ EXTERN_C int __cdecl _NtCRT__atoflt(_CRT_FLOAT* value, char* str)
     if (Ret == 0 && isinf(value->f) && !isinf(Double.x))
     {
         Ret = _OVERFLOW;
-    } else if (Ret == 0 && value->f == 0 && Double.x != 0)
+    } else if (Ret == 0 && (value->f == 0 ? Double.x != 0 : fpclassify(value->f) == FP_SUBNORMAL))
     {
         Ret = _UNDERFLOW;
     }

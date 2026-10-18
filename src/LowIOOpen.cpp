@@ -10,6 +10,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+/* The standard handle of fd 0, 1 or 2 */
+static __attribute__((noinline)) void _NtCRT_SetStdFd(int fd, HANDLE Handle)
+{
+    PRTL_USER_PROCESS_PARAMETERS ProcParam = NtCurrentPeb()->ProcessParameters;
+
+    (fd == 0 ? ProcParam->StandardInput : fd == 1 ? ProcParam->StandardOutput : ProcParam->StandardError) = Handle;
+}
+
 /* Allocate a free fd at or above MinFd, returns it locked with FOPEN set */
 static
 int
@@ -44,6 +52,10 @@ _NtCRT_AllocFd(
     {
         NTCRT_ERRNO = EMFILE;
         _NtCRT_GetPtd()->Doserrno = 0;
+    } else if (fd <= 2)
+    {
+        /* As _close and _dup2, fds 0 to 2 are the standard handles */
+        _NtCRT_SetStdFd(fd, Handle);
     }
     return fd;
 }
@@ -170,7 +182,7 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
     _NtCRT_FdEntry(fd2)->WideOnly = WideOnly;
     if (fd2 <= 2)
     {
-        _Inline_SetStdHandle(fd2 == 0 ? STD_INPUT_HANDLE : fd2 == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, NewHandle);
+        _NtCRT_SetStdFd(fd2, NewHandle);
     }
     return 0;
 }
@@ -351,6 +363,8 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
         case _SH_DENYWR: Share = FILE_SHARE_READ; break;
         case _SH_DENYRD: Share = FILE_SHARE_WRITE; break;
         case _SH_DENYNO: Share = FILE_SHARE_READ | FILE_SHARE_WRITE; break;
+        /* fopen_s: shared read if read-only */
+        case _SH_SECURE: Share = Access == GENERIC_READ ? FILE_SHARE_READ : 0; break;
         default:
             NTCRT_ERRNO = EINVAL;
             return -1;

@@ -195,89 +195,105 @@ EXTERN_C wchar_t* __cdecl _NtCRT__wtempnam(const wchar_t* dir, const wchar_t* pr
     return _NtCRT_MakeTempName(dir, prefix);
 }
 
-EXTERN_C char* __cdecl _NtCRT_tmpnam(char* str)
-{
-    static char Buffer[MAX_PATH];
-    char* Name = _NtCRT_tempnam(NULL, "s");
+/*
+ * The names of tmpnam fit in L_tmpnam of the headers, 14 with _P_tmpdir "\" (the root of the current drive), as in
+ * msvcrt: "\s", the process id and a counter below TMP_MAX + 1 in base 32, at most 2 + 7 + 1 + 3 characters. UCRT
+ * names a file in the temporary directory, its headers have L_tmpnam 260. Returns the length, 0 if all names exist.
+ */
+static volatile LONG g_TmpnamCounter;
 
-    if (Name == NULL)
+static
+size_t
+_NtCRT_MakeTmpnam(
+    _Out_writes_z_(L_tmpnam) PWSTR Name)
+{
+    for (int Try = 0; Try <= TMP_MAX; Try++)
     {
-        return NULL;
-    }
-    if (str == NULL)
-    {
-        str = Buffer;
-    }
-    strncpy(str, Name, L_tmpnam - 1);
-    str[L_tmpnam - 1] = '\0';
-    if (strlen(Name) >= L_tmpnam)
-    {
-        /* Caller buffer is too small for an absolute path, use the static buffer */
-        if (str != Buffer)
+        ULONG Values[2] = { (ULONG)(ULONG_PTR)NtCurrentProcessId(),
+                            (ULONG)_InterlockedIncrement(&g_TmpnamCounter) & TMP_MAX };
+        WCHAR Digits[8];
+        size_t Length = 2;
+
+        Name[0] = L'\\';
+        Name[1] = L's';
+        for (int i = 0; i < 2; i++)
         {
-            RtlFreeHeap(NTCRT_HEAP, 0, Name);
-            NTCRT_ERRNO = ERANGE;
-            return NULL;
+            PWSTR p = Digits + ARRAYSIZE(Digits);
+            ULONG Value = Values[i];
+
+            do
+            {
+                *--p = L"0123456789abcdefghijklmnopqrstuv"[Value & 31];
+                Value >>= 5;
+            } while (Value != 0);
+            if (i == 1)
+            {
+                Name[Length++] = L'.';
+            }
+            while (p < Digits + ARRAYSIZE(Digits))
+            {
+                Name[Length++] = *p++;
+            }
         }
-        strncpy(Buffer, Name, sizeof(Buffer) - 1);
-        Buffer[sizeof(Buffer) - 1] = '\0';
+        Name[Length] = L'\0';
+        if (_K32_GetFileAttributesW(Name) == INVALID_FILE_ATTRIBUTES)
+        {
+            return Length;
+        }
     }
-    RtlFreeHeap(NTCRT_HEAP, 0, Name);
-    return str;
+    NTCRT_ERRNO = EEXIST;
+    return 0;
 }
 
-/* Like tmpnam, with a static buffer if str is NULL */
-EXTERN_C wchar_t* __cdecl _NtCRT__wtmpnam(wchar_t* str)
-{
-    static wchar_t Buffer[MAX_PATH];
-    wchar_t* Name = _NtCRT_MakeTempName(NULL, L"s");
-
-    if (Name == NULL)
-    {
-        return NULL;
-    }
-    if (str == NULL)
-    {
-        str = Buffer;
-    }
-    if (wcslen(Name) >= (str == Buffer ? ARRAYSIZE(Buffer) : L_tmpnam))
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Name);
-        NTCRT_ERRNO = ERANGE;
-        return NULL;
-    }
-    wcscpy(str, Name);
-    RtlFreeHeap(NTCRT_HEAP, 0, Name);
-    return str;
-}
-
+/* The name in Str (of L_tmpnam if Size is 0), or "" and an error */
 template<typename TChar>
 static
 errno_t
-_NtCRT_TmpnamS(
+_NtCRT_Tmpnam(
     _Out_writes_z_(Size) TChar* Str,
-    _In_ size_t Size,
-    _In_ TChar* Name)
+    _In_ size_t Size)
 {
-    size_t Length;
+    WCHAR Name[L_tmpnam];
+    size_t Length = _NtCRT_MakeTmpnam(Name);
 
-    if (Name == NULL)
+    if (Length == 0)
     {
         Str[0] = 0;
         return NTCRT_ERRNO;
     }
-    for (Length = 0; Name[Length] != 0; Length++)
+    if (Size != 0 && Length >= Size)
     {
-    }
-    if (Length >= Size)
-    {
-        RtlFreeHeap(NTCRT_HEAP, 0, Name);
         Str[0] = 0;
         return _NtCRT_InvalidParameter(ERANGE);
     }
-    memcpy(Str, Name, (Length + 1) * sizeof(TChar));
-    RtlFreeHeap(NTCRT_HEAP, 0, Name);
+    for (size_t i = 0; i <= Length; i++)
+    {
+        Str[i] = (TChar)Name[i];
+    }
     return 0;
+}
+
+/* A static buffer if str is NULL */
+EXTERN_C char* __cdecl _NtCRT_tmpnam(char* str)
+{
+    static char Buffer[L_tmpnam];
+
+    if (str == NULL)
+    {
+        str = Buffer;
+    }
+    return _NtCRT_Tmpnam(str, 0) == 0 ? str : NULL;
+}
+
+EXTERN_C wchar_t* __cdecl _NtCRT__wtmpnam(wchar_t* str)
+{
+    static wchar_t Buffer[L_tmpnam];
+
+    if (str == NULL)
+    {
+        str = Buffer;
+    }
+    return _NtCRT_Tmpnam(str, 0) == 0 ? str : NULL;
 }
 
 EXTERN_C errno_t __cdecl _NtCRT_tmpnam_s(char* str, size_t sizeInChars)
@@ -286,7 +302,7 @@ EXTERN_C errno_t __cdecl _NtCRT_tmpnam_s(char* str, size_t sizeInChars)
     {
         return _NtCRT_InvalidParameter(EINVAL);
     }
-    return _NtCRT_TmpnamS(str, sizeInChars, _NtCRT_tempnam(NULL, "s"));
+    return _NtCRT_Tmpnam(str, sizeInChars);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wtmpnam_s(wchar_t* str, size_t sizeInChars)
@@ -295,7 +311,7 @@ EXTERN_C errno_t __cdecl _NtCRT__wtmpnam_s(wchar_t* str, size_t sizeInChars)
     {
         return _NtCRT_InvalidParameter(EINVAL);
     }
-    return _NtCRT_TmpnamS(str, sizeInChars, _NtCRT_MakeTempName(NULL, L"s"));
+    return _NtCRT_Tmpnam(str, sizeInChars);
 }
 
 NTCRT_IMPORT(tmpfile, _NtCRT_tmpfile);

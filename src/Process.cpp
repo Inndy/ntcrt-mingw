@@ -1075,7 +1075,8 @@ EXTERN_C int __cdecl _NtCRT__pclose(FILE* stream)
     RtlReleaseSRWLockExclusive(&g_PopenLock);
     if (Entry == NULL)
     {
-        NTCRT_ERRNO = EINVAL;
+        /* msvcrt: EBADF for a stream that _popen did not open */
+        NTCRT_ERRNO = EBADF;
         return -1;
     }
     fclose(stream);

@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "SplitPath.inl"
+
 EXTERN_C BOOL WINAPI _CRT_GetCPInfo(UINT CodePage, LPCPINFO lpCPInfo);
 EXTERN_C UINT WINAPI _K32_GetACP(VOID);
 EXTERN_C UINT WINAPI _K32_GetOEMCP(VOID);
@@ -3471,8 +3473,35 @@ EXTERN_C errno_t __cdecl _NtCRT__mbsupr_s_l(UCHAR_T* string, size_t size, _local
     return _NtCRT_Mbcs_mbsupr_s(_NtCRT_Mbc(locale), string, size);
 }
 
+/* The narrow _splitpath goes by the multibyte code page as in msvcrt: a trail byte 0x5C is not a separator */
+EXTERN_C void __cdecl _NtCRT__splitpath(const char* path, char* drive, char* dir, char* fname, char* ext)
+{
+    NTCRT_MBC M = _NtCRT_Mbc(NULL);
+
+    _NtCRT_SplitPath(path, drive, _MAX_DRIVE, dir, _MAX_DIR, fname, _MAX_FNAME, ext, _MAX_EXT, true,
+                     M.IsMb ? M.Type : NULL);
+}
+
+EXTERN_C errno_t __cdecl _NtCRT__splitpath_s(const char* path,
+                                             char* drive,
+                                             size_t driveSize,
+                                             char* dir,
+                                             size_t dirSize,
+                                             char* fname,
+                                             size_t fnameSize,
+                                             char* ext,
+                                             size_t extSize)
+{
+    NTCRT_MBC M = _NtCRT_Mbc(NULL);
+
+    return _NtCRT_SplitPathS(path, drive, driveSize, dir, dirSize, fname, fnameSize, ext, extSize,
+                             M.IsMb ? M.Type : NULL);
+}
+
 #pragma endregion
 
+NTCRT_IMPORT(_splitpath, _NtCRT__splitpath);
+NTCRT_IMPORT(_splitpath_s, _NtCRT__splitpath_s);
 NTCRT_IMPORT(_setmbcp, _NtCRT__setmbcp);
 NTCRT_IMPORT(_getmbcp, _NtCRT__getmbcp);
 NTCRT_IMPORT(_mbscat, _NtCRT__mbscat);

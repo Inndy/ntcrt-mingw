@@ -642,30 +642,19 @@ EXTERN_C struct tm* __cdecl _NtCRT__localtime32(const __time32_t* t)
     return _NtCRT__localtime64(&Time);
 }
 
+/* A NULL time goes to the 64-bit function, which sets the fields of tm to -1 */
 EXTERN_C int __cdecl _NtCRT__gmtime32_s(struct tm* tm, const __time32_t* t)
 {
-    __time64_t Time;
+    __time64_t Time = t != NULL ? *t : 0;
 
-    if (t == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EINVAL;
-    }
-    Time = *t;
-    return _NtCRT__gmtime64_s(tm, &Time);
+    return _NtCRT__gmtime64_s(tm, t != NULL ? &Time : NULL);
 }
 
 EXTERN_C int __cdecl _NtCRT__localtime32_s(struct tm* tm, const __time32_t* t)
 {
-    __time64_t Time;
+    __time64_t Time = t != NULL ? *t : 0;
 
-    if (t == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return EINVAL;
-    }
-    Time = *t;
-    return _NtCRT__localtime64_s(tm, &Time);
+    return _NtCRT__localtime64_s(tm, t != NULL ? &Time : NULL);
 }
 
 /* Formatting */
@@ -678,7 +667,7 @@ static const char* const g_MonthNames[] = {
     "July", "August", "September", "October", "November", "December"
 };
 
-/* "Wed Jan 02 02:03:55 1980\n" */
+/* "Wed Jan  2 02:03:55 1980\n", the day by "%3d" of C as UCRT, msvcrt writes "Jan 02" */
 static
 void
 _NtCRT_FormatAsctime(
@@ -697,7 +686,7 @@ _NtCRT_FormatAsctime(
     Buffer[5] = Month[1];
     Buffer[6] = Month[2];
     Buffer[7] = ' ';
-    Buffer[8] = (char)('0' + tm->tm_mday / 10 % 10);
+    Buffer[8] = tm->tm_mday < 10 ? ' ' : (char)('0' + tm->tm_mday / 10 % 10);
     Buffer[9] = (char)('0' + tm->tm_mday % 10);
     Buffer[10] = ' ';
     Buffer[11] = (char)('0' + tm->tm_hour / 10 % 10);
@@ -1046,14 +1035,15 @@ _NtCRT_FormatTime(
             case 'c':
                 if (NoPad)
                 {
-                    /* Long date and time of the "C" locale */
-                    static const TChar LongFormat[] = { '%', 'A', ',', ' ', '%', 'B', ' ', '%', '#', 'd', ',', ' ',
+                    /* Long date and time of the "C" locale, the day has two digits as in msvcrt and UCRT */
+                    static const TChar LongFormat[] = { '%', 'A', ',', ' ', '%', 'B', ' ', '%', 'd', ',', ' ',
                                                         '%', 'Y', ' ', '%', 'H', ':', '%', 'M', ':', '%', 'S', 0 };
                     _NtCRT_FormatTime(Out, LongFormat, tm);
                 } else
                 {
-                    static const TChar ShortFormat[] = { '%', 'm', '/', '%', 'd', '/', '%', 'y', ' ',
-                                                         '%', 'H', ':', '%', 'M', ':', '%', 'S', 0 };
+                    /* "%a %b %e %T %Y" of C as UCRT, msvcrt writes "%m/%d/%y %H:%M:%S" */
+                    static const TChar ShortFormat[] = { '%', 'a', ' ', '%', 'b', ' ', '%', 'e', ' ',
+                                                         '%', 'T', ' ', '%', 'Y', 0 };
                     _NtCRT_FormatTime(Out, ShortFormat, tm);
                 }
                 break;
@@ -1067,8 +1057,7 @@ _NtCRT_FormatTime(
             case 'x':
                 if (*Format == 'x' && NoPad)
                 {
-                    static const TChar LongDate[] = { '%', 'A', ',', ' ', '%', 'B', ' ', '%',
-                                                      '#', 'd', ',', ' ', '%', 'Y', 0 };
+                    static const TChar LongDate[] = { '%', 'A', ',', ' ', '%', 'B', ' ', '%', 'd', ',', ' ', '%', 'Y', 0 };
                     _NtCRT_FormatTime(Out, LongDate, tm);
                 } else
                 {

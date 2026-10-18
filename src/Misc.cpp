@@ -16,6 +16,8 @@
 #include <sys/locking.h>
 #include <time.h>
 
+#include "SplitPath.inl"
+
 EXTERN_C int __cdecl _NtCRT__access(const char* path, int mode);
 EXTERN_C int __cdecl _NtCRT__waccess(const wchar_t* path, int mode);
 EXTERN_C char* __cdecl _NtCRT__fullpath(char* absPath, const char* relPath, size_t maxLength);
@@ -329,6 +331,11 @@ EXTERN_C char* __cdecl _NtCRT__gcvt(double value, int digits, char* buffer)
 {
     char Text[NTCRT_CVTBUFSIZE + 16];
 
+    if (buffer == NULL || digits < 0)
+    {
+        _NtCRT_InvalidParameter(buffer == NULL ? EINVAL : ERANGE);
+        return NULL;
+    }
     _NtCRT_Gcvt(value, _NtCRT_CvtCount(digits), Text);
     strcpy(buffer, Text);
     return buffer;
@@ -730,141 +737,10 @@ EXTERN_C errno_t __cdecl _NtCRT__wmakepath_s(
     return _NtCRT_MakePathS(path, size, drive, dir, fname, ext);
 }
 
-/*
- * Split Path into its components. Truncate copies what fits like _splitpath, otherwise a component that does not
- * fit empties all of them and fails like _splitpath_s.
- */
-template<typename TChar>
-static
-errno_t
-_NtCRT_SplitPath(
-    _In_z_ const TChar* Path,
-    _Out_writes_opt_z_(DriveSize) TChar* Drive,
-    _In_ size_t DriveSize,
-    _Out_writes_opt_z_(DirSize) TChar* Dir,
-    _In_ size_t DirSize,
-    _Out_writes_opt_z_(FnameSize) TChar* Fname,
-    _In_ size_t FnameSize,
-    _Out_writes_opt_z_(ExtSize) TChar* Ext,
-    _In_ size_t ExtSize,
-    _In_ bool Truncate)
-{
-    TChar* Buffers[4] = { Drive, Dir, Fname, Ext };
-    size_t Sizes[4] = { DriveSize, DirSize, FnameSize, ExtSize };
-    const TChar* Starts[4];
-    size_t Lengths[4];
-    const TChar* p = Path;
-    const TChar* LastSlash = NULL;
-    const TChar* LastDot = NULL;
-    int i;
-
-    Starts[0] = p;
-    Lengths[0] = 0;
-    if (p[0] != 0 && p[1] == ':')
-    {
-        Lengths[0] = 2;
-        p += 2;
-    }
-    for (const TChar* q = p; *q != 0; q++)
-    {
-        if (*q == '/' || *q == '\\')
-        {
-            LastSlash = q;
-            LastDot = NULL;
-        } else if (*q == '.')
-        {
-            LastDot = q;
-        }
-    }
-    Starts[1] = p;
-    Lengths[1] = LastSlash == NULL ? 0 : LastSlash + 1 - p;
-    Starts[2] = p + Lengths[1];
-    Starts[3] = LastDot == NULL ? Starts[2] + _NtCRT_TStrLen(Starts[2]) : LastDot;
-    Lengths[2] = Starts[3] - Starts[2];
-    Lengths[3] = _NtCRT_TStrLen(Starts[3]);
-
-    for (i = 0; i < 4; i++)
-    {
-        if (Buffers[i] != NULL && Lengths[i] >= Sizes[i])
-        {
-            if (Truncate)
-            {
-                Lengths[i] = Sizes[i] - 1;
-            } else
-            {
-                for (i = 0; i < 4; i++)
-                {
-                    if (Buffers[i] != NULL)
-                    {
-                        Buffers[i][0] = 0;
-                    }
-                }
-                return _NtCRT_InvalidParameter(ERANGE);
-            }
-        }
-    }
-    for (i = 0; i < 4; i++)
-    {
-        if (Buffers[i] != NULL)
-        {
-            memcpy(Buffers[i], Starts[i], Lengths[i] * sizeof(TChar));
-            Buffers[i][Lengths[i]] = 0;
-        }
-    }
-    return 0;
-}
-
-template<typename TChar>
-static
-errno_t
-_NtCRT_SplitPathS(
-    _In_z_ const TChar* Path,
-    _Out_writes_opt_z_(DriveSize) TChar* Drive,
-    _In_ size_t DriveSize,
-    _Out_writes_opt_z_(DirSize) TChar* Dir,
-    _In_ size_t DirSize,
-    _Out_writes_opt_z_(FnameSize) TChar* Fname,
-    _In_ size_t FnameSize,
-    _Out_writes_opt_z_(ExtSize) TChar* Ext,
-    _In_ size_t ExtSize)
-{
-    if (Path == NULL ||
-        (Drive == NULL) != (DriveSize == 0) ||
-        (Dir == NULL) != (DirSize == 0) ||
-        (Fname == NULL) != (FnameSize == 0) ||
-        (Ext == NULL) != (ExtSize == 0))
-    {
-        TChar* Buffers[4] = { Drive, Dir, Fname, Ext };
-
-        for (TChar* Buffer : Buffers)
-        {
-            if (Buffer != NULL && Path != NULL)
-            {
-                Buffer[0] = 0;
-            }
-        }
-        return _NtCRT_InvalidParameter(EINVAL);
-    }
-    return _NtCRT_SplitPath(Path, Drive, DriveSize, Dir, DirSize, Fname, FnameSize, Ext, ExtSize, false);
-}
-
 EXTERN_C void __cdecl _NtCRT__wsplitpath(
     const wchar_t* path, wchar_t* drive, wchar_t* dir, wchar_t* fname, wchar_t* ext)
 {
-    _NtCRT_SplitPath(path, drive, _MAX_DRIVE, dir, _MAX_DIR, fname, _MAX_FNAME, ext, _MAX_EXT, true);
-}
-
-EXTERN_C errno_t __cdecl _NtCRT__splitpath_s(const char* path,
-                                             char* drive,
-                                             size_t driveSize,
-                                             char* dir,
-                                             size_t dirSize,
-                                             char* fname,
-                                             size_t fnameSize,
-                                             char* ext,
-                                             size_t extSize)
-{
-    return _NtCRT_SplitPathS(path, drive, driveSize, dir, dirSize, fname, fnameSize, ext, extSize);
+    _NtCRT_SplitPath(path, drive, _MAX_DRIVE, dir, _MAX_DIR, fname, _MAX_FNAME, ext, _MAX_EXT, true, NULL);
 }
 
 EXTERN_C errno_t __cdecl _NtCRT__wsplitpath_s(const wchar_t* path,
@@ -877,7 +753,7 @@ EXTERN_C errno_t __cdecl _NtCRT__wsplitpath_s(const wchar_t* path,
                                               wchar_t* ext,
                                               size_t extSize)
 {
-    return _NtCRT_SplitPathS(path, drive, driveSize, dir, dirSize, fname, fnameSize, ext, extSize);
+    return _NtCRT_SplitPathS(path, drive, driveSize, dir, dirSize, fname, fnameSize, ext, extSize, NULL);
 }
 
 /* Search FileName in the current directory, then in the directories listed by the environment variable */
@@ -1804,7 +1680,6 @@ NTCRT_IMPORT(_wmakepath, _NtCRT__wmakepath);
 NTCRT_IMPORT(_makepath_s, _NtCRT__makepath_s);
 NTCRT_IMPORT(_wmakepath_s, _NtCRT__wmakepath_s);
 NTCRT_IMPORT(_wsplitpath, _NtCRT__wsplitpath);
-NTCRT_IMPORT(_splitpath_s, _NtCRT__splitpath_s);
 NTCRT_IMPORT(_wsplitpath_s, _NtCRT__wsplitpath_s);
 NTCRT_IMPORT(_searchenv, _NtCRT__searchenv);
 NTCRT_IMPORT(_wsearchenv, _NtCRT__wsearchenv);

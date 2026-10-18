@@ -1185,11 +1185,18 @@ _NtCRT_StrToFloat(
     _In_z_ const TChar* Str,
     _Out_opt_ TChar** End)
 {
+    static const TChar Empty = 0;
     const TChar* p = Str;
     TFloat Value;
     BOOL Range;
     size_t n;
 
+    /* msvcrt: EINVAL for NULL as strtol, then parsed as an empty string, so *End is NULL */
+    if (Str == NULL)
+    {
+        NTCRT_ERRNO = EINVAL;
+        p = &Empty;
+    }
     while (_NtCRT_IsFloatSpace(*p))
     {
         p++;
@@ -1246,14 +1253,9 @@ EXTERN_C long double __cdecl __wrap_wcstold(const wchar_t* str, wchar_t** end)
     __attribute__((alias("__wrap___mingw_wcstold")));
 
 EXTERN_C double __cdecl _NtCRT_strtod(const char* str, char** end)
-{
-    return _NtCRT_StrToFloat<char, double>(str, end);
-}
-
+    __attribute__((alias("__wrap___mingw_strtod")));
 EXTERN_C double __cdecl _NtCRT_wcstod(const wchar_t* str, wchar_t** end)
-{
-    return _NtCRT_StrToFloat<wchar_t, double>(str, end);
-}
+    __attribute__((alias("__wrap___mingw_wcstod")));
 
 EXTERN_C double __cdecl _NtCRT_atof(const char* str)
 {

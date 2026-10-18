@@ -412,10 +412,17 @@ EXTERN_C int __cdecl _NtCRT__wcsnicoll(const wchar_t* s1, const wchar_t* s2, siz
     return _wcsnicmp(s1, s2, n);
 }
 
+/* msvcrt: INT_MAX and EINVAL for a NULL source or destination */
 EXTERN_C size_t __cdecl _NtCRT_strxfrm(char* dst, const char* src, size_t n)
 {
-    size_t Length = strlen(src);
+    size_t Length;
 
+    if (src == NULL || (dst == NULL && n != 0))
+    {
+        NTCRT_ERRNO = EINVAL;
+        return INT_MAX;
+    }
+    Length = strlen(src);
     if (Length < n)
     {
         memcpy(dst, src, Length + 1);
@@ -425,8 +432,14 @@ EXTERN_C size_t __cdecl _NtCRT_strxfrm(char* dst, const char* src, size_t n)
 
 EXTERN_C size_t __cdecl _NtCRT_wcsxfrm(wchar_t* dst, const wchar_t* src, size_t n)
 {
-    size_t Length = wcslen(src);
+    size_t Length;
 
+    if (src == NULL || (dst == NULL && n != 0))
+    {
+        NTCRT_ERRNO = EINVAL;
+        return INT_MAX;
+    }
+    Length = wcslen(src);
     if (Length < n)
     {
         memcpy(dst, src, (Length + 1) * sizeof(wchar_t));
@@ -911,3 +924,8 @@ NTCRT_IMPORT(wcsicoll, _NtCRT__wcsicoll);
 NTCRT_IMPORT(iscsym, _NtCRT___iscsym);
 NTCRT_IMPORT(iscsymf, _NtCRT___iscsymf);
 NTCRT_IMPORT(is_wctype, _NtCRT_iswctype);
+NTCRT_IMPORT(wcsicmp, _NtCRT__wcsicmp);
+NTCRT_IMPORT(wcscmpi, _NtCRT__wcsicmp);
+NTCRT_IMPORT(wcsnicmp, _NtCRT__wcsnicmp);
+NTCRT_IMPORT(wcslwr, _NtCRT__wcslwr);
+NTCRT_IMPORT(wcsupr, _NtCRT__wcsupr);

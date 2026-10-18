@@ -20,7 +20,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 - `src/start/` replacements of libmingw32 members in `libntcrt_start.a`, linked before libmingw32
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
-- `test/upstream/` the KNSoft.NtCRT test suite
+- `test/upstream/` the KNSoft.NtCRT test suite, and `Msvcrt.cpp` with what the tests of Wine found
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
 - `test/float/` `strtod`, `strtof` and `wcstod` against the 5.3 million lines of
@@ -256,6 +256,29 @@ knows "C" and "POSIX" only. Set the C library locale with `setlocale` and use th
   function name without the arguments, the one of libmingw32 formats them by `fprintf`
 - The `printf` family returns -1 (`EILSEQ`) when a `%ls`, `%lc`, `%hs` or `%hc` argument cannot be converted,
   msvcrt writes a part of the output and returns its length
+- The `printf` family follows C where msvcrt has its own output: the exponent has two digits or more (`1e+00`,
+  msvcrt `1e+000`, `_set_output_format` only records its argument), infinity and NaN are `inf` and `nan` (msvcrt
+  `1.#INF00`, `1.#QNAN0`) and the `0` flag pads `%c` and `%s` with spaces (msvcrt with zeros)
+- The scanf functions of msvcrt are the C99 scanf of MinGW-w64 (see "printf and scanf"): `%p` takes a `0x`
+  prefix, `%Lf` stores an 80-bit long double, and a reversed range in a set is no range (`%[c-a]` reads "ca" of
+  "cab", msvcrt reads a to c)
+- `strftime` has the C99 conversions (`%C`, `%D`, `%e`, `%F`, `%g`, `%G`, `%h`, `%n`, `%R`, `%t`, `%T`, `%u`, `%V`),
+  msvcrt returns 0
+- `strtod` and `wcstod` set `ERANGE` for a denormal result as well as for an underflow to zero, msvcrt for zero
+  only; `_atodbl` reports either as `_UNDERFLOW`
+- `wcstol` and the other wide integer conversions read ASCII digits only, msvcrt also takes other Unicode decimal
+  digits (U+0660, U+FF10, ...)
+- `_winver`, `_winmajor`, `_winminor` and `_osver` are the version of Windows, msvcrt reports 6.2 to a program
+  without a compatibility manifest
+- `_wenviron` is set at startup in a program with `main`, msvcrt leaves it `NULL`
+- `_get_heap_handle` returns the process heap, which `malloc` allocates from (msvcrt has a heap of its own)
+- 512 streams at most: `_setmaxstdio` above 512 fails with `EINVAL` (msvcrt takes up to 2048)
+- `getenv_s` with a `NULL` name returns `EINVAL` as UCRT, msvcrt returns 0
+- `_vswprintf_l` takes a count after the buffer as the MinGW-w64 headers declare it, the export of msvcrt.dll has
+  none (`buffer, format, locale, args`)
+- `_strnicmp` takes any count, msvcrt returns `_NLSCMPERROR` for one above `INT_MAX`
+- `fopen` takes the mode `x` of C11 (`"wx"` fails with `EEXIST` for an existing file), msvcrt fails with
+  `EINVAL`
 
 ### Differences from UCRT
 
