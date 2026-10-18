@@ -165,6 +165,7 @@ test-fuzz: $(BUILD)/fuzz/utf8.exe $(BUILD)/fuzz/format.exe
 
 # strtod, strtof, wcstod and the floating point conversions of printf in a DLL, tested by Go: the tables of Go
 # strconv, fuzz against strconv and math/big, GO_FUZZTIME=d for longer fuzzing. Not in "test", it needs go.
+# -count=1: go would reuse a result without knowing which DLL NTCRT_FLOAT_DLL names.
 GO ?= go
 GO_FUZZTIME ?= 30s
 
@@ -173,7 +174,7 @@ $(BUILD)/gofloat/float.dll: test/gofloat/dll/float.c $(LIBS) $(DRIVER)
 	$(NTCRT_CC) -std=c17 -O2 -shared -o $@ $<
 
 test-go: $(BUILD)/gofloat/float.dll
-	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run Test . && 	    for f in FuzzStrtod FuzzPrintfDouble FuzzPrintfLongDouble; do 	        NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz $$f -fuzztime $(GO_FUZZTIME) . || exit 1; 	    done
+	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -count=1 -run Test . &&	    for f in FuzzStrtod FuzzPrintfDouble FuzzPrintfLongDouble; do 	        NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz $$f -fuzztime $(GO_FUZZTIME) . || exit 1; 	    done
 
 # printf where the fuzz cannot compare with UCRT: long double, positional arguments, %Z, %n, errors
 $(BUILD)/printf/printf.exe: test/printf/printf.c $(LIBS) $(DRIVER)

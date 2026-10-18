@@ -64,9 +64,9 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 |---|---:|---:|---:|---:|---:|
 | `return 0` | 248832 | 445440 | 114176 | 30208 | 14336 |
 | `puts` | 248832 | 445440 | 143872 | 40448 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 236544 | 73728 | 41984 |
-| `wprintf` | 248832 | 445440 | 236544 | 76800 | 41472 |
-| `std::cout` | 1257472 | 1420800 | 1245696 | 774656 | 1035776 |
+| `printf("%d")` | 248832 | 445440 | 237056 | 71680 | 41984 |
+| `wprintf` | 248832 | 445440 | 237056 | 74752 | 41472 |
+| `std::cout` | 1257472 | 1420800 | 1246208 | 772608 | 1035776 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it. A program with printf links
 `src/Printf.cpp` and the digits of `src/Float.cpp`, with ld all of both (the parser of strtod too).

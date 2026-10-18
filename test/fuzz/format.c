@@ -12,11 +12,13 @@
 #include <math.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
 #include <windows.h>
 
 /* Options of __stdio_common_* */
@@ -741,6 +743,62 @@ static void check_strtol(void)
     CHECK_STRTOL("wcstoull", unsigned long long, wcstoull, RefWcstoull, w, gwe, wwe);
 }
 
+/* The wide strtol family skips what iswspace takes, the narrow one isspace of the C locale only */
+static void check_strtol_space(void)
+{
+    static const wchar_t Chars[] = { 0x09, 0x20, 0x85, 0xA0, 0x1680, 0x2000, 0x2028, 0x3000, 0xFEFF, 'x' };
+    static const char* const Names[] = { "wcstol", "wcstoul", "wcstoll", "wcstoull", "wcstoimax", "wcstoumax" };
+    wchar_t w[5] = { 0, '-', '1', '2', 0 };
+    char s[] = { '\xA0', '1', '2', 0 };
+    char* se;
+
+    g_Checks++;
+    if (!iswspace(0xA0) || iswspace('x'))
+        fail("iswspace", "U+00A0 %d, 'x' %d", iswspace(0xA0) != 0, iswspace('x') != 0);
+    for (int i = 0; i < (int)(sizeof(Chars) / sizeof(Chars[0])); i++)
+    {
+        long long Want = iswspace(Chars[i]) ? -12 : 0;
+        int WantEnd = Want != 0 ? 4 : 0;
+
+        w[0] = Chars[i];
+        for (int k = 0; k < 6; k++)
+        {
+            wchar_t* e = NULL;
+            long long g;
+
+            errno = 0;
+            switch (k)
+            {
+            case 0:
+                g = wcstol(w, &e, 10);
+                break;
+            case 1:
+                g = (long)wcstoul(w, &e, 10);
+                break;
+            case 2:
+                g = wcstoll(w, &e, 10);
+                break;
+            case 3:
+                g = (long long)wcstoull(w, &e, 10);
+                break;
+            case 4:
+                g = wcstoimax(w, &e, 10);
+                break;
+            default:
+                g = (long long)wcstoumax(w, &e, 10);
+                break;
+            }
+            g_Checks++;
+            if (g != Want || e != w + WantEnd || errno != 0)
+                fail(Names[k], "U+%04X \"-12\": %lld end %d errno %d, want %lld end %d", (unsigned)Chars[i], g,
+                     e ? (int)(e - w) : -1, errno, Want, WantEnd);
+        }
+    }
+    g_Checks++;
+    if (strtol(s, &se, 10) != 0 || se != s)
+        fail("strtol", "\"\\xA0\" \"12\": end %d, want 0", (int)(se - s));
+}
+
 /* scanf */
 
 typedef struct
@@ -978,6 +1036,7 @@ int main(int argc, char** argv)
     REF(SetHandler, "_set_invalid_parameter_handler");
     SetHandler(ignore_invalid_parameter);
 
+    check_strtol_space();
     for (g_Iteration = 0; g_Iteration < Iterations && g_Failures < 30; g_Iteration++)
     {
         g_Utf8 = g_Iteration % 4 == 3;

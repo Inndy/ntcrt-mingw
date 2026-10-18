@@ -1,6 +1,6 @@
 /*
  * Integer conversion of msvcrt, and wcstoll and the like of libmingwex wrapped by the specs (--wrap). lld loads
- * every object of a __wrap_ function: this one refers to nothing that loads more.
+ * every object of a __wrap_ function: this one refers to nothing that loads more than iswspace of String.cpp.
  */
 
 #include "NtCRT.h"
@@ -11,13 +11,23 @@
 #include <stdlib.h>
 #include <wchar.h>
 
-template<typename TChar>
+EXTERN_C int __cdecl _NtCRT_iswspace(wint_t);
+
+/* isspace of the "C" locale for char, iswspace for wchar_t as C requires */
 static
 bool
 _NtCRT_IsSpace(
-    _In_ TChar c)
+    _In_ char c)
 {
     return c == ' ' || (c >= '\t' && c <= '\r');
+}
+
+static
+bool
+_NtCRT_IsSpace(
+    _In_ wchar_t c)
+{
+    return _NtCRT_iswspace(c) != 0;
 }
 
 template<typename TChar>
