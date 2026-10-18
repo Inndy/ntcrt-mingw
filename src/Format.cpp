@@ -7,12 +7,20 @@
  * bytes, a surrogate pair or an encoding error ends the output silently. Its wide printf converts %s by mbrtowc
  * with a new state for every character and takes an invalid byte as a character. The arguments of these
  * conversions are converted here as C requires, and the format passes them as strings of the other width.
+ *
+ * The printf of mingw-w64 also prints a space for the space flag of %u, which C defines for signed conversions
+ * only, pads with zeros when the 0 flag comes with the - flag or a negative width (%a) or with the precision of
+ * an integer (%#o), which C ignores then, and
+ * prints nothing for %#.0o of 0, where the # flag requires a 0. These flags are removed from the format, and the
+ * precision of such a %#o. Its %g loses the width when it removes many trailing zeros (%20.17g of 1e13), a %g is
+ * changed to the %e or %f it selects with the precision left after the zeros.
  */
 
 #include "NtCRT.h"
 
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
@@ -23,6 +31,9 @@ static_assert(sizeof(va_list) == sizeof(char*), "va_list is a pointer to the arg
 typedef struct _NTCRT_FORMAT_SPEC
 {
     size_t Start;     /* Offset of '%' */
+    size_t FlagsPos;  /* Offset of the flags */
+    size_t WidthPos;  /* Offset after the flags */
+    size_t PrecisionPos; /* Offset of '.', of the length modifier if none */
     size_t LengthPos; /* Offset of the length modifier */
     size_t ConvPos;   /* Offset of the conversion */
     int ValueSlot;
@@ -91,10 +102,12 @@ _NtCRT_ParseSpec(
     Spec->PrecisionSlot = -1;
     Spec->Precision = -1;
     Spec->Long = Spec->Short = FALSE;
+    Spec->FlagsPos = (size_t)(p - Format);
     while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0' || *p == '\'')
     {
         p++;
     }
+    Spec->WidthPos = (size_t)(p - Format);
     if (*p == '*')
     {
         p++;
@@ -110,6 +123,7 @@ _NtCRT_ParseSpec(
             p++;
         }
     }
+    Spec->PrecisionPos = (size_t)(p - Format);
     if (*p == '.')
     {
         p++;
@@ -181,6 +195,159 @@ _NtCRT_IsOtherWidth(
     }
     /* The wide format is translated to C99, where %s and %c are narrow without l */
     return (Conv == 's' || Conv == 'c') && !Spec->Long;
+}
+
+template<typename TChar>
+static
+BOOL
+_NtCRT_HasFlag(
+    _In_z_ const TChar* Format,
+    _In_ const NTCRT_FORMAT_SPEC* Spec,
+    _In_ TChar Flag)
+{
+    for (size_t i = Spec->FlagsPos; i < Spec->WidthPos; i++)
+    {
+        if (Format[i] == Flag)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/*
+ * Whether a flag has no effect: a sign flag of %u, the 0 flag with the - flag, a negative width or an integer
+ * conversion with a precision
+ */
+template<typename TChar>
+static
+BOOL
+_NtCRT_IsIgnoredFlag(
+    _In_z_ const TChar* Format,
+    _In_ const NTCRT_FORMAT_SPEC* Spec,
+    _In_ const ULONG64* Slots,
+    _In_ TChar Flag)
+{
+    if (Flag == ' ' || Flag == '+')
+    {
+        return Format[Spec->ConvPos] == 'u';
+    }
+    if (Flag == '0')
+    {
+        TChar Conv = Format[Spec->ConvPos];
+        BOOL Integer = Conv == 'd' || Conv == 'i' || Conv == 'o' || Conv == 'u' || Conv == 'x' || Conv == 'X';
+        int Precision = Spec->PrecisionSlot >= 0 ? (int)Slots[Spec->PrecisionSlot] : Spec->Precision;
+
+        return _NtCRT_HasFlag(Format, Spec, (TChar)'-') || (Spec->WidthSlot >= 0 && (int)Slots[Spec->WidthSlot] < 0) ||
+               (Integer && Precision >= 0);
+    }
+    return FALSE;
+}
+
+/* Whether a %#o with a precision of 0 converts 0 */
+template<typename TChar>
+static
+BOOL
+_NtCRT_IsZeroOctal(
+    _In_z_ const TChar* Format,
+    _In_ const NTCRT_FORMAT_SPEC* Spec,
+    _In_ const ULONG64* Slots)
+{
+    const TChar* Length = Format + Spec->LengthPos;
+    ULONG64 Value = Slots[Spec->ValueSlot];
+    int Precision = Spec->PrecisionSlot >= 0 ? (int)Slots[Spec->PrecisionSlot] : Spec->Precision;
+
+    if (Format[Spec->ConvPos] != 'o' || Precision != 0 || !_NtCRT_HasFlag(Format, Spec, (TChar)'#'))
+    {
+        return FALSE;
+    }
+    if (Length[0] == 'h')
+    {
+        Value = Length[1] == 'h' ? (UCHAR)Value : (USHORT)Value;
+    } else if (Spec->ConvPos == Spec->LengthPos || (Length[0] == 'l' && Length[1] != 'l') ||
+               (Length[0] == 'I' && Length[1] == '3'))
+    {
+        Value = (ULONG)Value;
+    }
+    return Value == 0;
+}
+
+EXTERN_C int __cdecl __real___mingw_snprintf(char* Buffer, size_t Count, const char* Format, ...);
+
+/*
+ * The %e or %f a %g of a finite double without the # flag selects, and its precision without the trailing zeros:
+ * with P significant digits and the exponent X of %e, %f if P > X >= -4 with P - 1 - X digits after the point.
+ */
+template<typename TChar>
+static
+BOOL
+_NtCRT_GeneralFloat(
+    _In_z_ const TChar* Format,
+    _In_ const NTCRT_FORMAT_SPEC* Spec,
+    _In_ const ULONG64* Slots,
+    _Out_opt_ char* Conv,
+    _Out_opt_ int* Precision)
+{
+    TChar c = Format[Spec->ConvPos];
+    char Digits[512];
+    int P = Spec->PrecisionSlot >= 0 ? (int)Slots[Spec->PrecisionSlot] : Spec->Precision;
+    int Count = 0, Zeros = 0, Exponent, Fraction;
+    double Value;
+
+    if ((c != 'g' && c != 'G') || (Spec->LengthPos != Spec->ConvPos && Format[Spec->LengthPos] == 'L') ||
+        _NtCRT_HasFlag(Format, Spec, (TChar)'#'))
+    {
+        return FALSE;
+    }
+    memcpy(&Value, &Slots[Spec->ValueSlot], sizeof(Value));
+    P = P < 0 ? 6 : P == 0 ? 1 : P;
+    if (!isfinite(Value) || P > 400)
+    {
+        return FALSE;
+    }
+    if (Conv == NULL)
+    {
+        return TRUE;
+    }
+    __real___mingw_snprintf(Digits, sizeof(Digits), "%.*e", P - 1, fabs(Value));
+    for (const char* d = Digits; *d != 'e'; d++)
+    {
+        if (*d != '.')
+        {
+            Zeros = *d == '0' ? Zeros + 1 : 0;
+            Count++;
+        }
+    }
+    Exponent = atoi(strchr(Digits, 'e') + 1);
+    if (P > Exponent && Exponent >= -4)
+    {
+        *Conv = c == 'g' ? 'f' : 'F';
+        Fraction = P - 1 - Exponent;
+    } else
+    {
+        *Conv = c == 'g' ? 'e' : 'E';
+        Fraction = P - 1;
+    }
+    *Precision = Fraction - (Zeros < Fraction ? Zeros : Fraction);
+    return TRUE;
+}
+
+template<typename TChar>
+static
+BOOL
+_NtCRT_NeedsFix(
+    _In_z_ const TChar* Format,
+    _In_ const NTCRT_FORMAT_SPEC* Spec,
+    _In_ const ULONG64* Slots)
+{
+    for (size_t i = Spec->FlagsPos; i < Spec->WidthPos; i++)
+    {
+        if (_NtCRT_IsIgnoredFlag(Format, Spec, Slots, Format[i]))
+        {
+            return TRUE;
+        }
+    }
+    return _NtCRT_IsZeroOctal(Format, Spec, Slots) || _NtCRT_GeneralFloat(Format, Spec, Slots, NULL, NULL);
 }
 
 /* Convert a wide string to multibyte characters, at most Precision bytes if not negative */
@@ -288,7 +455,7 @@ _NtCRT_PrepareFormat(
 {
     const TChar* p;
     NTCRT_FORMAT_SPEC Spec;
-    int NextSlot = 0, Slots = 0, Converts = 0;
+    int NextSlot = 0, Slots = 0, Converts = 0, Flags = 0;
     size_t FormatLength;
     ULONG64* Src = (ULONG64*)ap;
     TChar *Out, *o;
@@ -313,16 +480,18 @@ _NtCRT_PrepareFormat(
         Slots = _NtCRT_Max(Slots, NextSlot);
         Slots = _NtCRT_Max(Slots, _NtCRT_Max(Spec.ValueSlot, _NtCRT_Max(Spec.WidthSlot, Spec.PrecisionSlot)) + 1);
         Converts += _NtCRT_IsOtherWidth(&Spec, Format[Spec.ConvPos]);
+        Flags += _NtCRT_NeedsFix(Format, &Spec, Src);
     }
-    if (Converts == 0)
+    if (Converts == 0 && Flags == 0)
     {
         return;
     }
 
     FormatLength = (size_t)(p - Format);
     Args->m_Slots = (ULONG64*)RtlAllocateHeap(NTCRT_HEAP, 0, (size_t)Slots * sizeof(ULONG64));
-    Args->m_Strings = (PVOID*)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, (size_t)Converts * sizeof(PVOID));
-    Out = (TChar*)RtlAllocateHeap(NTCRT_HEAP, 0, (FormatLength + (size_t)Converts + 1) * sizeof(TChar));
+    Args->m_Strings = (PVOID*)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, ((size_t)Converts + 1) * sizeof(PVOID));
+    /* A conversion of the other width adds 'l', a %g changed to %e or %f a precision */
+    Out = (TChar*)RtlAllocateHeap(NTCRT_HEAP, 0, (FormatLength + (size_t)Converts + (size_t)Flags * 12 + 1) * sizeof(TChar));
     Args->m_Format = Out;
     if (Args->m_Slots == NULL || Args->m_Strings == NULL || Out == NULL)
     {
@@ -351,6 +520,64 @@ _NtCRT_PrepareFormat(
         }
         _NtCRT_ParseSpec(Format, &p, &NextSlot, &Spec);
         Conv = Format[Spec.ConvPos];
+        if (_NtCRT_NeedsFix(Format, &Spec, Args->m_Slots))
+        {
+            BOOL ZeroOctal = _NtCRT_IsZeroOctal(Format, &Spec, Args->m_Slots);
+            char FloatConv;
+            int FloatPrecision;
+            BOOL General = _NtCRT_GeneralFloat(Format, &Spec, Args->m_Slots, &FloatConv, &FloatPrecision);
+
+            /* Copy the format up to the flags, the flags that have an effect and the width */
+            memcpy(o, Format + Last, (Spec.FlagsPos - Last) * sizeof(TChar));
+            o += Spec.FlagsPos - Last;
+            for (size_t i = Spec.FlagsPos; i < Spec.WidthPos; i++)
+            {
+                if (!_NtCRT_IsIgnoredFlag(Format, &Spec, Args->m_Slots, Format[i]))
+                {
+                    *o++ = Format[i];
+                }
+            }
+            memcpy(o, Format + Spec.WidthPos, (Spec.PrecisionPos - Spec.WidthPos) * sizeof(TChar));
+            o += Spec.PrecisionPos - Spec.WidthPos;
+            /* A %#o of 0 without the precision of 0, a negative precision argument is none */
+            if (ZeroOctal && Spec.PrecisionSlot >= 0)
+            {
+                Args->m_Slots[Spec.PrecisionSlot] = (ULONG64)(LONG64)-1;
+            }
+            if (General && Spec.PrecisionSlot >= 0)
+            {
+                Args->m_Slots[Spec.PrecisionSlot] = (ULONG64)(LONG64)FloatPrecision;
+            }
+            if (General && Spec.PrecisionSlot < 0)
+            {
+                char Number[16];
+                int n = 0;
+
+                *o++ = '.';
+                do
+                {
+                    Number[n++] = (char)('0' + FloatPrecision % 10);
+                    FloatPrecision /= 10;
+                } while (FloatPrecision != 0);
+                while (n > 0)
+                {
+                    *o++ = Number[--n];
+                }
+            } else if (!ZeroOctal || Spec.PrecisionSlot >= 0)
+            {
+                memcpy(o, Format + Spec.PrecisionPos, (Spec.LengthPos - Spec.PrecisionPos) * sizeof(TChar));
+                o += Spec.LengthPos - Spec.PrecisionPos;
+            }
+            Last = Spec.LengthPos;
+            if (General)
+            {
+                /* The length modifier and the conversion */
+                memcpy(o, Format + Spec.LengthPos, (Spec.ConvPos - Spec.LengthPos) * sizeof(TChar));
+                o += Spec.ConvPos - Spec.LengthPos;
+                *o++ = FloatConv;
+                Last = Spec.ConvPos + 1;
+            }
+        }
         if (!_NtCRT_IsOtherWidth(&Spec, Conv))
         {
             continue;
@@ -384,7 +611,8 @@ _NtCRT_PrepareFormat(
                     memcpy(Converted, Str, sizeof(Str));
                 }
             }
-            if (Converted == NULL && (wchar_t)Args->m_Slots[Spec.ValueSlot] != L'\0')
+            if (Converted == NULL && (sizeof(TChar) == sizeof(char) ? (wchar_t)Args->m_Slots[Spec.ValueSlot] != L'\0'
+                                                                    : (unsigned char)Args->m_Slots[Spec.ValueSlot] != 0))
             {
                 Args->Failed = TRUE;
                 return;

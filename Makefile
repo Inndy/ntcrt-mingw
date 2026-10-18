@@ -103,9 +103,13 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	ar rcs $@ $(BUILD)/msvcrt/*.o
 
 # printf of mingw-w64 wrapped by src/Format.cpp, btowc and wctob of libmingwex by src/Multibyte.cpp, ftruncate64
-# of libmingwex by src/LowIO.cpp
+# of libmingwex by src/LowIO.cpp, the strtod family of mingw-w64 and wcstoll, wcstoull, wcstoimax and wcstoumax
+# of libmingwex by src/String.cpp, the scanf of mingw-w64 by src/StdioScanf.cpp
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
+         $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
+         $(foreach f,wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
+         $(foreach f,vfscanf vsscanf vfwscanf vswscanf,--wrap=__mingw_$(f)) \
          --wrap=btowc --wrap=wctob --wrap=ftruncate64
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes

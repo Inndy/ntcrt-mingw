@@ -53,7 +53,8 @@ _NtCRT_TranslateWideFormat(
     o = Out;
     while (*f != L'\0')
     {
-        BOOL Long = FALSE, Short = FALSE;
+        BOOL Long = FALSE;
+        int Short = 0;
         WCHAR Conv;
 
         if (*f != L'%')
@@ -77,7 +78,7 @@ _NtCRT_TranslateWideFormat(
         {
             if (*f == L'h')
             {
-                Short = TRUE;
+                Short++;
                 f++;
             } else if (*f == L'l' || *f == L'w')
             {
@@ -126,7 +127,8 @@ _NtCRT_TranslateWideFormat(
             Conv = Conv == L'S' ? L's' : L'c';
         } else
         {
-            if (Short)
+            /* h or hh */
+            for (int i = 0; i < Short && i < 2; i++)
             {
                 *o++ = L'h';
             }

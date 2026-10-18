@@ -209,6 +209,30 @@ EXTERN_C unsigned long long __cdecl _NtCRT_wcstoull(const wchar_t* str, wchar_t*
     return _NtCRT_StrToUnsigned<wchar_t, unsigned long long>(str, end, base, ULLONG_MAX);
 }
 
+/*
+ * wcstoll, wcstoull, wcstoimax and wcstoumax of libmingwex convert nothing from "0x" without a hex digit, where C
+ * converts the 0, and fail an invalid base with EDOM. The specs wrap them to these (--wrap).
+ */
+EXTERN_C long long __cdecl __wrap_wcstoll(const wchar_t* str, wchar_t** end, int base)
+{
+    return _NtCRT_wcstoll(str, end, base);
+}
+
+EXTERN_C unsigned long long __cdecl __wrap_wcstoull(const wchar_t* str, wchar_t** end, int base)
+{
+    return _NtCRT_wcstoull(str, end, base);
+}
+
+EXTERN_C intmax_t __cdecl __wrap_wcstoimax(const wchar_t* str, wchar_t** end, int base)
+{
+    return _NtCRT_wcstoll(str, end, base);
+}
+
+EXTERN_C uintmax_t __cdecl __wrap_wcstoumax(const wchar_t* str, wchar_t** end, int base)
+{
+    return _NtCRT_wcstoull(str, end, base);
+}
+
 EXTERN_C long long __cdecl _NtCRT_atoll(const char* str)
 {
     return _NtCRT_strtoll(str, NULL, 10);
@@ -219,9 +243,75 @@ EXTERN_C long long __cdecl _NtCRT__wtoll(const wchar_t* str)
     return _NtCRT_wcstoll(str, NULL, 10);
 }
 
-/* Floating point conversion from mingw-w64 */
+/*
+ * Floating point conversion from mingw-w64, whose headers call __mingw_strtod and the like for strtod. Its gdtoa
+ * returns -0 when it converts nothing from a string with a minus sign, C requires 0, and takes any characters in
+ * the parentheses of "nan(...)", C allows letters, digits and underscores only: the end is after "nan" then. The
+ * specs wrap these functions (--wrap).
+ */
 
 EXTERN_C double __cdecl __mingw_wcstod(const wchar_t* str, wchar_t** end);
+EXTERN_C float __cdecl __real___mingw_strtof(const char* str, char** end);
+EXTERN_C double __cdecl __real___mingw_strtod(const char* str, char** end);
+EXTERN_C long double __cdecl __real___mingw_strtold(const char* str, char** end);
+EXTERN_C float __cdecl __real___mingw_wcstof(const wchar_t* str, wchar_t** end);
+EXTERN_C double __cdecl __real___mingw_wcstod(const wchar_t* str, wchar_t** end);
+EXTERN_C long double __cdecl __real___mingw_wcstold(const wchar_t* str, wchar_t** end);
+
+template<typename TChar, typename TFloat>
+static
+TFloat
+_NtCRT_FloatResult(
+    _In_z_ const TChar* Str,
+    _Out_opt_ TChar** End,
+    _In_ TChar* Stop,
+    _In_ TFloat Value)
+{
+    if (Stop == Str)
+    {
+        Value = 0;
+    } else if (Value != Value && Stop[-1] == ')')
+    {
+        /* The first '(' is the one after "nan" */
+        TChar* Open = Stop - 1;
+        TChar* p;
+
+        for (p = (TChar*)Str; *p != '('; p++)
+        {
+        }
+        Open = p;
+        for (p = Open + 1; p < Stop - 1; p++)
+        {
+            if (!((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_'))
+            {
+                Stop = Open;
+                break;
+            }
+        }
+    }
+    if (End != NULL)
+    {
+        *End = Stop;
+    }
+    return Value;
+}
+
+#define NTCRT_WRAP_STRTOF(Name, TChar, TFloat)                                                                 \
+    EXTERN_C TFloat __cdecl __real_##Name(const TChar* str, TChar** end);                                        \
+    EXTERN_C TFloat __cdecl __wrap_##Name(const TChar* str, TChar** end)                                         \
+    {                                                                                                          \
+        TChar* Stop;                                                                                           \
+        TFloat Value = __real_##Name(str, &Stop);                                                              \
+                                                                                                               \
+        return _NtCRT_FloatResult(str, end, Stop, Value);                                                      \
+    }
+
+NTCRT_WRAP_STRTOF(__mingw_strtof, char, float)
+NTCRT_WRAP_STRTOF(__mingw_strtod, char, double)
+NTCRT_WRAP_STRTOF(__mingw_strtold, char, long double)
+NTCRT_WRAP_STRTOF(__mingw_wcstof, wchar_t, float)
+NTCRT_WRAP_STRTOF(__mingw_wcstod, wchar_t, double)
+NTCRT_WRAP_STRTOF(__mingw_wcstold, wchar_t, long double)
 
 EXTERN_C double __cdecl _NtCRT_strtod(const char* str, char** end)
 {
@@ -235,12 +325,12 @@ EXTERN_C double __cdecl _NtCRT_wcstod(const wchar_t* str, wchar_t** end)
 
 EXTERN_C double __cdecl _NtCRT_atof(const char* str)
 {
-    return __mingw_strtod(str, NULL);
+    return _NtCRT_strtod(str, NULL);
 }
 
 EXTERN_C double __cdecl _NtCRT__wtof(const wchar_t* str)
 {
-    return __mingw_wcstod(str, NULL);
+    return _NtCRT_wcstod(str, NULL);
 }
 
 /* Integer arithmetic */
