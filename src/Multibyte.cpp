@@ -493,10 +493,12 @@ _NtCRT_WcsToMbs(
         {
             if (Dest != NULL)
             {
-                if (Done < Count)
+                /* The null byte does not fit, *Src is left at the null character */
+                if (Done == Count)
                 {
-                    Dest[Done] = '\0';
+                    break;
                 }
+                Dest[Done] = '\0';
                 *Src = NULL;
             }
             return Done;

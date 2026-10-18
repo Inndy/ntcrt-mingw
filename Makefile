@@ -1,10 +1,13 @@
 # NtCRT for MinGW-w64 (x64): link C/C++ programs that import ntdll.dll only
 #
 #   make            build build/libntcrt.a, the support libraries and build/ntcrt.specs
-#   make test       build and run test/upstream
+#   make test       build and run test/upstream and the tests of test/fuzz
 #   g++ -static -specs=build/ntcrt.specs ...
 
 CXX      ?= g++
+ifeq ($(origin CC),default)
+CC       := gcc
+endif
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra
 CXXFLAGS += -Iinclude -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti
 
@@ -76,9 +79,21 @@ TEST_SRCS := $(wildcard test/upstream/*.cpp)
 $(BUILD)/Test.exe: $(TEST_SRCS) $(LIBS) $(BUILD)/ntcrt.specs
 	$(CXX) -std=c++23 -O2 -Iinclude -static -specs=$(BUILD)/ntcrt.specs -o $@ $(TEST_SRCS)
 
-test: $(BUILD)/Test.exe
+test-upstream: $(BUILD)/Test.exe
 	objdump -p $< | grep 'DLL Name'
 	./$<
+
+# Differential fuzz of the UTF-8 codec against kernel32, FUZZ_ITERATIONS=n for a longer run
+FUZZ_ITERATIONS ?= 200000
+
+$(BUILD)/fuzz/utf8.exe: test/fuzz/utf8.c $(LIBS) $(BUILD)/ntcrt.specs
+	mkdir -p $(@D)
+	$(CC) -std=c17 -O2 -static -specs=$(BUILD)/ntcrt.specs -o $@ $<
+
+test-fuzz: $(BUILD)/fuzz/utf8.exe
+	./$< $(FUZZ_ITERATIONS)
+
+test: test-upstream test-fuzz
 
 # Compare with UCRT, needs cl of Visual Studio
 compare: $(LIBS) $(BUILD)/ntcrt.specs
@@ -87,4 +102,4 @@ compare: $(LIBS) $(BUILD)/ntcrt.specs
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test compare clean
+.PHONY: all test test-upstream test-fuzz compare clean

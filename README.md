@@ -5,7 +5,7 @@ functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs
-make test       # build and run test/upstream
+make test       # build and run test/upstream and the fuzz test
 make compare    # build test/compare with NtCRT and with UCRT (cl of Visual Studio) and show the differences
 g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 ```
@@ -16,6 +16,7 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `test/upstream/` the KNSoft.NtCRT test suite
+- `test/fuzz/` differential fuzz of the UTF-8 codec against kernel32 (`make test-fuzz`, `FUZZ_ITERATIONS=n`)
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
 
 ## Behavior
