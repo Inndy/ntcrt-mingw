@@ -107,8 +107,8 @@ _NtCRT_PutBack(
 
 /*
  * The character for a CR at the end of the buffer followed by the peeked unit: LF for CRLF, CR, or 0 to drop it.
- * As msvcrt, a file seeks back to read the LF next time unless nothing has been read, a pipe keeps the peeked unit
- * if it is not LF.
+ * A file seeks back to read CRLF next time unless nothing has been read (msvcrt reads the LF alone), so that its
+ * position is that of the newline. A pipe keeps the peeked unit if it is not LF.
  */
 static
 WCHAR
@@ -130,8 +130,13 @@ _NtCRT_CrAtEnd(
     {
         return L'\n';
     }
+    if (IsLf)
+    {
+        _NtCRT_SeekHandle(Entry->Handle, -2LL * UnitLength, SEEK_CUR);
+        return 0;
+    }
     _NtCRT_PutBack(Entry, Peek, PeekLength);
-    return IsLf ? 0 : L'\r';
+    return L'\r';
 }
 
 typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
@@ -265,7 +270,13 @@ _NtCRT_ReadUnicode(
     UCHAR* Raw;
     ULONG RawCount;
     int Read;
+    BOOL Whole = FALSE;     /* The UTF-8 read ends with whole characters, valid or not */
 
+    /* The position of the units returned, a file reads them again for ftell, see StdioSeek.cpp */
+    Entry->UnitIndex = 0;
+    Entry->ReadStart = (Entry->Flags & (FPIPE | FDEV)) || Entry->PendingCount != 0
+                           ? -1
+                           : _NtCRT_SeekHandle(Entry->Handle, 0, SEEK_CUR);
     if (_NtCRT_IsConsoleFd(Entry))
     {
         PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
@@ -452,12 +463,16 @@ _NtCRT_ReadUnicode(
                     if (c != 0)
                     {
                         *Dst++ = (UCHAR)c;
+                    } else
+                    {
+                        /* The CRLF read next time ends the character before it */
+                        Whole = TRUE;
                     }
                 }
             }
             RawCount = (ULONG)(Dst - Raw);
         }
-        Tail = Eof ? 0 : _NtCRT_Utf8Tail(Raw, RawCount);
+        Tail = Eof || Whole ? 0 : _NtCRT_Utf8Tail(Raw, RawCount);
         if (Tail != 0)
         {
             RawCount -= Tail;
@@ -486,6 +501,19 @@ _NtCRT_ReadUnicode(
             RtlFreeHeap(NTCRT_HEAP, 0, Wide);
             NTCRT_ERRNO = ENOMEM;
             return -1;
+        }
+        if (Length > (int)Units && Entry->ReadStart >= 0 && !(Length == 2 && IS_LOW_SURROGATE(Wide[1])))
+        {
+            /*
+             * A file keeps no units but the low surrogate of a character returned by halves, so that its position
+             * stays exact: it reads one byte less again, the last character complete or not, until the units fit.
+             */
+            RtlFreeHeap(NTCRT_HEAP, 0, Wide);
+            _NtCRT_SeekHandle(Entry->Handle, Entry->ReadStart, SEEK_SET);
+            Entry->Flags &= ~FEOFLAG;
+            Want--;
+            Whole = TRUE;
+            continue;
         }
         for (int i = 0; i < Length; i++)
         {
@@ -533,6 +561,7 @@ EXTERN_C int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count)
     if ((Entry->Flags & FTEXT) && Entry->TextMode != NTCRT_TM_ANSI)
     {
         Total = _NtCRT_ReadUnicode(Entry, Buffer, count);
+        Entry->ReadCount = Total;
         goto _Exit;
     }
     if ((Entry->Flags & FTEXT) && _NtCRT_CurrentCodePage() == CP_UTF8 && _NtCRT_IsConsoleFd(Entry))
@@ -645,38 +674,6 @@ _Invalid:
 _Exit:
     _NtCRT_UnlockFd(Entry);
     return Total;
-}
-
-/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF */
-EXTERN_C int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8)
-{
-    int Bytes;
-
-    if (!Utf8)
-    {
-        Bytes = sizeof(wchar_t);
-    } else
-    {
-        Bytes = Unit < 0x80 ? 1 : Unit < 0x800 || (Unit >= 0xD800 && Unit <= 0xDFFF) ? 2 : 3;
-    }
-    return Unit == L'\n' ? Bytes * 2 : Bytes;
-}
-
-EXTERN_C long long __cdecl _NtCRT_fd_pending_bytes(int fd)
-{
-    PNTCRT_FD Entry = _NtCRT_LockFd(fd);
-    long long Bytes = 0;
-
-    if (Entry == NULL)
-    {
-        return 0;
-    }
-    for (int i = 0; i < Entry->PendingCount; i++)
-    {
-        Bytes += _NtCRT_UnitBytes(Entry->Pending[i], Entry->TextMode == NTCRT_TM_UTF8);
-    }
-    _NtCRT_UnlockFd(Entry);
-    return Bytes;
 }
 
 NTCRT_IMPORT(_read, _NtCRT_read);

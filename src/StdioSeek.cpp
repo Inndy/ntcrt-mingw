@@ -1,9 +1,89 @@
 /* stdio positioning: ftell, fseek, rewind, fgetpos and fsetpos */
 
 #include "NtCRT.h"
+#include "LowIO.inl"
 #include "Stdio.inl"
 
 #include <errno.h>
+
+/* Bytes of a UTF-16 unit written to a Unicode text mode file, a newline as CRLF */
+static
+int
+_NtCRT_UnitBytes(
+    _In_ wchar_t Unit,
+    _In_ BOOL Utf8)
+{
+    int Bytes;
+
+    if (!Utf8)
+    {
+        Bytes = sizeof(wchar_t);
+    } else
+    {
+        Bytes = Unit < 0x80 ? 1 : Unit < 0x800 || (Unit >= 0xD800 && Unit <= 0xDFFF) ? 2 : 3;
+    }
+    return Unit == L'\n' ? Bytes * 2 : Bytes;
+}
+
+/*
+ * The position of the unit Index of the Count bytes that the last read of a Unicode text mode file returned. The
+ * bytes of a unit in the file are not known (a newline is LF or CRLF, U+FFFD replaced 1 to 3 bytes): the units
+ * before it are read again from the position of the first, then the fd is restored. -1 if the read is not known.
+ * The units up to the position found last are not read again, so that ftell after each character stays linear.
+ */
+static
+long long
+_NtCRT_UnitPosition(
+    _In_ int fd,
+    _In_ unsigned int Index,
+    _In_ int Count)
+{
+    PNTCRT_FD Entry = _NtCRT_LockFd(fd);
+    long long Result = -1, End, Start;
+    unsigned int Left;
+    BOOL Whole = FALSE;
+    NTCRT_FD Saved;
+    WCHAR Buffer[256];
+
+    if (Entry == NULL)
+    {
+        return -1;
+    }
+    if (Entry->ReadStart < 0 || Entry->ReadCount != Count)
+    {
+        NTCRT_ERRNO = EINVAL;
+    } else if ((End = _NtCRT_SeekHandle(Entry->Handle, 0, SEEK_CUR)) >= 0)
+    {
+        Left = Entry->UnitIndex != 0 && Entry->UnitIndex <= Index ? Index - Entry->UnitIndex : Index;
+        Start = Left != Index ? Entry->UnitStart : Entry->ReadStart;
+        memcpy(&Saved, Entry, FIELD_OFFSET(NTCRT_FD, Lock));
+        Result = _NtCRT_SeekHandle(Entry->Handle, Start, SEEK_SET);
+        Entry->Flags &= ~FEOFLAG;
+        Entry->PendingCount = 0;
+        while (Result >= 0 && Left != 0)
+        {
+            int Read = _NtCRT_read(fd, Buffer, (Left < ARRAYSIZE(Buffer) ? Left : ARRAYSIZE(Buffer)) * sizeof(WCHAR));
+
+            Result = Read > 0 ? Result : -1;
+            Left -= Read > 0 ? Read / sizeof(WCHAR) : 0;
+        }
+        if (Result >= 0)
+        {
+            Result = _NtCRT_lseeki64(fd, 0, SEEK_CUR);
+            /* Not between the surrogates of a character, where a read cannot start */
+            Whole = Entry->PendingCount == 0;
+        }
+        _NtCRT_SeekHandle(Entry->Handle, End, SEEK_SET);
+        memcpy(Entry, &Saved, FIELD_OFFSET(NTCRT_FD, Lock));
+        if (Whole)
+        {
+            Entry->UnitIndex = Index;
+            Entry->UnitStart = Result;
+        }
+    }
+    _NtCRT_UnlockFd(Entry);
+    return Result;
+}
 
 static
 long long
@@ -52,20 +132,11 @@ _NtCRT_ftell_nolock(
         }
     } else if ((Stream->_flag & _IOREAD) && _NtCRT_fd_textmode(Stream->_file) >= NTCRT_FD_UTF8)
     {
-        /* The bytes of the unread units in the file, a newline was CRLF; the fd counts the units it read ahead */
-        BOOL Utf8 = _NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_UTF8;
-        const char* p = Stream->_ptr;
-
-        for (int i = 0; i + (int)sizeof(wchar_t) <= Stream->_cnt; i += sizeof(wchar_t))
+        if (Stream->_cnt > 0)
         {
-            wchar_t c;
-
-            memcpy(&c, p + i, sizeof(wchar_t));
-            Position -= _NtCRT_UnitBytes(c, Utf8);
-        }
-        if (Position < 0)
-        {
-            Position = 0;
+            Position = _NtCRT_UnitPosition(Stream->_file,
+                                           (unsigned int)(Stream->_ptr - Stream->_base) / sizeof(wchar_t),
+                                           (int)(Stream->_ptr - Stream->_base) + Stream->_cnt);
         }
     } else if (Stream->_flag & _IOREAD)
     {

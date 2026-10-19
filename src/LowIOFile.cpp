@@ -51,8 +51,8 @@ EXTERN_C long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origin)
     {
         return -1;
     }
-    /* The current position is before the units read ahead */
-    Ahead = origin == SEEK_CUR && Entry->PendingCount != 0 ? _NtCRT_fd_pending_bytes(fd) : 0;
+    /* A UTF-8 file keeps only the low surrogate of a character returned by halves, the position is before it */
+    Ahead = origin == SEEK_CUR ? Entry->PendingCount * (long long)sizeof(WCHAR) : 0;
     if (origin == SEEK_CUR && offset == 0)
     {
         /* A query keeps the state of reading */

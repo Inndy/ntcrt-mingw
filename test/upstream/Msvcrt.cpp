@@ -352,6 +352,46 @@ static void PutFile(const char* Name, const char* Data, size_t Size)
     }
 }
 
+/*
+ * After Units units of Data read a unit at a time by an _O_U8TEXT fd (Mode NULL) or by a buffered stream of Mode,
+ * the position is Position and a seek by Ahead from the current position reads Next
+ */
+static BOOL CheckPosition(const char* Data, size_t Size, const char* Mode, int Units, long Position, long Ahead,
+                          wchar_t Next)
+{
+    static const char Name[] = "ntcrt_position.tmp";
+    wchar_t Unit = 0;
+    FILE* File;
+    BOOL Ok;
+    int fd;
+
+    PutFile(Name, Data, Size);
+    if (Mode == NULL)
+    {
+        fd = _open(Name, _O_RDONLY | _O_U8TEXT);
+        Ok = fd >= 0;
+        for (int i = 0; Ok && i < Units; i++)
+        {
+            Ok = _read(fd, &Unit, 2) == 2;
+        }
+        Ok = Ok && _telli64(fd) == Position && _lseeki64(fd, Ahead, SEEK_CUR) == Position + Ahead &&
+             _read(fd, &Unit, 2) == 2 && Unit == Next;
+        _close(fd);
+    } else
+    {
+        File = fopen(Name, Mode);
+        Ok = File != NULL;
+        for (int i = 0; Ok && i < Units; i++)
+        {
+            Ok = fgetwc(File) != WEOF;
+        }
+        Ok = Ok && ftell(File) == Position && fseek(File, Ahead, SEEK_CUR) == 0 && fgetwc(File) == Next;
+        fclose(File);
+    }
+    remove(Name);
+    return Ok;
+}
+
 /* Positioning and flushing of streams by C */
 static void TestStreams(void)
 {
@@ -371,6 +411,36 @@ static void TestStreams(void)
     CHECK(File != NULL && setvbuf(File, NULL, _IONBF, 0) == 0 && fgetwc(File) == 0x20AC);
     CHECK(ftell(File) == 3 && fgetwc(File) == L'A' && ftell(File) == 4);
     fclose(File);
+
+    /*
+     * Positions count the bytes in the file of a newline (LF or CRLF), of U+FFFD for an invalid byte and of a
+     * character beyond U+FFFF, also of the units read ahead by an fd or held by the buffer of a stream
+     */
+    CHECK(CheckPosition("\xC2\xA9\n" "A", 4, NULL, 1, 2, 1, L'A'));
+    CHECK(CheckPosition("\xC2\xA9\r\n" "A", 5, NULL, 1, 2, 2, L'A'));
+    CHECK(CheckPosition("\xC2\xA9\xFF" "A", 4, NULL, 1, 2, 1, L'A'));
+    CHECK(CheckPosition("\xE2\x41\n" "B", 4, NULL, 1, 1, 2, L'B'));
+    CHECK(CheckPosition("\xF0\x9F\x98\x80\n" "A", 6, NULL, 2, 4, 1, L'A'));
+    CHECK(CheckPosition("A\nB", 3, "r, ccs=UTF-8", 1, 1, 1, L'B'));
+    CHECK(CheckPosition("A\r\nB", 4, "r, ccs=UTF-8", 1, 1, 2, L'B'));
+    CHECK(CheckPosition("A\xFF" "B", 3, "r, ccs=UTF-8", 1, 1, 1, L'B'));
+    CHECK(CheckPosition("\xF0\x9F\x98\x80\n" "B", 6, "r, ccs=UTF-8", 2, 4, 1, L'B'));
+    CHECK(CheckPosition("A\0\n\0B\0", 6, "r, ccs=UTF-16LE", 1, 2, 2, L'B'));
+
+    /* ftell after each character of a buffer, which goes on from the position it found before, and after ungetwc */
+    PutFile(Name, "a\nb\r\nc\xC3\xA9" "d", 9);
+    File = fopen(Name, "r, ccs=UTF-8");
+    if (File != NULL)
+    {
+        static const long Positions[] = { 1, 2, 3, 5, 6, 8, 9 };
+
+        for (long Want : Positions)
+        {
+            CHECK(fgetwc(File) != WEOF && ftell(File) == Want);
+        }
+        CHECK(ungetwc(L'd', File) == L'd' && ftell(File) == 8 && fgetwc(File) == L'd' && ftell(File) == 9);
+        fclose(File);
+    }
 
     /* The position of Unicode output counts the encoded bytes after the BOM */
     File = fopen(Name, "w, ccs=UTF-8");

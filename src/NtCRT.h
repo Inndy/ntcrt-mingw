@@ -310,10 +310,6 @@ extern "C" int __cdecl _NtCRT_isatty(int fd);
 extern "C" int __cdecl _NtCRT_fd_textmode(int fd);
 extern "C" int __cdecl _NtCRT_fd_narrow_invalid(int fd);
 extern "C" int __cdecl _NtCRT_fd_crlf(int fd);
-/* Bytes in the file of the units read ahead by a Unicode text mode fd */
-extern "C" long long __cdecl _NtCRT_fd_pending_bytes(int fd);
-/* Bytes of a UTF-16 unit read from a Unicode text mode file, a newline was CRLF, see Stdio.cpp */
-extern "C" int _NtCRT_UnitBytes(wchar_t Unit, BOOL Utf8);
 extern "C" void _NtCRT_InitLowIO(void);
 extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _In_ DWORD Count);
 

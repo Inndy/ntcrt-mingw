@@ -437,7 +437,9 @@ waiters).
   invalid or truncated sequence read sets the error indicator and `EILSEQ`, `fgetws` returns `NULL` for it.
 - `_O_U8TEXT` reads return the characters of complete UTF-8 sequences, a sequence split by the read size is
   completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream and
-  `_tell` of its fd are exact, except between the two units of a surrogate pair, where no byte offset exists.
+  `_tell` of its fd are exact, except between the two units of a surrogate pair, where no byte offset exists. A
+  newline in the file is LF or CRLF and a U+FFFD replaced 1 to 3 bytes, so `ftell` with units left in the buffer
+  reads the file again from the start of the buffer up to them.
 
 ### C, msvcrt and UCRT
 

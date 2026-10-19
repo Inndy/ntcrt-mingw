@@ -38,7 +38,11 @@ typedef struct _NTCRT_FD
     UCHAR CarryLength;
     UCHAR Carry[4];         /* Bytes read ahead from a pipe, the start of a UTF-16 unit or UTF-8 character */
     UCHAR PendingCount;
-    WCHAR Pending[4];       /* UTF-16 units read from a UTF-8 fd beyond the buffer */
+    WCHAR Pending[4];       /* UTF-16 units read from a UTF-8 pipe beyond the buffer, of a file only a low surrogate */
+    int ReadCount;          /* Bytes the last Unicode read of a file returned, read from the position ReadStart */
+    long long ReadStart;    /* -1 if unknown */
+    unsigned int UnitIndex; /* A unit of that read whose position ftell found, UnitStart, 0 for none */
+    long long UnitStart;
     WCHAR WriteHigh;        /* A high surrogate written to a console or UTF-8 fd, waiting for its low surrogate */
     UCHAR WriteCarryLength;
     UCHAR WriteCarry[4];    /* The start of a UTF-8 character written to a console in "C.UTF-8" */
@@ -83,6 +87,8 @@ _NtCRT_InitFdState(
     Entry->HasPipeWide = FALSE;
     Entry->CarryLength = 0;
     Entry->PendingCount = 0;
+    Entry->ReadCount = 0;
+    Entry->UnitIndex = 0;
     Entry->WriteHigh = 0;
     Entry->WriteCarryLength = 0;
     Entry->ConsoleEof = FALSE;
