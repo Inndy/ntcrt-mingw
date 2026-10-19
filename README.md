@@ -335,7 +335,10 @@ code.
   `libntcrt_start` in place of emutls of libgcc, which frees them in a key destructor that may run before others. They
   are freed by a TLS callback after that of NtCRT, so that the `thread_local` and the key destructors find the
   variables of their thread alive (with libgcc and winpthreads, which runs the key destructors before the
-  `thread_local` ones, a `thread_local` destructor runs on freed memory).
+  `thread_local` ones, a `thread_local` destructor runs on freed memory). A DLL that `FreeLibrary` unloads keeps its
+  TLS slot and the variables of its threads, as with libgcc: the TLS callbacks run before `DllMain` and the
+  destructors of the DLL, which may still use them. Loading and unloading such a DLL takes a slot of the 1088 of the
+  process each time.
 - `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
