@@ -104,6 +104,21 @@ static void TestGetModuleFileNameW(void)
     }
 }
 
+/* An allocated message has at least nSize characters */
+static void TestFormatMessage(void)
+{
+    const DWORD Flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_ALLOCATE_BUFFER;
+    PWSTR Wide = NULL;
+    PSTR Narrow = NULL;
+
+    CHECK(FormatMessageW(Flags, NULL, ERROR_SUCCESS, 0, (LPWSTR)&Wide, 4096, NULL) != 0 &&
+          RtlSizeHeap(RtlProcessHeap(), 0, Wide) >= 4096 * sizeof(WCHAR));
+    CHECK(FormatMessageA(Flags, NULL, ERROR_SUCCESS, 0, (LPSTR)&Narrow, 4096, NULL) != 0 &&
+          RtlSizeHeap(RtlProcessHeap(), 0, Narrow) >= 4096);
+    LocalFree(Wide);
+    LocalFree(Narrow);
+}
+
 extern "C"
 BOOL
 TestKernel32(VOID)
@@ -111,5 +126,6 @@ TestKernel32(VOID)
     g_Ok = TRUE;
     TestGetModuleFileNameA();
     TestGetModuleFileNameW();
+    TestFormatMessage();
     return g_Ok;
 }

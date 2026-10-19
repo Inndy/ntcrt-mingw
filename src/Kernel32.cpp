@@ -1576,6 +1576,7 @@ _K32_FormatMessageW(
     PVOID Module;
     PWSTR Text;
     ULONG Length;
+    SIZE_T Size;
 
     UNREFERENCED_PARAMETER(Arguments);
 
@@ -1619,9 +1620,10 @@ _K32_FormatMessageW(
         return 0;
     }
 
-    /* Convert the entry to a temporary wide string */
+    /* Convert the entry to a wide string, which is the result of at least nSize characters if allocated */
     Length = Entry->Length - FIELD_OFFSET(MESSAGE_RESOURCE_ENTRY, Text);
-    Text = (PWSTR)RtlAllocateHeap(RtlProcessHeap(), 0, (Length + 1) * sizeof(WCHAR));
+    Size = (dwFlags & FORMAT_MESSAGE_ALLOCATE_BUFFER) && nSize > Length + 1 ? nSize : Length + 1;
+    Text = (PWSTR)RtlAllocateHeap(RtlProcessHeap(), 0, Size * sizeof(WCHAR));
     if (Text == NULL)
     {
         _Inline_SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -1694,7 +1696,8 @@ _K32_FormatMessageA(
     Bytes = _NtCRT_WideCharToMultiByte(CP_ACP, 0, Text, Length + 1, NULL, 0, NULL, NULL);
     if (dwFlags & FORMAT_MESSAGE_ALLOCATE_BUFFER)
     {
-        char* Buffer = (char*)RtlAllocateHeap(RtlProcessHeap(), 0, Bytes);
+        /* At least nSize bytes */
+        char* Buffer = (char*)RtlAllocateHeap(RtlProcessHeap(), 0, nSize > (DWORD)Bytes ? nSize : (SIZE_T)Bytes);
         if (Buffer == NULL)
         {
             RtlFreeHeap(RtlProcessHeap(), 0, Text);
