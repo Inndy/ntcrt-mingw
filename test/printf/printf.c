@@ -169,6 +169,21 @@ int main(void)
         printf("FAIL %%ls of U+4E2D in \"C\": errno %d\n", errno);
         g_Failures++;
     }
+    /* The secure functions keep the error, ERANGE is for an output that does not fit */
+    errno = 0;
+    Ret = _snprintf_s(Buffer, sizeof(Buffer), _TRUNCATE, "%ls", L"\x4E2D");
+    if (Ret != -1 || errno != EILSEQ)
+    {
+        printf("FAIL _snprintf_s %%ls of U+4E2D in \"C\": %d errno %d\n", Ret, errno);
+        g_Failures++;
+    }
+    errno = 0;
+    Ret = sprintf_s(Buffer, sizeof(Buffer), "%ls", L"\x4E2D");
+    if (Ret != -1 || errno != EILSEQ)
+    {
+        printf("FAIL sprintf_s %%ls of U+4E2D in \"C\": %d errno %d\n", Ret, errno);
+        g_Failures++;
+    }
 
     /* asprintf */
     Ret = __mingw_asprintf(&Allocated, "%s=%d", "a", 1);

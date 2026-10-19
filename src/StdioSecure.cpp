@@ -19,8 +19,6 @@ extern "C" FILE _NtCRT_iob[];
 
 EXTERN_C int __cdecl _NtCRT_vfprintf(FILE* stream, const char* format, va_list ap);
 EXTERN_C int __cdecl _NtCRT_vfwprintf(FILE* stream, const wchar_t* format, va_list ap);
-EXTERN_C int __cdecl _NtCRT__vsnprintf(char* buffer, size_t count, const char* format, va_list ap);
-EXTERN_C int __cdecl _NtCRT__vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap);
 EXTERN_C int __cdecl _NtCRT__vscprintf(const char* format, va_list ap);
 EXTERN_C int __cdecl _NtCRT__vscwprintf(const wchar_t* format, va_list ap);
 EXTERN_C int __cdecl _NtCRT__vcprintf(const char* format, va_list ap);
@@ -519,19 +517,20 @@ EXTERN_C int __cdecl _NtCRT__cwprintf_s(const wchar_t* format, ...)
     return Ret;
 }
 
+/* C snprintf: the length of the whole output, negative for a formatting error only (EILSEQ, ...) */
 static int __cdecl _NtCRT_vsnprintfT(char* b, size_t n, const char* f, va_list a)
 {
-    return _NtCRT__vsnprintf(b, n, f, a);
+    return _NtCRT_FormatString(b, n, f, a, 0);
 }
 static int __cdecl _NtCRT_vsnprintfT(wchar_t* b, size_t n, const wchar_t* f, va_list a)
 {
-    return _NtCRT__vsnwprintf(b, n, f, a);
+    return _NtCRT_FormatStringW(b, n, f, a, NTCRT_PRINTF_LEGACY_WIDE);
 }
 
 /*
  * _vsnprintf_s: at most Count characters, the whole buffer or _TRUNCATE. Exceeding Count or _TRUNCATE truncates
  * and returns -1, exceeding the buffer otherwise empties it. msvcrt sets errno to ERANGE on truncation in the
- * narrow functions only.
+ * narrow functions only. A formatting error returns -1 with its errno.
  */
 template<typename TChar>
 static
@@ -562,7 +561,7 @@ _NtCRT_VsnprintfS(
     {
         Ret = _NtCRT_vsnprintfT(Buffer, Count + 1, Format, ap);
         Buffer[Count] = 0;
-        if (Ret < 0 || (size_t)Ret > Count)
+        if (Ret >= 0 && (size_t)Ret > Count)
         {
             if (sizeof(TChar) == sizeof(char))
             {
@@ -574,7 +573,7 @@ _NtCRT_VsnprintfS(
     }
     Ret = _NtCRT_vsnprintfT(Buffer, Size, Format, ap);
     Buffer[Size - 1] = 0;
-    if (Ret < 0 || (size_t)Ret >= Size)
+    if (Ret >= 0 && (size_t)Ret >= Size)
     {
         if (Count == _TRUNCATE)
         {
@@ -686,7 +685,7 @@ _NtCRT_VsnprintfC(
         return _NtCRT_InvalidParameter(EINVAL), -1;
     }
     Ret = _NtCRT_vsnprintfT(Buffer, Count, Format, ap);
-    if (Ret < 0 || (size_t)Ret >= Count)
+    if (Ret >= 0 && (size_t)Ret >= Count)
     {
         if (Count != 0)
         {
@@ -753,7 +752,7 @@ _NtCRT_VsprintfP(
 {
     int Ret = _NtCRT_vsnprintfT(Buffer, Size, Format, ap);
 
-    if (Ret < 0 || (size_t)Ret >= Size)
+    if (Ret >= 0 && (size_t)Ret >= Size)
     {
         Buffer[Size - 1] = 0;
         NTCRT_ERRNO = ERANGE;
