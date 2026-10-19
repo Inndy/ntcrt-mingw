@@ -9,9 +9,10 @@
  * or the thread itself if detached frees it. A thread not created by pthread_create gets a detached one when
  * it asks for it (pthread_self).
  *
- * A thread ends in the TLS callback (_NtCRT_ThreadDetach) after the thread_local destructors of C++ (the callback of
- * libmingw32 precedes it): the key destructors, emutls among them, then ThreadExit (_NtCRT_PthreadExit). A joiner
- * waits for the handle, signaled after the callbacks.
+ * pthread_exit runs the cleanup handlers and the key destructors, then the thread ends in the TLS callback
+ * (_NtCRT_ThreadDetach) after the thread_local destructors of C++ (the callback of libmingw32 precedes it): the
+ * destructors of the values set since, then ThreadExit (_NtCRT_PthreadExit). A joiner waits for the handle, signaled
+ * after the callbacks.
  */
 typedef struct _NTCRT_PTHREAD
 {
@@ -313,6 +314,8 @@ NTCRT_API void pthread_exit(void* res)
         Thread->Cleanup = Cleanup->next;
         Cleanup->func(Cleanup->arg);
     }
+    /* Outside the loader lock, which the TLS callback holds: a destructor may create or join a thread */
+    _NtCRT_KeyDestructors();
     ThreadEnd(Thread, res);
 }
 

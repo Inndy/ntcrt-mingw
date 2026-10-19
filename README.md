@@ -300,16 +300,21 @@ code.
 - `pthread_once` (and `call_once`, `std::call_once`) is reset when the routine exits by an exception (an unwind
   handler of x64 SEH on the frame that calls it) or is cancelled, another call runs the routine again (with
   winpthreads `std::call_once` deadlocks after an exception).
-- Keys are TLS slots (`TlsAlloc`, 1088 for all users). The destructors run at the exit of any thread, also of
-  `CreateThread`, `_beginthreadex` and `_endthreadex`, in the TLS callback of NtCRT after that of libmingw32, which
-  runs the `thread_local` destructors of C++. `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set
-  again. They run under the loader lock (except those of the last thread, which ends the process), in the threads of
-  `pthread_create` too: a destructor must not join a thread, nor create one and wait for it, since a thread cannot
-  start or end while the lock is held.
+- Keys are TLS slots (`TlsAlloc`, 1088 for all users). `pthread_exit`, `thrd_exit` and a return from the start
+  routine of `pthread_create` or `thrd_create` run the destructors after the cleanup handlers, with cancellation
+  disabled, outside the loader lock as winpthreads and Cygwin do: a destructor may create threads and join them.
+  `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set again. At the exit of any thread (also of
+  `CreateThread`, `_beginthreadex`, `_endthreadex` and `ExitThread`) the TLS callback of NtCRT runs the destructors
+  of the values set until then, after the callback of libmingw32, which runs the `thread_local` destructors of C++
+  (these run after the key destructors of `pthread_exit`, glibc runs them before). A TLS callback runs under the
+  loader lock, as `DllMain` does, which no runtime can avoid for a thread that it did not create and that ends
+  without `pthread_exit`: there a destructor must not join a thread, nor create one and wait for it, since a thread
+  cannot start or end while the lock is held.
 - The emulated thread-local variables (`thread_local` of GCC, and of clang with `-femulated-tls`) are those of
   `libntcrt_start` in place of emutls of libgcc, which frees them in a key destructor that may run before others. They
   are freed by a TLS callback after that of NtCRT, so that the `thread_local` and the key destructors find the
-  variables of their thread alive.
+  variables of their thread alive (with libgcc and winpthreads, which runs the key destructors before the
+  `thread_local` ones, a `thread_local` destructor runs on freed memory).
 - `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be

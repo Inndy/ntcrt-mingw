@@ -61,6 +61,35 @@ static int Worker(void* Arg)
     return t_Local;
 }
 
+/* A destructor of a thread of thrd_create runs outside the loader lock: it may create and join a thread */
+static tss_t g_TssJoin;
+static volatile long g_TssJoined;
+
+static int TssJoinHelper(void* Arg)
+{
+    return (int)(intptr_t)Arg;
+}
+
+static void TssJoinDestructor(void* Value)
+{
+    thrd_t Thread;
+    int Result = 0;
+
+    CHECK(thrd_create(&Thread, TssJoinHelper, Value) == thrd_success);
+    CHECK(thrd_join(Thread, &Result) == thrd_success && Result == 3);
+    __sync_fetch_and_add(&g_TssJoined, 1);
+}
+
+static int TssJoin(void* Arg)
+{
+    CHECK(tss_set(g_TssJoin, (void*)3) == thrd_success);
+    if (Arg != NULL)
+    {
+        thrd_exit(1);
+    }
+    return 0;
+}
+
 static int Exiter(void* Arg)
 {
     (void)Arg;
@@ -102,6 +131,14 @@ int main(void)
 
     CHECK(thrd_create(&Threads[0], Exiter, NULL) == thrd_success);
     CHECK(thrd_join(Threads[0], &Result) == thrd_success && Result == 77);
+    CHECK(tss_create(&g_TssJoin, TssJoinDestructor) == thrd_success);
+    for (intptr_t i = 0; i < 2; i++)
+    {
+        CHECK(thrd_create(&Threads[0], TssJoin, (void*)i) == thrd_success);
+        CHECK(thrd_join(Threads[0], &Result) == thrd_success && Result == i);
+    }
+    CHECK(g_TssJoined == 2);
+    tss_delete(g_TssJoin);
     CHECK(thrd_equal(thrd_current(), thrd_current()));
     thrd_yield();
 

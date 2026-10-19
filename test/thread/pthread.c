@@ -799,6 +799,51 @@ static void* KeyCancel(void* Arg)
     return Arg;
 }
 
+/*
+ * The destructors of a thread of pthread_create run outside the loader lock, which a thread needs to start and to end:
+ * one creates and joins a thread, another joins a thread that ends meanwhile
+ */
+static pthread_key_t g_KeyJoin;
+static pthread_t g_KeyJoinEnding;
+static volatile long g_KeyJoined;
+
+static void* KeyJoinHelper(void* Arg)
+{
+    return Arg;
+}
+
+static void* KeyJoinLater(void* Arg)
+{
+    SleepMs(50);
+    return Arg;
+}
+
+static void KeyJoinDestructor(void* Value)
+{
+    pthread_t Thread;
+    void* Result = NULL;
+
+    if (Value == (void*)1)
+    {
+        CHECK(pthread_create(&Thread, NULL, KeyJoinHelper, (void*)3) == 0);
+        CHECK(pthread_join(Thread, &Result) == 0 && Result == (void*)3);
+    } else
+    {
+        CHECK(pthread_join(g_KeyJoinEnding, &Result) == 0 && Result == (void*)4);
+    }
+    __sync_fetch_and_add(&g_KeyJoined, 1);
+}
+
+static void* KeyJoin(void* Arg)
+{
+    CHECK(pthread_setspecific(g_KeyJoin, Arg) == 0);
+    if (Arg == (void*)2)
+    {
+        pthread_exit(Arg);
+    }
+    return Arg;
+}
+
 static unsigned __stdcall KeyBeginThread(void* Arg)
 {
     KeyReturn(NULL);
@@ -846,6 +891,15 @@ static void TestKeys(void)
     }
     CHECK(g_CancelOff == 3);
     CHECK(pthread_key_delete(g_KeyCancel) == 0);
+    /* Destructors that create, end and join threads, at a return and at pthread_exit */
+    CHECK(pthread_key_create(&g_KeyJoin, KeyJoinDestructor) == 0);
+    CHECK(pthread_create(&Thread, NULL, KeyJoin, (void*)1) == 0);
+    CHECK(pthread_join(Thread, NULL) == 0);
+    CHECK(pthread_create(&g_KeyJoinEnding, NULL, KeyJoinLater, (void*)4) == 0);
+    CHECK(pthread_create(&Thread, NULL, KeyJoin, (void*)2) == 0);
+    CHECK(pthread_join(Thread, NULL) == 0);
+    CHECK(g_KeyJoined == 2);
+    CHECK(pthread_key_delete(g_KeyJoin) == 0);
     /* The main thread keeps its value, a deleted key runs no destructor */
     CHECK(pthread_setspecific(g_Key, &g_KeyValue) == 0);
     CHECK(pthread_key_delete(g_Key) == 0);

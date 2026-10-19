@@ -5,10 +5,11 @@
 #include <pthread.h>
 
 /*
- * A key is a TLS index (TlsAlloc). The destructors run at the exit of every thread (also of CreateThread or
- * _beginthreadex) from the TLS callback, after the thread_local destructors of C++ which may use emutls, whose
- * memory a key destructor frees. The lock keeps a destructor from running on a slot freed by pthread_key_delete and
- * allocated again by TlsAlloc.
+ * A key is a TLS index (TlsAlloc). The destructors run in pthread_exit (a return from the start routine of
+ * pthread_create or thrd_create is one) after the cleanup handlers, outside the loader lock, and at the exit of every
+ * thread (also of CreateThread or _beginthreadex) from the TLS callback for the values set since: after the
+ * thread_local destructors of C++, under the loader lock. The lock keeps a destructor from running on a slot freed by
+ * pthread_key_delete and allocated again by TlsAlloc.
  */
 #define KEY_SLOTS (TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
 
@@ -21,7 +22,7 @@ extern "C"
     void (*_NtCRT_PthreadExit)(void) = NULL;
 }
 
-EXTERN_C void _NtCRT_KeyExit(void)
+EXTERN_C void _NtCRT_KeyDestructors(void)
 {
     for (int Round = 0; Round < PTHREAD_DESTRUCTOR_ITERATIONS; Round++)
     {
@@ -54,6 +55,11 @@ EXTERN_C void _NtCRT_KeyExit(void)
             break;
         }
     }
+}
+
+EXTERN_C void _NtCRT_KeyExit(void)
+{
+    _NtCRT_KeyDestructors();
     /* A destructor may ask for pthread_self */
     if (_NtCRT_PthreadExit != NULL)
     {

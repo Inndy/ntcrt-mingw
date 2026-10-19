@@ -67,8 +67,9 @@ extern "C" PNTCRT_PTD _NtCRT_GetPtd(void);
 
 /*
  * The thread functions (Pthread*.cpp), set when a program uses them so that the others do not link them:
- * _NtCRT_ThreadExit is _NtCRT_KeyExit, which runs the destructors of pthread keys and then _NtCRT_PthreadExit, the end
- * of the pthread_t of the thread, at the exit of a thread. Once a thread was cancelled, _NtCRT_TestCancel ends a
+ * _NtCRT_ThreadExit is _NtCRT_KeyExit, which runs the destructors of pthread keys (_NtCRT_KeyDestructors, which
+ * pthread_exit runs first) and then _NtCRT_PthreadExit, the end of the pthread_t of the thread, at the exit of a
+ * thread. Once a thread was cancelled, _NtCRT_TestCancel ends a
  * cancelled thread at a cancellation point (Pass passes on a wake that the thread may have taken from others), and
  * _NtCRT_CleanupList is the cleanup handlers of the thread, which it gives a pthread_t, NULL if out of memory.
  */
@@ -77,6 +78,7 @@ extern "C" void (*_NtCRT_TestCancel)(void (*Pass)(void* Object), void* Object);
 extern "C" struct _pthread_cleanup** (*_NtCRT_CleanupList)(void);
 extern "C" void (*_NtCRT_PthreadExit)(void);
 extern "C" void _NtCRT_KeyExit(void);
+extern "C" void _NtCRT_KeyDestructors(void);
 
 /* A cancellation point: _NtCRT_TestCancel once a thread was cancelled, which pthread_cancel sets in any thread */
 static inline void _NtCRT_CancelPoint(void (*Pass)(void* Object), void* Object)
