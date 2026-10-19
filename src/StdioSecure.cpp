@@ -262,7 +262,7 @@ _NtCRT_PrintP(
 {
     NTCRT_PRINTF_SPEC Spec;
     ULONG_PTR Slots[NTCRT_ARGMAX + 1];
-    ULONG_PTR Args[NTCRT_ARGMAX * 3];
+    ULONG_PTR* Args;
     size_t ArgCount = 0;
     size_t Length = _NtCRT_TLen(Format);
     TChar* NewFormat;
@@ -323,6 +323,8 @@ _NtCRT_PrintP(
         Max = Spec.Position > Max ? Spec.Position : Max;
         Max = Spec.WidthPosition > Max ? Spec.WidthPosition : Max;
         Max = Spec.PrecisionPosition > Max ? Spec.PrecisionPosition : Max;
+        /* A position may be used again, every use takes a slot of Args */
+        ArgCount += 1 + (Spec.WidthPosition > 0) + (Spec.PrecisionPosition > 0);
         i = Spec.End - 1;
     }
     if (Mode <= 0)
@@ -334,12 +336,15 @@ _NtCRT_PrintP(
     {
         Slots[n] = va_arg(ap, ULONG_PTR);
     }
-    NewFormat = (TChar*)RtlAllocateHeap(NTCRT_HEAP, 0, (Length + 1) * sizeof(TChar));
-    if (NewFormat == NULL)
+    /* A conversion is at least 3 characters ("%1$d") and takes 3 slots at most, the sizes cannot overflow */
+    Args = (ULONG_PTR*)RtlAllocateHeap(NTCRT_HEAP, 0, ArgCount * sizeof(ULONG_PTR) + (Length + 1) * sizeof(TChar));
+    if (Args == NULL)
     {
         NTCRT_ERRNO = ENOMEM;
         return -1;
     }
+    NewFormat = (TChar*)(Args + ArgCount);
+    ArgCount = 0;
     o = NewFormat;
     for (i = 0; i < Length; i++)
     {
@@ -396,7 +401,7 @@ _NtCRT_PrintP(
     }
     *o = 0;
     Ret = Print(NewFormat, _NtCRT_SlotList(Args));
-    RtlFreeHeap(NTCRT_HEAP, 0, NewFormat);
+    RtlFreeHeap(NTCRT_HEAP, 0, Args);
     return Ret;
 }
 

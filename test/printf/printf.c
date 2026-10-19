@@ -188,6 +188,22 @@ int main(void)
         g_Failures++;
     }
 
+    /* _sprintf_p: a position used again takes a slot every time */
+    {
+        static char Format[4 * 400 + 1], Out[400 + 1];
+
+        for (int i = 0; i < 400; i++)
+        {
+            memcpy(Format + 4 * i, "%1$d", 4);
+        }
+        Ret = _sprintf_p(Out, sizeof(Out), Format, 7);
+        if (Ret != 400 || strspn(Out, "7") != 400)
+        {
+            printf("FAIL _sprintf_p of %%1$d 400 times: %d\n", Ret);
+            g_Failures++;
+        }
+    }
+
     printf("printf: %d failures\n", g_Failures);
     return g_Failures != 0;
 }
