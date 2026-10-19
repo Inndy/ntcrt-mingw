@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <errno.h>
+
 /* File descriptor flags of msvcrt */
 #define FOPEN       0x01
 #define FEOFLAG     0x02
@@ -87,7 +89,27 @@ _NtCRT_InitFdState(
     Entry->ConsoleTextLength = Entry->ConsoleTextPos = 0;
 }
 
-/* Get an opened fd and lock it, or set errno to EBADF, see LowIO.cpp */
+/*
+ * Enter the lock of an fd, or set errno to EBUSY. While the process ends without exit the other threads are gone, a
+ * lock that one of them held is never released and entering its critical section would end the process.
+ */
+static inline
+BOOL
+_NtCRT_EnterFd(
+    _In_ PNTCRT_FD Entry)
+{
+    if (!NtCurrentPeb()->Ldr->ShutdownInProgress)
+    {
+        RtlEnterCriticalSection(&Entry->Lock);
+    } else if (!RtlTryEnterCriticalSection(&Entry->Lock))
+    {
+        NTCRT_ERRNO = EBUSY;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* Get an opened fd and lock it, or set errno to EBADF (EBUSY), see LowIO.cpp */
 extern "C" PNTCRT_FD _NtCRT_LockFd(_In_ int fd);
 
 static inline
@@ -100,7 +122,7 @@ _NtCRT_UnlockFd(
 
 /* Allocate the block BlockIndex of the table, called with _NtCRT_FdTableLock held exclusively */
 extern "C" PNTCRT_FD _NtCRT_AllocBlock(_In_ unsigned int BlockIndex);
-/* Set an fd to a specific slot, used by initialization and _dup2 */
+/* Set an fd to a specific slot, used by initialization */
 extern "C" BOOL _NtCRT_SetFd(_In_ int fd, _In_ HANDLE Handle, _In_ UCHAR Flags);
 /* FDEV or FPIPE by the type of a handle */
 extern "C" UCHAR _NtCRT_DeviceFlags(_In_ HANDLE Handle);

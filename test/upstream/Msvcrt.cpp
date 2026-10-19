@@ -11,6 +11,7 @@
 #include <malloc.h>
 #include <math.h>
 #include <mbctype.h>
+#include <process.h>
 #include <share.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -232,6 +233,50 @@ static void TestCtrlZ(void)
     remove(Name);
 }
 
+static int g_Dup2Fd;
+static volatile LONG g_Dup2Done;
+
+static unsigned __stdcall Dup2Loop(void* Arg)
+{
+    for (int i = 0; i < 20000; i++)
+    {
+        _dup2((int)(intptr_t)Arg, g_Dup2Fd);
+        _close(g_Dup2Fd);
+    }
+    g_Dup2Done = TRUE;
+    return 0;
+}
+
+/* _dup2 replaces fd2 at once, an fd opened meanwhile never takes it to have its handle leaked */
+static void TestDup2(void)
+{
+    ULONG Before = 0, After = 0;
+    HANDLE Thread;
+    int fd = _open("NUL", _O_RDONLY);
+
+    /* fds of a block not allocated yet */
+    CHECK(fd >= 0 && _dup2(fd, 200) == 0 && _dup2(fd, 200) == 0 && _get_osfhandle(200) != -1 && _close(200) == 0);
+    g_Dup2Fd = _dup(fd);
+    _close(g_Dup2Fd);
+    NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)20 /* ProcessHandleCount */, &Before,
+                              sizeof(Before), NULL);
+    Thread = (HANDLE)_beginthreadex(NULL, 0, Dup2Loop, (void*)(intptr_t)fd, 0, NULL);
+    while (!g_Dup2Done)
+    {
+        int Other = _open("NUL", _O_RDONLY);
+        if (Other != g_Dup2Fd)
+        {
+            _close(Other);
+        }
+    }
+    WaitForSingleObject(Thread, INFINITE);
+    CloseHandle(Thread);
+    _close(g_Dup2Fd);
+    NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)20, &After, sizeof(After), NULL);
+    CHECK(After == Before);
+    _close(fd);
+}
+
 /* The buffer _getcwd allocates has maxlen bytes at least */
 static void TestGetcwd(void)
 {
@@ -277,6 +322,7 @@ TestMsvcrt(VOID)
     TestFiles();
     TestUtf8Pending();
     TestCtrlZ();
+    TestDup2();
     TestGetcwd();
     TestMbcs();
     return g_Ok;

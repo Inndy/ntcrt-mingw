@@ -138,7 +138,7 @@ EXTERN_C int __cdecl _NtCRT_open_osfhandle(intptr_t osfhandle, int flags)
 EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
 {
     PNTCRT_FD Entry;
-    HANDLE NewHandle;
+    HANDLE NewHandle, OldHandle;
     UCHAR Flags, TextMode;
     BOOLEAN WideOnly;
     NTSTATUS Status;
@@ -173,19 +173,44 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
         _NtCRT_SetErrnoFromNtStatus(Status);
         return -1;
     }
+
+    RtlAcquireSRWLockExclusive(&_NtCRT_FdTableLock);
+    if (_NtCRT_FdBlocks[fd2 / NTCRT_FD_BLOCK_SIZE] == NULL)
+    {
+        _NtCRT_AllocBlock(fd2 / NTCRT_FD_BLOCK_SIZE);
+    }
+    RtlReleaseSRWLockExclusive(&_NtCRT_FdTableLock);
+    Entry = _NtCRT_FdEntry(fd2);
+    if (Entry == NULL)
+    {
+        NtClose(NewHandle);
+        NTCRT_ERRNO = ENOMEM;
+        return -1;
+    }
     /* EBUSY: the process ends and a terminated thread holds the lock of fd2, which stays unusable */
-    if (_NtCRT_FdEntry(fd2) != NULL && (_NtCRT_FdEntry(fd2)->Flags & FOPEN) && _NtCRT_close(fd2) != 0 &&
-        NTCRT_ERRNO == EBUSY)
+    if (!_NtCRT_EnterFd(Entry))
     {
         NtClose(NewHandle);
         return -1;
     }
-    _NtCRT_SetFd(fd2, NewHandle, Flags);
-    _NtCRT_FdEntry(fd2)->TextMode = TextMode;
-    _NtCRT_FdEntry(fd2)->WideOnly = WideOnly;
+    /*
+     * fd2 is replaced at once under its lock, which an fd being used holds, and the table lock, under which a free
+     * fd is taken: no other thread sees it closed
+     */
+    RtlAcquireSRWLockExclusive(&_NtCRT_FdTableLock);
+    OldHandle = (Entry->Flags & FOPEN) ? Entry->Handle : NULL;
+    _NtCRT_InitFdState(Entry, NewHandle, Flags);
+    Entry->TextMode = TextMode;
+    Entry->WideOnly = WideOnly;
+    RtlReleaseSRWLockExclusive(&_NtCRT_FdTableLock);
     if (fd2 <= 2)
     {
         _NtCRT_SetStdFd(fd2, NewHandle);
+    }
+    _NtCRT_UnlockFd(Entry);
+    if (OldHandle != NTCRT_NO_CONSOLE_HANDLE && OldHandle != INVALID_HANDLE_VALUE && OldHandle != NULL)
+    {
+        NtClose(OldHandle);
     }
     return 0;
 }
