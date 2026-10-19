@@ -18,47 +18,46 @@ _NtCRT_CallNewHandler(
     return Handler != NULL && Handler(Size) != 0;
 }
 
-EXTERN_C void* __cdecl _NtCRT_malloc(size_t size)
+/* Allocate, or reallocate a block that is kept on failure; the new handler retries in new mode 1 */
+static
+void*
+_NtCRT_HeapAllocate(
+    _In_opt_ void* Block,
+    _In_ ULONG Flags,
+    _In_ size_t Size)
 {
-    void* Block;
+    void* NewBlock = NULL;
 
-    if (size > _HEAP_MAXREQ)
+    if (Size <= _HEAP_MAXREQ)
     {
-        NTCRT_ERRNO = ENOMEM;
-        return NULL;
-    }
-    for (;;)
-    {
-        Block = RtlAllocateHeap(NTCRT_HEAP, 0, size != 0 ? size : 1);
-        if (Block != NULL || !g_NewMode || !_NtCRT_CallNewHandler(size))
+        for (;;)
         {
-            break;
+            NewBlock = Block != NULL ? RtlReAllocateHeap(NTCRT_HEAP, Flags, Block, Size) :
+                                       RtlAllocateHeap(NTCRT_HEAP, Flags, Size != 0 ? Size : 1);
+            if (NewBlock != NULL || !g_NewMode || !_NtCRT_CallNewHandler(Size))
+            {
+                break;
+            }
         }
     }
-    if (Block == NULL)
+    if (NewBlock == NULL)
     {
         NTCRT_ERRNO = ENOMEM;
     }
-    return Block;
+    return NewBlock;
+}
+
+EXTERN_C void* __cdecl _NtCRT_malloc(size_t size)
+{
+    return _NtCRT_HeapAllocate(NULL, 0, size);
 }
 
 EXTERN_C void* __cdecl _NtCRT_calloc(size_t count, size_t size)
 {
-    void* Block;
-    size_t Total;
-
-    if (size != 0 && count > _HEAP_MAXREQ / size)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return NULL;
-    }
-    Total = count * size;
-    Block = RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, Total != 0 ? Total : 1);
-    if (Block == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-    }
-    return Block;
+    /* An overflow of the product is a size above _HEAP_MAXREQ */
+    return _NtCRT_HeapAllocate(NULL,
+                               HEAP_ZERO_MEMORY,
+                               size != 0 && count > _HEAP_MAXREQ / size ? SIZE_MAX : count * size);
 }
 
 EXTERN_C void __cdecl _NtCRT_free(void* block)
@@ -71,28 +70,12 @@ EXTERN_C void __cdecl _NtCRT_free(void* block)
 
 EXTERN_C void* __cdecl _NtCRT_realloc(void* block, size_t size)
 {
-    void* NewBlock;
-
-    if (block == NULL)
-    {
-        return _NtCRT_malloc(size);
-    }
-    if (size == 0)
+    if (block != NULL && size == 0)
     {
         _NtCRT_free(block);
         return NULL;
     }
-    if (size > _HEAP_MAXREQ)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return NULL;
-    }
-    NewBlock = RtlReAllocateHeap(NTCRT_HEAP, 0, block, size);
-    if (NewBlock == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-    }
-    return NewBlock;
+    return _NtCRT_HeapAllocate(block, 0, size);
 }
 
 /* New handler */

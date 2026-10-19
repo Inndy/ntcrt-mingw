@@ -26,6 +26,11 @@
 
 extern "C" BOOL __cdecl __crtGetStringTypeW(DWORD Unused, DWORD InfoType, LPCWSTR Src, int SrcCount, LPWORD Types);
 
+/* <new.h> declares them with C++ linkage */
+typedef int(__cdecl* NEW_HANDLER)(size_t);
+extern "C" NEW_HANDLER __cdecl _set_new_handler(NEW_HANDLER Handler);
+extern "C" int __cdecl _set_new_mode(int Mode);
+
 static BOOL g_Ok;
 
 static void Check(bool Ok, const char* What)
@@ -442,6 +447,16 @@ static void TestMultibyte(void)
     }
 }
 
+/* volatile: GCC assumes that the allocation functions write no global variable */
+static volatile int g_NewHandlerCalls;
+
+static int __cdecl CountNewHandler(size_t Size)
+{
+    (void)Size;
+    g_NewHandlerCalls = g_NewHandlerCalls + 1;
+    return 0;
+}
+
 static void TestMisc(void)
 {
     int Decpt, Sign;
@@ -462,6 +477,21 @@ static void TestMisc(void)
     _controlfp(0x03000000, _MCW_DN);
     CHECK((__builtin_ia32_stmxcsr() & 0x8040) == 0x8000 && (_controlfp(0, 0) & _MCW_DN) == 0x03000000);
     _controlfp(_DN_SAVE, _MCW_DN);
+
+    /* The new handler is called for calloc and realloc too */
+    NEW_HANDLER Old = _set_new_handler(CountNewHandler);
+    int OldMode = _set_new_mode(1);
+    void* Block = malloc(16);
+    /* volatile: GCC takes an allocation that is only compared with NULL as successful */
+    void* volatile Result;
+    g_NewHandlerCalls = 0;
+    Result = calloc(1, (size_t)1 << 48);
+    CHECK(Result == NULL && g_NewHandlerCalls == 1);
+    Result = realloc(Block, (size_t)1 << 48);
+    CHECK(Result == NULL && g_NewHandlerCalls == 2);
+    free(Block);
+    _set_new_mode(OldMode);
+    _set_new_handler(Old);
 }
 
 static void TestMbcs(void)
