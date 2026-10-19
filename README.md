@@ -94,17 +94,18 @@ loads, so:
 - the functions the startup code refers to in every program (`_amsg_exit`, `abort`, `_matherr`) write their ASCII
   messages to the handle of fd 2 as msvcrt does, `_write` would link the console and text mode conversions
 
-Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the split, now, and with lld:
+Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the split, now, and with lld (clang and lld
+22.1 of msys2 CLANG64):
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
 | `return 0` | 248832 | 445440 | 37376 | 25088 | 14336 |
-| `puts` | 248832 | 445440 | 48128 | 35328 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
-| `wprintf` | 248832 | 445440 | 82944 | 69120 | 41472 |
-| `sscanf("%d %lf %s")` | | | 96768 | 61952 | 56320 |
-| `std::cout` | 1257472 | 1420800 | 1157632 | 721920 | 1035776 |
-| `std::thread` | | | 190976 | 102912 | 135168 |
+| `puts` | 248832 | 445440 | 48128 | 35840 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 81920 | 66560 | 41984 |
+| `wprintf` | 248832 | 445440 | 82944 | 69632 | 41472 |
+| `sscanf("%d %lf %s")` | | | 96768 | 62464 | 56320 |
+| `std::cout` | 1257472 | 1420800 | 1157632 | 722432 | 1035776 |
+| `std::thread` | | | 190976 | 103424 | 135168 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
