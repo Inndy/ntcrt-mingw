@@ -8,6 +8,7 @@
 #include <future>
 #include <latch>
 #include <mutex>
+#include <pthread.h>
 #include <semaphore>
 #include <shared_mutex>
 #include <stdexcept>
@@ -72,6 +73,73 @@ static void Mutexes()
     check(std::chrono::steady_clock::now() - Start >= 40ms, "std::timed_mutex waits");
     Timed.unlock();
     std::thread([&] { check(Timed.try_lock_for(50ms), "std::timed_mutex::try_lock_for"); Timed.unlock(); }).join();
+}
+
+/*
+ * The thread_local destructors (the TLS callback of libmingw32) and the key destructors of a thread find its
+ * thread_local variables alive, the emulated variables are freed after them: asking for one again gives the same
+ * object, not a new one.
+ */
+struct Tracked
+{
+    int Value = 1;
+    ~Tracked();
+};
+
+static thread_local Tracked t_Tracked;
+static std::atomic<int> g_TrackedBad;
+static std::atomic<int> g_TrackedDestroyed;
+static pthread_key_t g_TrackedKey;
+
+Tracked::~Tracked()
+{
+    /* The other threads construct it too, with the other thread_local variables of the file */
+    if (Value == 1)
+    {
+        return;
+    }
+    if (Value != 7 || &t_Tracked != this)
+    {
+        g_TrackedBad++;
+    }
+    g_TrackedDestroyed++;
+}
+
+static void TrackedKeyDestructor(void* Value)
+{
+    if (t_Tracked.Value != 7 || &t_Tracked != Value)
+    {
+        g_TrackedBad++;
+    }
+    g_TrackedDestroyed++;
+}
+
+static void* TrackedThread(void* Arg)
+{
+    t_Tracked.Value = 7;
+    pthread_setspecific(g_TrackedKey, &t_Tracked);
+    if (Arg != nullptr)
+    {
+        pthread_exit(Arg);
+    }
+    return nullptr;
+}
+
+static void ThreadLocals()
+{
+    pthread_t Thread;
+
+    /* The key of emutls of libgcc would precede this one, its destructor would free the variables first */
+    t_Tracked.Value = 7;
+    check(pthread_key_create(&g_TrackedKey, TrackedKeyDestructor) == 0, "pthread_key_create");
+    std::thread([] { TrackedThread(nullptr); }).join();
+    for (int i = 0; i < 2; i++)
+    {
+        check(pthread_create(&Thread, nullptr, TrackedThread, i != 0 ? &Thread : nullptr) == 0, "pthread_create");
+        check(pthread_join(Thread, nullptr) == 0, "pthread_join");
+    }
+    check(g_TrackedDestroyed == 6 && g_TrackedBad == 0, "thread_local variables alive in their and key destructors");
+    pthread_key_delete(g_TrackedKey);
 }
 
 static void Conditions()
@@ -291,6 +359,7 @@ int main()
     check(std::thread::hardware_concurrency() >= 1, "std::thread::hardware_concurrency");
     check(std::this_thread::get_id() == std::this_thread::get_id(), "std::this_thread::get_id");
     Mutexes();
+    ThreadLocals();
     Conditions();
     Futures();
     SharedMutexes();

@@ -24,7 +24,7 @@ BUILD    ?= build
 endif
 SRCS     := $(wildcard src/*.cpp)
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
-# Replacements of libmingw32 members, linked before it
+# Replacements of libmingw32 and libgcc members, linked before them
 START_SRCS := $(wildcard src/start/*.cpp)
 START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
 HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/*.h) $(wildcard include/KNSoft/NDK/*) \
@@ -129,9 +129,9 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
          --wrap=btowc --wrap=wctob --wrap=ftruncate64 --wrap=sleep --wrap=usleep
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
-# libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and
-# _matherr of libmingw32, which would link the printf family into every program. libntcrt has the pthread functions,
-# winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
+# libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and _matherr
+# of libmingw32, which would link the printf family into every program, and emutls of libgcc. libntcrt has the
+# pthread functions, winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
 	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
@@ -281,6 +281,7 @@ $(BUILD)/thread/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER)
 
 test-thread: $(THREAD_TESTS)
 	if grep -i winpthread $(BUILD)/thread/cxx.map; then echo "winpthreads is linked"; exit 1; fi
+	if grep 'libgcc\.a(emutls\.o)' $(BUILD)/thread/cxx.map; then echo "emutls of libgcc is linked"; exit 1; fi
 	for t in $(THREAD_TESTS); do \
 	    objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll && { echo "$$t imports more than ntdll.dll"; exit 1; }; \
 	    ./$$t || exit 1; \

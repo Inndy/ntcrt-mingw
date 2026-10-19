@@ -17,7 +17,7 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 ## Layout
 
 - `src/` the runtime, `NtCRT.h` is the internal header
-- `src/start/` replacements of libmingw32 members in `libntcrt_start.a`, linked before libmingw32
+- `src/start/` replacements of libmingw32 and libgcc members in `libntcrt_start.a`, linked before them
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `include/threads.h` C11 threads, the drivers add `include/` to the system include path of programs
@@ -77,7 +77,7 @@ split so that the startup code and small programs link few and small objects:
   (`.bss` does not)
 
 `libntcrt_start.a` replaces the pseudo relocator and `_matherr` of libmingw32, which report errors by `fprintf` and
-would link the printf family into every program.
+would link the printf family into every program, and the emulated thread-local variables of libgcc (see "Threads").
 
 lld (`make LLVM=1`) drops the unused functions: clang makes the `.pdata` and `.xdata` of a function associative to
 it, so a program links the functions it reaches. The libraries of GCC (libmingwex, libstdc++) are still linked by
@@ -302,10 +302,14 @@ code.
   winpthreads `std::call_once` deadlocks after an exception).
 - Keys are TLS slots (`TlsAlloc`, 1088 for all users). The destructors run at the exit of any thread, also of
   `CreateThread`, `_beginthreadex` and `_endthreadex`, in the TLS callback of NtCRT after that of libmingw32, which
-  runs the `thread_local` destructors of C++: emutls frees their memory in a key destructor.
-  `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set again. They run under the loader lock (except
-  those of the last thread, which ends the process), in the threads of `pthread_create` too: a destructor must not
-  join a thread, nor create one and wait for it, since a thread cannot start or end while the lock is held.
+  runs the `thread_local` destructors of C++. `PTHREAD_DESTRUCTOR_ITERATIONS` (256) rounds while values are set
+  again. They run under the loader lock (except those of the last thread, which ends the process), in the threads of
+  `pthread_create` too: a destructor must not join a thread, nor create one and wait for it, since a thread cannot
+  start or end while the lock is held.
+- The emulated thread-local variables (`thread_local` of GCC, and of clang with `-femulated-tls`) are those of
+  `libntcrt_start` in place of emutls of libgcc, which frees them in a key destructor that may run before others. They
+  are freed by a TLS callback after that of NtCRT, so that the `thread_local` and the key destructors find the
+  variables of their thread alive.
 - `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
