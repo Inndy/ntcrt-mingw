@@ -343,12 +343,13 @@ static void PutFile(const char* Name, const char* Data, size_t Size)
     }
 }
 
-/* Positioning of streams by C */
+/* Positioning and flushing of streams by C */
 static void TestStreams(void)
 {
     static const char Name[] = "ntcrt_streams.tmp";
     wchar_t Unit = 0;
     FILE* File;
+    fpos_t Pos;
     int fd;
 
     /* A position query keeps the characters an fd or a stream read ahead */
@@ -369,6 +370,23 @@ static void TestStreams(void)
     fclose(File);
     File = fopen(Name, "w, ccs=UTF-16LE");
     CHECK(File != NULL && fputwc(0x20AC, File) == 0x20AC && fputwc(L'\n', File) == L'\n' && ftell(File) == 8);
+    fclose(File);
+
+    /* fflush(NULL) flushes output streams only, a stream after fflush may read */
+    PutFile(Name, "abc", 3);
+    File = fopen(Name, "rb");
+    CHECK(File != NULL && fgetc(File) == 'a' && fflush(NULL) == 0 && fgetc(File) == 'b');
+    fclose(File);
+    File = fopen(Name, "r+b");
+    CHECK(File != NULL && setvbuf(File, NULL, _IONBF, 0) == 0 && fputc('X', File) == 'X');
+    CHECK(fflush(File) == 0 && fgetc(File) == 'b' && !ferror(File));
+    fclose(File);
+
+    /* A write error of the flush fails fsetpos */
+    fd = _open(Name, _O_RDONLY | _O_BINARY);
+    File = _fdopen(fd, "r+b");
+    CHECK(File != NULL && fgetpos(File, &Pos) == 0 && fputc('Y', File) == 'Y');
+    CHECK(fsetpos(File, &Pos) != 0 && ferror(File));
     fclose(File);
 
     remove(Name);

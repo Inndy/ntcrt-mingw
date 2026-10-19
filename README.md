@@ -482,6 +482,8 @@ Beside the table above:
 - Known msvcrt bugs are not reproduced, e.g. console reads in `_O_U16TEXT` mode translate CRLF to one LF
   (msvcrt returns two LFs and hangs when a CR ends the buffer), a binary fd keeps no Unicode read/write
   restriction from a previous `_setmode`, and `signal` returns `SIG_DFL` after `raise(SIGILL)`/`raise(SIGSEGV)`
+- A read/write stream may read after `fflush` also when nothing was buffered (unbuffered or after a large `fwrite`),
+  and `fseek`/`fsetpos` fail when flushing the output fails; msvcrt fails the read and reports the seek as done
 - Unicode mode I/O:
   - `_O_U8TEXT` reads accept any buffer size, msvcrt reads at least 4 bytes and fails with `EINVAL` when they
     convert to more units than the buffer holds, and it drops a truncated sequence at the end of the file

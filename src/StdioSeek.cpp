@@ -136,7 +136,12 @@ EXTERN_C int __cdecl _NtCRT_fseeki64(FILE* stream, long long offset, int origin)
         offset += Current;
         origin = SEEK_SET;
     }
-    _NtCRT_flush_nolock(stream);
+    if (_NtCRT_flush_nolock(stream) != 0)
+    {
+        /* A write error fails the seek */
+        Ret = -1;
+        goto _Exit;
+    }
     if (stream->_flag & _IORW)
     {
         stream->_flag &= ~(_IOWRT | _IOREAD);

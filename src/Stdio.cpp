@@ -123,23 +123,18 @@ _NtCRT_flush_nolock(
 {
     int Result = 0;
 
-    if ((Stream->_flag & (_IOREAD | _IOWRT)) == _IOWRT && Stream->_base != NULL &&
-        !(Stream->_flag & _IONBF))
+    if ((Stream->_flag & (_IOREAD | _IOWRT)) == _IOWRT)
     {
-        int Count = (int)(Stream->_ptr - Stream->_base);
-        if (Count > 0)
+        int Count = Stream->_base != NULL && !(Stream->_flag & _IONBF) ? (int)(Stream->_ptr - Stream->_base) : 0;
+
+        if (Count > 0 && _NtCRT_write(Stream->_file, Stream->_base, Count) != Count)
         {
-            if (_NtCRT_write(Stream->_file, Stream->_base, Count) == Count)
-            {
-                if (Stream->_flag & _IORW)
-                {
-                    Stream->_flag &= ~_IOWRT;
-                }
-            } else
-            {
-                Stream->_flag |= _IOERR;
-                Result = EOF;
-            }
+            Stream->_flag |= _IOERR;
+            Result = EOF;
+        } else if (Stream->_flag & _IORW)
+        {
+            /* Flushed, a read/write stream may read next */
+            Stream->_flag &= ~_IOWRT;
         }
     }
     Stream->_ptr = Stream->_base;
@@ -386,9 +381,9 @@ _NtCRT_ForEachStream(
 }
 
 /*
- * Context: 1 for flush returning error count, 0 for flush returning stream count, and 2 when the process ends without
- * exit: a lock that a terminated thread held is never released and entering its critical section would end the
- * process, that stream is left
+ * Context: 1 for flush returning error count (fflush(NULL), output streams only), 0 for flush returning stream count
+ * (_flushall, input buffers are discarded), and 2 when the process ends without exit: a lock that a terminated thread
+ * held is never released and entering its critical section would end the process, that stream is left
  */
 static
 int
@@ -410,7 +405,7 @@ _NtCRT_FlushCallback(
     {
         return 0;
     }
-    if (_NtCRT_InUse(Stream))
+    if (_NtCRT_InUse(Stream) && (!ErrorCount || (Stream->_flag & _IOWRT)))
     {
         if (_NtCRT_flush_nolock(Stream) != 0)
         {
