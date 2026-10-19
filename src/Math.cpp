@@ -7,11 +7,11 @@
 #include <math.h>
 
 /* MSVC float.h values missing from mingw-w64 */
-#ifndef _DN_SAVE_OPERANDS_FLUSH_RESULTS
-#define _DN_SAVE_OPERANDS_FLUSH_RESULTS 0x02000000
-#endif
 #ifndef _DN_FLUSH_OPERANDS_SAVE_RESULTS
-#define _DN_FLUSH_OPERANDS_SAVE_RESULTS 0x03000000
+#define _DN_FLUSH_OPERANDS_SAVE_RESULTS 0x02000000
+#endif
+#ifndef _DN_SAVE_OPERANDS_FLUSH_RESULTS
+#define _DN_SAVE_OPERANDS_FLUSH_RESULTS 0x03000000
 #endif
 #ifndef _SW_INEXACT
 #define _SW_INEXACT 0x00000001
@@ -346,10 +346,10 @@ _NtCRT_MxcsrToControl(
         Control |= _DN_FLUSH;
     } else if (Mxcsr & 0x8000)
     {
-        Control |= _DN_FLUSH_OPERANDS_SAVE_RESULTS;
+        Control |= _DN_SAVE_OPERANDS_FLUSH_RESULTS;
     } else if (Mxcsr & 0x0040)
     {
-        Control |= _DN_SAVE_OPERANDS_FLUSH_RESULTS;
+        Control |= _DN_FLUSH_OPERANDS_SAVE_RESULTS;
     }
     return Control;
 }
@@ -373,11 +373,12 @@ _NtCRT_ControlToMxcsr(
         case _RC_UP: Mxcsr |= 0x4000; break;
         case _RC_CHOP: Mxcsr |= 0x6000; break;
     }
+    /* DAZ (0x0040) flushes denormal operands, FTZ (0x8000) denormal results */
     switch (Control & _MCW_DN)
     {
         case _DN_FLUSH: Mxcsr |= 0x8040; break;
-        case _DN_FLUSH_OPERANDS_SAVE_RESULTS: Mxcsr |= 0x8000; break;
-        case _DN_SAVE_OPERANDS_FLUSH_RESULTS: Mxcsr |= 0x0040; break;
+        case _DN_FLUSH_OPERANDS_SAVE_RESULTS: Mxcsr |= 0x0040; break;
+        case _DN_SAVE_OPERANDS_FLUSH_RESULTS: Mxcsr |= 0x8000; break;
     }
     return Mxcsr;
 }

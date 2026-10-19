@@ -172,11 +172,11 @@ _NtCRT_Fcvt(
     _Out_ int* Sign)
 {
     char Digits[18];
-    int Total;
+    long long Total;
 
     _NtCRT_CvtDigits(Value, Digits, Decpt);
     *Sign = signbit(Value) ? 1 : 0;
-    Total = *Decpt + Count;
+    Total = (long long)*Decpt + Count;
     if (Total < 0)
     {
         Buffer[0] = '\0';
@@ -186,10 +186,10 @@ _NtCRT_Fcvt(
     {
         Total = NTCRT_CVTBUFSIZE - 2;
     }
-    if (_NtCRT_CvtRound(Digits, Total, Buffer, Decpt))
+    if (_NtCRT_CvtRound(Digits, (int)Total, Buffer, Decpt))
     {
         /* One more digit before the decimal point */
-        memset(Buffer, '0', Total + 1);
+        memset(Buffer, '0', (size_t)Total + 1);
         Buffer[0] = '1';
         Buffer[Total + 1] = '\0';
     }

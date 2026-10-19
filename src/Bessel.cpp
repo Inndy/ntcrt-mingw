@@ -177,7 +177,7 @@ EXTERN_C double __cdecl _NtCRT__y1(double x)
 EXTERN_C double __cdecl _NtCRT__jn(int n, double x)
 {
     unsigned int m = n < 0 ? 0U - (unsigned int)n : (unsigned int)n;
-    int TwoM, k;
+    long long TwoM, k;
     double Prev, Cur, Next, Ratio, r;
 
     if (n < 0)
@@ -196,8 +196,8 @@ EXTERN_C double __cdecl _NtCRT__jn(int n, double x)
     {
         return 0.0;
     }
-    TwoM = (int)(m * 2);
-    if (fabs(x) > (double)(int)m)
+    TwoM = 2LL * m;
+    if (fabs(x) > (double)m)
     {
         Prev = _NtCRT__j0(x);
         Cur = _NtCRT__j1(x);
@@ -231,32 +231,29 @@ EXTERN_C double __cdecl _NtCRT__jn(int n, double x)
 /* Forward recurrence from y0 and y1 */
 EXTERN_C double __cdecl _NtCRT__yn(int n, double x)
 {
+    unsigned int m = n < 0 ? 0U - (unsigned int)n : (unsigned int)n;
     double Sign = 1.0, Prev, Cur, Next, c;
 
     if (0 > x)
     {
         return _NtCRT_BesselDomainError();
     }
-    if (n < 0)
+    if (n < 0 && (m & 1))
     {
-        n = (int)(0U - (unsigned int)n);
-        if (n & 1)
-        {
-            Sign = -1.0;
-        }
+        Sign = -1.0;
     }
-    if (n == 0)
+    if (m == 0)
     {
         return _NtCRT__y0(x) * Sign;
     }
-    if (n == 1)
+    if (m == 1)
     {
         return _NtCRT__y1(x) * Sign;
     }
     Prev = _NtCRT__y0(x);
     Cur = _NtCRT__y1(x);
     c = 0x1.0000000000000p+1 / x;
-    for (int k = 1; k < n; k++)
+    for (unsigned int k = 1; k < m; k++)
     {
         Next = (double)k * c * Cur - Prev;
         Prev = Cur;

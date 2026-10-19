@@ -6,6 +6,7 @@
 #include <direct.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <float.h>
 #include <io.h>
 #include <limits.h>
 #include <locale.h>
@@ -443,11 +444,24 @@ static void TestMultibyte(void)
 
 static void TestMisc(void)
 {
+    int Decpt, Sign;
+    char* Digits;
+
     /* The table is set before any call of __sys_errlist */
     CHECK(_sys_errlist[EINVAL] != NULL && strcmp(_sys_errlist[EINVAL], "Invalid argument") == 0);
 
     /* A tab is blank and a control character, not printing as UCRT (msvcrt says printing) */
     CHECK(!iswprint(L'\t') && iswprint(L' ') && iswblank(L'\t'));
+
+    Digits = _fcvt(1.0, INT_MAX, &Decpt, &Sign);
+    CHECK(Digits != NULL && strlen(Digits) == 347 && Decpt == 1);
+
+    /* _DN_FLUSH_OPERANDS_SAVE_RESULTS (0x02000000) sets DAZ, _DN_SAVE_OPERANDS_FLUSH_RESULTS (0x03000000) FTZ */
+    _controlfp(0x02000000, _MCW_DN);
+    CHECK((__builtin_ia32_stmxcsr() & 0x8040) == 0x0040 && (_controlfp(0, 0) & _MCW_DN) == 0x02000000);
+    _controlfp(0x03000000, _MCW_DN);
+    CHECK((__builtin_ia32_stmxcsr() & 0x8040) == 0x8000 && (_controlfp(0, 0) & _MCW_DN) == 0x03000000);
+    _controlfp(_DN_SAVE, _MCW_DN);
 }
 
 static void TestMbcs(void)
