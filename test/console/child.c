@@ -103,6 +103,15 @@ int main(int argc, char** argv)
             }
             hexw("R5", Buffer, Units);
         }
+        /* By one unit, the CR of CRLF ends a read */
+        {
+            wchar_t Buffer[8];
+            int Units = 0;
+
+            while (Units < 8 && _read(0, Buffer + Units, sizeof(wchar_t)) > 0 && Buffer[Units++] != L'\n')
+                ;
+            hexw("R8", Buffer, Units);
+        }
         printf("end\n");
     } else if (strcmp(Scenario, "getch") == 0)
     {

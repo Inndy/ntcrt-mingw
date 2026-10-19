@@ -134,6 +134,35 @@ _NtCRT_CrAtEnd(
     return IsLf ? 0 : L'\r';
 }
 
+typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
+
+/*
+ * The character for a CR that ends the units read from a console. In line input mode the console has the rest of
+ * the line: the peeked unit makes CRLF one LF, another unit is kept for the next read.
+ */
+static
+WCHAR
+_NtCRT_ConsoleCrAtEnd(
+    _In_ PNTCRT_FD Entry,
+    _In_opt_ PNTCRT_READ_CONSOLE_W ReadConsoleW)
+{
+    DWORD Mode, Got = 0;
+    WCHAR Peek;
+
+    if (ReadConsoleW == NULL || !_CRT_GetConsoleMode(Entry->Handle, &Mode) || !(Mode & ENABLE_LINE_INPUT) ||
+        !ReadConsoleW(Entry->Handle, &Peek, 1, &Got, NULL) || Got == 0)
+    {
+        return L'\r';
+    }
+    if (Peek == L'\n')
+    {
+        return L'\n';
+    }
+    Entry->PipeWide = Peek;
+    Entry->HasPipeWide = TRUE;
+    return L'\r';
+}
+
 /*
  * Read UTF-8 of "C.UTF-8" from a text mode console by its characters, CRLF is read as a newline and Ctrl+Z ends
  * the input. Returns the bytes stored, 0 for EOF or -1.
@@ -145,7 +174,6 @@ _NtCRT_ReadConsoleUtf8(
     _Out_writes_bytes_(Count) char* Buffer,
     _In_ unsigned int Count)
 {
-    typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
     unsigned int Length;
 
     while (Entry->ConsoleTextPos == Entry->ConsoleTextLength)
@@ -187,7 +215,7 @@ _NtCRT_ReadConsoleUtf8(
             {
                 continue;
             }
-            Wide[Kept++] = Wide[i];
+            Wide[Kept++] = Wide[i] == L'\r' && i + 1 == Units ? _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW) : Wide[i];
         }
         if (!Entry->ConsoleEof && Kept > 0 && IS_HIGH_SURROGATE(Wide[Kept - 1]))
         {
@@ -240,7 +268,6 @@ _NtCRT_ReadUnicode(
 
     if (_NtCRT_IsConsoleFd(Entry))
     {
-        typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
         PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
         DWORD Got = 0;
 
@@ -275,7 +302,7 @@ _NtCRT_ReadUnicode(
             {
                 i++;
             }
-            Out[Kept++] = Out[i];
+            Out[Kept++] = Out[i] == L'\r' && i + 1 == Units ? _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW) : Out[i];
         }
         return (int)(Kept * sizeof(WCHAR));
     }
