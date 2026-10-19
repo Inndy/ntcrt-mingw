@@ -97,13 +97,13 @@ NTCRT_API int pthread_set_num_processors_np(int n)
     return Count;
 }
 
-/* The concurrency level is kept, it has no effect */
+/* The concurrency level is kept, it has no effect; threads may set and read it at once */
 
 static int g_Concurrency;
 
 NTCRT_API int pthread_getconcurrency(void)
 {
-    return g_Concurrency;
+    return __atomic_load_n(&g_Concurrency, __ATOMIC_RELAXED);
 }
 
 NTCRT_API int pthread_setconcurrency(int new_level)
@@ -112,13 +112,13 @@ NTCRT_API int pthread_setconcurrency(int new_level)
     {
         return EINVAL;
     }
-    g_Concurrency = new_level;
+    __atomic_store_n(&g_Concurrency, new_level, __ATOMIC_RELAXED);
     return 0;
 }
 
 NTCRT_API int pthread_get_concurrency(int* val)
 {
-    *val = g_Concurrency;
+    *val = __atomic_load_n(&g_Concurrency, __ATOMIC_RELAXED);
     return 0;
 }
 
