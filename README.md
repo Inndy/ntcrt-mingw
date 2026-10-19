@@ -100,13 +100,13 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 37376 | 25088 | 14336 |
-| `puts` | 248832 | 445440 | 48128 | 35840 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 81920 | 66560 | 41984 |
-| `wprintf` | 248832 | 445440 | 82944 | 69632 | 41472 |
-| `sscanf("%d %lf %s")` | | | 96768 | 62464 | 56320 |
-| `std::cout` | 1257472 | 1420800 | 1157632 | 722432 | 1035776 |
-| `std::thread` | | | 190976 | 103424 | 135168 |
+| `return 0` | 248832 | 445440 | 37888 | 25600 | 14336 |
+| `puts` | 248832 | 445440 | 48640 | 36352 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 82432 | 67072 | 41984 |
+| `wprintf` | 248832 | 445440 | 83456 | 70144 | 41472 |
+| `sscanf("%d %lf %s")` | | | 97280 | 62976 | 56320 |
+| `std::cout` | 1257472 | 1420800 | 1160704 | 724480 | 1035776 |
+| `std::thread` | | | 191488 | 104448 | 135168 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
