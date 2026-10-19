@@ -167,11 +167,22 @@ EXTERN_C char* __cdecl _NtCRT__getcwd(char* buffer, int maxlen)
     {
         return NULL;
     }
+    Length = strlen(Narrow) + 1;
     if (buffer == NULL)
     {
+        /* The buffer allocated has maxlen bytes at least */
+        if (maxlen > 0 && (size_t)maxlen > Length)
+        {
+            buffer = (char*)RtlReAllocateHeap(NTCRT_HEAP, 0, Narrow, (size_t)maxlen);
+            if (buffer == NULL)
+            {
+                RtlFreeHeap(NTCRT_HEAP, 0, Narrow);
+                NTCRT_ERRNO = ENOMEM;
+            }
+            return buffer;
+        }
         return Narrow;
     }
-    Length = strlen(Narrow) + 1;
     if (Length > (size_t)maxlen)
     {
         RtlFreeHeap(NTCRT_HEAP, 0, Narrow);

@@ -2,11 +2,13 @@
 
 #include <KNSoft/NDK/NDK.h>
 
+#include <direct.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <io.h>
 #include <limits.h>
 #include <locale.h>
+#include <malloc.h>
 #include <math.h>
 #include <mbctype.h>
 #include <share.h>
@@ -196,6 +198,15 @@ static void TestUtf8Pending(void)
     CloseHandle(Client);
 }
 
+/* The buffer _getcwd allocates has maxlen bytes at least */
+static void TestGetcwd(void)
+{
+    char* Cwd = _getcwd(NULL, 4096);
+
+    CHECK(Cwd != NULL && _msize(Cwd) >= 4096);
+    free(Cwd);
+}
+
 static void TestMbcs(void)
 {
     char Drive[8], Dir[32], Fname[32], Ext[8];
@@ -231,6 +242,7 @@ TestMsvcrt(VOID)
     TestTmpnam();
     TestFiles();
     TestUtf8Pending();
+    TestGetcwd();
     TestMbcs();
     return g_Ok;
 }
