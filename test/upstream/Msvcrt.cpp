@@ -558,6 +558,35 @@ static void TestDllOnExit(void)
     free(Begin);
 }
 
+/* The slot of RtlSetEnvironmentVar in the import table */
+extern "C" NTSTATUS(NTAPI* __imp_RtlSetEnvironmentVar)(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T);
+
+static NTSTATUS NTAPI SetEnvironmentNoMemory(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T)
+{
+    return STATUS_NO_MEMORY;
+}
+
+static void TestEnvironment(void)
+{
+    DWORD Protect;
+
+    /* Names that _wgetenv finds equal are one variable */
+    CHECK(_wputenv(L"NTCRT_\u00c4=one") == 0 && _wputenv(L"ntcrt_\u00e4=two") == 0);
+    CHECK(_wgetenv(L"NTCRT_\u00c4") != NULL && wcscmp(_wgetenv(L"NTCRT_\u00c4"), L"two") == 0);
+    CHECK(_wputenv(L"ntcrt_\u00e4=") == 0 && _wgetenv(L"NTCRT_\u00c4") == NULL);
+
+    /* The process environment that children inherit fails: the variable is not set */
+    if (VirtualProtect(&__imp_RtlSetEnvironmentVar, sizeof(PVOID), PAGE_READWRITE, &Protect))
+    {
+        NTSTATUS(NTAPI * Saved)(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T) = __imp_RtlSetEnvironmentVar;
+
+        __imp_RtlSetEnvironmentVar = SetEnvironmentNoMemory;
+        errno = 0;
+        CHECK(_putenv("NTCRT_NOMEM=1") == -1 && errno == ENOMEM && getenv("NTCRT_NOMEM") == NULL);
+        __imp_RtlSetEnvironmentVar = Saved;
+    }
+}
+
 extern "C"
 BOOL
 TestMsvcrt(VOID)
@@ -580,5 +609,6 @@ TestMsvcrt(VOID)
     TestStreams();
     TestMbcs();
     TestDllOnExit();
+    TestEnvironment();
     return g_Ok;
 }

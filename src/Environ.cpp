@@ -102,7 +102,7 @@ EXTERN_C wchar_t* __cdecl _NtCRT__wgetenv(const wchar_t* name)
     return Value;
 }
 
-/* Replace or remove "Name=" in an environment table, takes the ownership of Entry */
+/* Replace or remove "Name=" in an environment table, takes the ownership of Entry; names compare as in getenv */
 template <typename T>
 static
 int
@@ -119,16 +119,7 @@ _NtCRT_UpdateEnvTable(
     {
         for (; Env[Count] != NULL; Count++)
         {
-            const T* e = Env[Count];
-            size_t i = 0;
-            for (; i < NameLength; i++)
-            {
-                T a = e[i], b = Entry[i];
-                if (a >= 'a' && a <= 'z') a -= 'a' - 'A';
-                if (b >= 'a' && b <= 'z') b -= 'a' - 'A';
-                if (a != b) break;
-            }
-            if (i == NameLength && e[NameLength] == '=' && Index == (size_t)-1)
+            if (Index == (size_t)-1 && _NtCRT_IsEnvName(Env[Count], Entry, NameLength))
             {
                 Index = Count;
             }
@@ -158,6 +149,7 @@ _NtCRT_UpdateEnvTable(
     if (Env == NULL)
     {
         RtlFreeHeap(NTCRT_HEAP, 0, Entry);
+        NTCRT_ERRNO = ENOMEM;
         return -1;
     }
     Env[Count] = Entry;
@@ -171,9 +163,9 @@ EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring)
     const wchar_t* Equal;
     size_t NameLength;
     bool Remove;
-    wchar_t* Name;
     wchar_t* WideEntry;
     char* AnsiEntry;
+    NTSTATUS Status;
     int Result = -1;
 
     if (envstring == NULL || (Equal = wcschr(envstring, L'=')) == NULL || Equal == envstring)
@@ -189,6 +181,7 @@ EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring)
     WideEntry = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, (wcslen(envstring) + 1) * sizeof(wchar_t));
     if (WideEntry == NULL)
     {
+        NTCRT_ERRNO = ENOMEM;
         goto _Exit;
     }
     wcscpy(WideEntry, envstring);
@@ -199,14 +192,15 @@ EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring)
         goto _Exit;
     }
 
-    /* Update the process environment */
-    Name = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, (NameLength + 1) * sizeof(wchar_t));
-    if (Name != NULL)
+    /* The process environment first, which children inherit: the tables do not change when it fails */
+    Status =
+        RtlSetEnvironmentVar(NULL, envstring, NameLength, Remove ? NULL : Equal + 1, Remove ? 0 : wcslen(Equal + 1));
+    if (!NT_SUCCESS(Status))
     {
-        memcpy(Name, envstring, NameLength * sizeof(wchar_t));
-        Name[NameLength] = L'\0';
-        _Inline_SetEnvironmentVariableW(Name, Remove ? NULL : Equal + 1);
-        RtlFreeHeap(NTCRT_HEAP, 0, Name);
+        RtlFreeHeap(NTCRT_HEAP, 0, AnsiEntry);
+        RtlFreeHeap(NTCRT_HEAP, 0, WideEntry);
+        _NtCRT_SetErrnoFromNtStatus(Status);
+        goto _Exit;
     }
 
     Result = _NtCRT_UpdateEnvTable<wchar_t>(&_NtCRT_wenviron, WideEntry, NameLength, Remove);
@@ -221,10 +215,6 @@ EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring)
 
 _Exit:
     _NtCRT_unlock(_ENV_LOCK);
-    if (Result != 0)
-    {
-        NTCRT_ERRNO = ENOMEM;
-    }
     return Result;
 }
 

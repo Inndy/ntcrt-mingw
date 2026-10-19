@@ -523,6 +523,8 @@ Beside the table above:
 - `_winver`, `_winmajor`, `_winminor` and `_osver` are the version of Windows, msvcrt reports 6.2 to a program
   without a compatibility manifest
 - `_wenviron` is set at startup in a program with `main`, msvcrt leaves it `NULL`
+- `_wgetenv` and `_wputenv` compare names in the case of Unicode as the environment of the process does (`Ä` and `ä`
+  are one variable), msvcrt in that of ASCII
 - `_get_heap_handle` returns the process heap, which `malloc` allocates from (msvcrt has a heap of its own)
 - 512 streams at most: `_setmaxstdio` above 512 fails with `EINVAL` (msvcrt takes up to 2048)
 - `getenv_s` with a `NULL` name returns `EINVAL` as UCRT, msvcrt returns 0
