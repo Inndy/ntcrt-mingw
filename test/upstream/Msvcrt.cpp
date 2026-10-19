@@ -408,6 +408,12 @@ static void TestStreams(void)
     remove(Name);
 }
 
+static void TestMisc(void)
+{
+    /* The table is set before any call of __sys_errlist */
+    CHECK(_sys_errlist[EINVAL] != NULL && strcmp(_sys_errlist[EINVAL], "Invalid argument") == 0);
+}
+
 static void TestMbcs(void)
 {
     char Drive[8], Dir[32], Fname[32], Ext[8];
@@ -439,6 +445,7 @@ TestMsvcrt(VOID)
     g_Ok = TRUE;
     TestNullArguments();
     TestConversions();
+    TestMisc();
     TestTime();
     TestTmpnam();
     TestFiles();

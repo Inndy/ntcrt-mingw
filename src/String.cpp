@@ -35,9 +35,10 @@ EXTERN_C ldiv_t __cdecl _NtCRT_ldiv(long numer, long denom)
     return Result;
 }
 
-/* Error messages of msvcrt */
+/* Error messages of msvcrt, _sys_errlist is writable data in msvcrt */
 
-static const char* const g_ErrorList[] = {
+extern "C" const char* _NtCRT_sys_errlist[];
+const char* _NtCRT_sys_errlist[] = {
     "No error",
     "Operation not permitted",
     "No such file or directory",
@@ -84,13 +85,10 @@ static const char* const g_ErrorList[] = {
     "Unknown error",
 };
 
-#define NTCRT_SYS_NERR ((int)ARRAYSIZE(g_ErrorList) - 1)
+#define NTCRT_SYS_NERR ((int)ARRAYSIZE(_NtCRT_sys_errlist) - 1)
 
-extern "C"
-{
-    char* _NtCRT_sys_errlist[ARRAYSIZE(g_ErrorList)];
-    int _NtCRT_sys_nerr = NTCRT_SYS_NERR;
-}
+extern "C" int _NtCRT_sys_nerr;
+int _NtCRT_sys_nerr = NTCRT_SYS_NERR;
 
 static
 const char*
@@ -101,19 +99,12 @@ _NtCRT_ErrorMessage(
     {
         ErrNum = NTCRT_SYS_NERR;
     }
-    return g_ErrorList[ErrNum];
+    return _NtCRT_sys_errlist[ErrNum];
 }
 
 EXTERN_C char** __cdecl _NtCRT___sys_errlist(void)
 {
-    if (_NtCRT_sys_errlist[0] == NULL)
-    {
-        for (unsigned int i = 0; i < ARRAYSIZE(g_ErrorList); i++)
-        {
-            _NtCRT_sys_errlist[i] = (char*)g_ErrorList[i];
-        }
-    }
-    return _NtCRT_sys_errlist;
+    return (char**)_NtCRT_sys_errlist;
 }
 
 EXTERN_C int* __cdecl _NtCRT___sys_nerr(void)

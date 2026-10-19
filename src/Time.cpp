@@ -285,9 +285,15 @@ static
 void
 _NtCRT_EnsureTz(void)
 {
-    if (!g_Tz.Initialized)
+    /* Checked again under the lock, a second first use must not reset the rules another thread reads */
+    if (!__atomic_load_n(&g_Tz.Initialized, __ATOMIC_ACQUIRE))
     {
-        _NtCRT__tzset();
+        _NtCRT_lock(_TIME_LOCK);
+        if (!g_Tz.Initialized)
+        {
+            _NtCRT__tzset();
+        }
+        _NtCRT_unlock(_TIME_LOCK);
     }
 }
 

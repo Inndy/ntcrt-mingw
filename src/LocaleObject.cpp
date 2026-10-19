@@ -65,6 +65,8 @@ _NtCRT_NewLocale(
 {
     PNTCRT_LOCALE Locale;
 
+    /* Filled under the lock, the entry tested is not the last one written */
+    _NtCRT_lock(_SETLOCALE_LOCK);
     if (g_LowerMap['A'] == 0)
     {
         for (int i = 0; i < 256; i++)
@@ -73,6 +75,7 @@ _NtCRT_NewLocale(
             g_UpperMap[i] = (unsigned char)(i >= 'a' && i <= 'z' ? i - 'a' + 'A' : i);
         }
     }
+    _NtCRT_unlock(_SETLOCALE_LOCK);
     Locale = (PNTCRT_LOCALE)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, sizeof(*Locale));
     if (Locale == NULL)
     {

@@ -206,11 +206,12 @@ _NtCRT_LocaleName(
     return Buffer;
 }
 
-/* The ctype table of "C.UTF-8", bytes that can start a multibyte character are lead bytes */
+/* The ctype table of "C.UTF-8", bytes that can start a multibyte character are lead bytes, filled under the lock */
 EXTERN_C
 unsigned short*
 _NtCRT_CtypeUtf8(void)
 {
+    _NtCRT_lock(_SETLOCALE_LOCK);
     if (g_CtypeUtf8['A' + 1] == 0)
     {
         g_CtypeUtf8[0] = 0;
@@ -219,6 +220,7 @@ _NtCRT_CtypeUtf8(void)
             g_CtypeUtf8[i + 1] = i < 0x80 ? _NtCRT_ctype.Table[i + 1] : (i >= 0xC2 && i <= 0xF4 ? _LEADBYTE : 0);
         }
     }
+    _NtCRT_unlock(_SETLOCALE_LOCK);
     return g_CtypeUtf8 + 1;
 }
 
