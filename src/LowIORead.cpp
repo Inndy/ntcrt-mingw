@@ -443,8 +443,11 @@ _NtCRT_ReadUnicode(
             {
                 break;
             }
-            /* Only the start of a character, read it whole next time */
-            Want = Want < 4 ? 4 : Want;
+            /*
+             * Only the start of a character, read it whole next time. With the bytes kept (3 at most) a read has at
+             * most 3 bytes more than the units of the buffer, which convert to at most 3 units in Pending.
+             */
+            Want = Units > 4u - Entry->CarryLength ? Units : 4u - Entry->CarryLength;
             continue;
         }
         Wide = (WCHAR*)RtlAllocateHeap(NTCRT_HEAP, 0, RawCount * sizeof(WCHAR));

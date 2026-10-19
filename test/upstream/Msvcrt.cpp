@@ -161,6 +161,41 @@ static void TestFiles(void)
     remove(Name);
 }
 
+/* A UTF-8 read that completes the character kept by the previous read has 3 units beyond the buffer at most */
+static void TestUtf8Pending(void)
+{
+    typedef HANDLE(WINAPI* PCREATE_NAMED_PIPE_W)(LPCWSTR, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, PVOID);
+    auto const CreateNamedPipeW = (PCREATE_NAMED_PIPE_W)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),
+                                                                       "CreateNamedPipeW");
+    wchar_t Name[64], Wide[8];
+    char Back[4];
+    DWORD Count;
+    HANDLE Server, Client;
+    int fd, n = 0;
+
+    swprintf(Name, ARRAYSIZE(Name), L"\\\\.\\pipe\\ntcrt_msvcrt_%lu", GetCurrentProcessId());
+    Server = CreateNamedPipeW(Name, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE, 1, 64, 64, 0, NULL);
+    Client = CreateFileW(Name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    CHECK(Server != INVALID_HANDLE_VALUE && Client != INVALID_HANDLE_VALUE);
+    if (Server == INVALID_HANDLE_VALUE || Client == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+    /* F0 80 is kept by the first read, the second reads 80, keeps F0 80 80 and reads 1 byte more */
+    CHECK(WriteFile(Client, "A\xf0\x80\x80" "BCDE", 8, &Count, NULL) && Count == 8);
+    fd = _open_osfhandle((intptr_t)Server, 0);
+    CHECK(_setmode(fd, _O_U8TEXT) != -1 && _read(fd, Wide, 3 * sizeof(wchar_t)) == 2 && Wide[0] == L'A');
+    while (n < 8 && _read(fd, Wide + n, sizeof(wchar_t)) == 2 && Wide[n++] != L'E')
+    {
+    }
+    CHECK(n >= 5 && Wide[0] == 0xFFFD && wmemcmp(Wide + n - 4, L"BCDE", 4) == 0);
+    /* A unit beyond Pending would be a high surrogate waiting for the next write */
+    CHECK(_write(fd, L"x", sizeof(wchar_t)) == 2 && ReadFile(Client, Back, sizeof(Back), &Count, NULL) &&
+          Count == 1 && Back[0] == 'x');
+    _close(fd);
+    CloseHandle(Client);
+}
+
 static void TestMbcs(void)
 {
     char Drive[8], Dir[32], Fname[32], Ext[8];
@@ -195,6 +230,7 @@ TestMsvcrt(VOID)
     TestTime();
     TestTmpnam();
     TestFiles();
+    TestUtf8Pending();
     TestMbcs();
     return g_Ok;
 }
