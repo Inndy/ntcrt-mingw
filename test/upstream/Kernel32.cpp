@@ -1,4 +1,4 @@
-/* kernel32 functions of NtCRT (src/Kernel32.cpp) against kernel32 itself */
+/* kernel32 functions of NtCRT (src/Kernel32.cpp, src/Kernel32Lock.cpp) against kernel32 itself */
 
 #include <KNSoft/NDK/NDK.inl>
 
@@ -119,6 +119,26 @@ static void TestFormatMessage(void)
     LocalFree(Narrow);
 }
 
+static DWORD WINAPI SleepThread(LPVOID Milliseconds)
+{
+    Sleep((DWORD)(ULONG_PTR)Milliseconds);
+    return 0;
+}
+
+/* Milliseconds beyond LONG_MAX are a relative time too, the threads still sleep at the exit of the process */
+static void TestSleep(void)
+{
+    HANDLE Threads[] = {
+        CreateThread(NULL, 0, SleepThread, (LPVOID)(ULONG_PTR)0x80000000u, 0, NULL),
+        CreateThread(NULL, 0, SleepThread, (LPVOID)(ULONG_PTR)0xFFFFFFFEu, 0, NULL),
+    };
+
+    CHECK(Threads[0] != NULL && Threads[1] != NULL);
+    CHECK(WaitForMultipleObjects(2, Threads, FALSE, 200) == WAIT_TIMEOUT);
+    CloseHandle(Threads[0]);
+    CloseHandle(Threads[1]);
+}
+
 extern "C"
 BOOL
 TestKernel32(VOID)
@@ -127,5 +147,6 @@ TestKernel32(VOID)
     TestGetModuleFileNameA();
     TestGetModuleFileNameW();
     TestFormatMessage();
+    TestSleep();
     return g_Ok;
 }

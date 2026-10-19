@@ -22,7 +22,8 @@ _K32_SleepEx(
         Interval.QuadPart = MINLONGLONG;
     } else
     {
-        Interval.QuadPart = Int32x32To64(dwMilliseconds, -10000);
+        /* Negative for a relative time, of the milliseconds as unsigned */
+        Interval.QuadPart = -(LONGLONG)dwMilliseconds * 10000;
     }
     do
     {
