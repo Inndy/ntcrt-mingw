@@ -299,6 +299,14 @@ code.
   before it leaves, and waits in no SRW lock while the alert may be on its way. `make PARKER=event test-thread` and
   `test-pthread` run the tests on the event (an initializer of `test/thread/parker.c` chooses it), the default on the
   alerts of Windows 11.
+- Before it parks, a thread spins 100 rounds of `pause` (1.4 us on Zen 5, about 3.5 us on Intel since Skylake; a park
+  and unpark cost about 4 us) for a mutex, a read-write lock or a post of a semaphore while no other thread waits
+  for it, and for a signal of a condition while no thread is parked in its bucket (a signal ends the spin of every
+  spinner, but unparks one). It does not spin when the affinity of the process (read at the first spin) has one
+  processor. A ping-pong by a condition takes 0.4 us in place of 4 (winpthreads 16), by semaphores 0.07 us in place
+  of 4; 8 threads that lock a mutex with work between take 0.9 us an iteration in place of 1.4. A mutex that threads
+  lock in a loop with nothing between goes from thread to thread rather than staying with one: 8 threads take 73 ns
+  a lock in place of 55 (winpthreads 30, an SRW lock 43).
 - Mutexes are normal (`PTHREAD_MUTEX_DEFAULT`, a normal mutex locked again by its owner deadlocks, any thread may
   unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels),
   timed by `pthread_mutex_timedlock`. A condition wait unlocks a recursive mutex whatever its count and restores it.

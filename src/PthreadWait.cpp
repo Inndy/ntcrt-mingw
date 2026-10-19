@@ -101,6 +101,30 @@ static void Unlock(NTCRT_WAIT_BUCKET* Bucket)
     RtlReleaseSRWLockExclusive(&Bucket->Lock);
 }
 
+EXTERN_C int _NtCRT_Spins(void)
+{
+    static int s_Spins = -1;
+    int Spins = __atomic_load_n(&s_Spins, __ATOMIC_RELAXED);
+    PROCESS_BASIC_INFORMATION Info;
+
+    if (Spins < 0)
+    {
+        Spins = NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessBasicInformation, &Info, sizeof(Info),
+                                                     NULL)) &&
+                        (Info.AffinityMask & (Info.AffinityMask - 1)) != 0
+                    ? 100
+                    : 0;
+        __atomic_store_n(&s_Spins, Spins, __ATOMIC_RELAXED);
+    }
+    return Spins;
+}
+
+/* Read without the lock: a waiter may come or go meanwhile, the spin is only shorter or longer */
+EXTERN_C bool _NtCRT_Parked(const volatile void* Address)
+{
+    return __atomic_load_n(&WaitBucket(Address)->Head, __ATOMIC_RELAXED) != NULL;
+}
+
 /* NTCRT_PARKER_ALERT or NTCRT_PARKER_EVENT once chosen, a test may set the latter before the first wait */
 extern "C"
 {

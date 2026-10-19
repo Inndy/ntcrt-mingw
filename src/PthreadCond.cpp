@@ -61,7 +61,15 @@ static int CondWait(pthread_cond_t* c, pthread_mutex_t* m, const struct timespec
     {
         return Error;
     }
-    /* pthread_cancel unparks the thread, a cancellation ends the wait */
+    /*
+     * Spin for a signal that may come soon, unless threads are parked (a signal ends the spin of all spinners, but
+     * unparks one). pthread_cancel unparks the thread, a cancellation ends the wait.
+     */
+    for (int Spins = _NtCRT_Parked(c) ? 0 : _NtCRT_Spins(); Spins > 0 && __atomic_load_n(c, __ATOMIC_RELAXED) == Raw;
+         Spins--)
+    {
+        YieldProcessor();
+    }
     Status = _NtCRT_Wait(c, (ULONG_PTR)Raw, sizeof(*c), Wait, NTCRT_WAIT_CANCEL);
     _NtCRT_MutexRelock(m, Count);
     /* A cancelled thread takes no signal from another */

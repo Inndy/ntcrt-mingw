@@ -25,6 +25,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
 {
     LONG_PTR Self = MutexSelf();
     LONG_PTR Waiters = 0;
+    int Spins = _NtCRT_Spins();
     LARGE_INTEGER Timeout;
     PLARGE_INTEGER Wait = NULL;
     bool Timed = false;
@@ -62,6 +63,12 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
                 return EDEADLK;
             }
             /* A normal mutex deadlocks */
+        } else if (Spins > 0 && (Raw & MUTEX_WAITERS) == 0)
+        {
+            /* The owner may unlock it soon */
+            Spins--;
+            YieldProcessor();
+            continue;
         }
         if (Time != NULL && !Timed)
         {

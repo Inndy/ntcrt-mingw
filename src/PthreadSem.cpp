@@ -53,9 +53,17 @@ static int SemWait(sem_t* sem, const struct timespec* Time)
     NTSTATUS Status;
 
     _NtCRT_CancelPoint(NULL, NULL);
-    if (SemTake(sem, &Raw))
+    for (int Spins = _NtCRT_Spins();; Spins--)
     {
-        return 0;
+        if (SemTake(sem, &Raw))
+        {
+            return 0;
+        }
+        if (Spins == 0 || (Raw & ~SEM_VALUE) != 0)
+        {
+            break;
+        }
+        YieldProcessor();
     }
     if (Time != NULL)
     {

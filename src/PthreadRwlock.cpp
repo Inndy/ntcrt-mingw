@@ -23,6 +23,7 @@ static LONG_PTR RwSelf(void)
 static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, bool Try)
 {
     LONG_PTR Self = RwSelf();
+    int Spins = Try ? 0 : _NtCRT_Spins();
     LARGE_INTEGER Timeout;
     PLARGE_INTEGER Wait = NULL;
     bool Timed = false;
@@ -51,6 +52,12 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
             if ((Raw & RW_WRITER) != 0 && (Raw & RW_OWNER) == Self)
             {
                 return EDEADLK;
+            }
+            if (Spins > 0 && (Raw & RW_WAITERS) == 0)
+            {
+                Spins--;
+                YieldProcessor();
+                continue;
             }
             if (Time != NULL && !Timed)
             {

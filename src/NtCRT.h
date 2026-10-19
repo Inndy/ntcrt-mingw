@@ -115,6 +115,16 @@ extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG_PTR Value, U
 extern "C" void _NtCRT_Wake(const volatile void* Address, BOOL All);
 
 /*
+ * The rounds of YieldProcessor (pause) that a thread spends on a lock, a post or a signal before it parks, while no
+ * thread is parked on it: a park and an unpark cost about 4 us, 100 rounds 1.4 us on Zen 5 (3.5 us where a pause
+ * takes 140 cycles, as on Intel since Skylake). None when the affinity of the process has one processor (at the
+ * first spin), where the thread waited for cannot run meanwhile. _NtCRT_Parked tells whether a thread may be parked
+ * on Address (or another address of its bucket).
+ */
+extern "C" int _NtCRT_Spins(void);
+extern "C" bool _NtCRT_Parked(const volatile void* Address);
+
+/*
  * The parker of a thread (PthreadWait.cpp): NtWaitForAlertByThreadId (NTCRT_PARKER_ALERT, Windows 8 and later) or an
  * event (NTCRT_PARKER_EVENT), _NtCRT_ParkerMode once chosen. An event has references: _NtCRT_ParkerCreate makes one
  * with Refs (true and NULL without events, false if out of resources), _NtCRT_ParkerSelf adds one to that of the
