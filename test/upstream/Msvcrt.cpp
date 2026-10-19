@@ -587,6 +587,25 @@ static void TestEnvironment(void)
     }
 }
 
+static void TestProcessNames(void)
+{
+    const char* Args[] = { "x", "\xff", NULL };
+
+    /* An invalid name or argument is EILSEQ, not ENOMEM */
+    if (setlocale(LC_CTYPE, "C.UTF-8") != NULL)
+    {
+        errno = 0;
+        CHECK(system("\xff") == -1 && errno == EILSEQ);
+        errno = 0;
+        CHECK(_spawnv(_P_WAIT, "\xff", Args) == -1 && errno == EILSEQ);
+        errno = 0;
+        CHECK(_spawnv(_P_WAIT, "x.exe", Args) == -1 && errno == EILSEQ);
+        errno = 0;
+        CHECK(_popen("\xff", "r") == NULL && errno == EILSEQ);
+        setlocale(LC_CTYPE, "C");
+    }
+}
+
 extern "C"
 BOOL
 TestMsvcrt(VOID)
@@ -610,5 +629,6 @@ TestMsvcrt(VOID)
     TestMbcs();
     TestDllOnExit();
     TestEnvironment();
+    TestProcessNames();
     return g_Ok;
 }

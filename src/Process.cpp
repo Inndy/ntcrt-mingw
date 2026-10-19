@@ -426,7 +426,6 @@ _NtCRT_WideArray(
         if (Result[i] == NULL)
         {
             _NtCRT_FreeWideArray(Result);
-            NTCRT_ERRNO = ENOMEM;
             return NULL;
         }
     }
@@ -451,16 +450,14 @@ _NtCRT_SpawnA(
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
+    /* A conversion sets errno (EILSEQ, ENOMEM), the first that fails ends the call */
     WideName = _NtCRT_FileToWide(Name);
-    WideArgv = _NtCRT_WideArray(argv);
-    if (envp != NULL)
+    WideArgv = WideName != NULL ? _NtCRT_WideArray(argv) : NULL;
+    if (envp != NULL && WideArgv != NULL)
     {
         WideEnvp = _NtCRT_WideArray(envp);
     }
-    if (WideName == NULL || WideArgv == NULL || (envp != NULL && WideEnvp == NULL))
-    {
-        NTCRT_ERRNO = ENOMEM;
-    } else
+    if (WideArgv != NULL && (envp == NULL || WideEnvp != NULL))
     {
         Result = _NtCRT_SpawnW(Mode, WideName, WideArgv, WideEnvp, SearchPath, NULL);
     }
@@ -794,7 +791,6 @@ EXTERN_C int __cdecl _NtCRT_system(const char* command)
     WideCommand = _NtCRT_FileToWide(command);
     if (WideCommand == NULL)
     {
-        NTCRT_ERRNO = ENOMEM;
         return -1;
     }
     Result = _NtCRT__wsystem(WideCommand);
@@ -1044,12 +1040,10 @@ EXTERN_C FILE* __cdecl _NtCRT__popen(const char* command, const char* mode)
         NTCRT_ERRNO = EINVAL;
         return NULL;
     }
+    /* A conversion sets errno (EILSEQ, ENOMEM) */
     WideCommand = _NtCRT_FileToWide(command);
-    WideMode = _NtCRT_FileToWide(mode);
-    if (WideCommand == NULL || WideMode == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-    } else
+    WideMode = WideCommand != NULL ? _NtCRT_FileToWide(mode) : NULL;
+    if (WideMode != NULL)
     {
         Stream = _NtCRT_PopenW(WideCommand, WideMode);
     }
