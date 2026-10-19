@@ -5,6 +5,7 @@
 #include <conio.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wchar.h>
 
 EXTERN_C HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
@@ -14,8 +15,6 @@ EXTERN_C HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
                                         DWORD dwCreationDisposition,
                                         DWORD dwFlagsAndAttributes,
                                         HANDLE hTemplateFile);
-EXTERN_C int __cdecl _NtCRT__vscwprintf(const wchar_t* format, va_list ap);
-EXTERN_C int __cdecl _NtCRT__vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap);
 
 typedef BOOL(WINAPI* PNTCRT_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD);
 typedef BOOL(WINAPI* PNTCRT_GET_NUMBER_OF_CONSOLE_INPUT_EVENTS)(HANDLE, LPDWORD);
@@ -267,38 +266,23 @@ EXTERN_C int __cdecl _NtCRT__cputs(const char* str)
     return Ret;
 }
 
+/* Formatted once, a %n of the format may change the arguments */
 EXTERN_C int __cdecl _NtCRT__vcprintf(const char* format, va_list ap)
 {
-    va_list Copy;
-    int Length;
     char* Buffer;
+    int Length = _NtCRT_FormatAlloc(&Buffer, format, ap, 0);
 
-    if (format == NULL)
-    {
-        NTCRT_ERRNO = EINVAL;
-        return -1;
-    }
-    va_copy(Copy, ap);
-    Length = _NtCRT_FormatString(NULL, 0, format, Copy, 0);
-    va_end(Copy);
     if (Length < 0)
     {
         return -1;
     }
-    Buffer = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, (size_t)Length + 1);
-    if (Buffer == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
-    }
-    _NtCRT_FormatString(Buffer, (size_t)Length + 1, format, ap, 0);
     _NtCRT_lock(_CONIO_LOCK);
     if (_NtCRT_ConsoleWriteA(Buffer, Length) != 0)
     {
         Length = -1;
     }
     _NtCRT_unlock(_CONIO_LOCK);
-    RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
+    free(Buffer);
     return Length;
 }
 
@@ -315,36 +299,28 @@ EXTERN_C int __cdecl _NtCRT__cprintf(const char* format, ...)
 
 EXTERN_C int __cdecl _NtCRT__vcwprintf(const wchar_t* format, va_list ap)
 {
-    va_list Copy;
+    wchar_t Stack[256], *Buffer = Stack;
     int Length;
-    wchar_t* Buffer;
 
     if (format == NULL)
     {
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    va_copy(Copy, ap);
-    Length = _NtCRT__vscwprintf(format, Copy);
-    va_end(Copy);
-    if (Length < 0)
+    Length = _NtCRT_FormatGrowW(&Buffer, ARRAYSIZE(Stack), format, ap, NTCRT_PRINTF_LEGACY_WIDE);
+    if (Length >= 0)
     {
-        return -1;
+        _NtCRT_lock(_CONIO_LOCK);
+        if (!_NtCRT_ConsoleWrite(Buffer, (DWORD)Length))
+        {
+            Length = -1;
+        }
+        _NtCRT_unlock(_CONIO_LOCK);
     }
-    Buffer = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, ((size_t)Length + 1) * sizeof(wchar_t));
-    if (Buffer == NULL)
+    if (Buffer != Stack)
     {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
+        RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
     }
-    _NtCRT__vsnwprintf(Buffer, (size_t)Length + 1, format, ap);
-    _NtCRT_lock(_CONIO_LOCK);
-    if (!_NtCRT_ConsoleWrite(Buffer, (DWORD)Length))
-    {
-        Length = -1;
-    }
-    _NtCRT_unlock(_CONIO_LOCK);
-    RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
     return Length;
 }
 

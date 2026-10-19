@@ -325,6 +325,7 @@ extern "C" int _NtCRT_FormatLegacyW(wchar_t* Buffer, size_t Count, const wchar_t
 extern "C" int _NtCRT_FormatAlloc(char** Result, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStream(FILE* Stream, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStreamW(FILE* Stream, const wchar_t* Format, va_list ap, ULONG Options);
+extern "C" int _NtCRT_FormatGrowW(wchar_t** Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
 
 /* Streams of Stdio.cpp used by StdioPrintf.cpp, StdioScanf.cpp and StdioWscanf.cpp */
 extern "C" FILE _NtCRT_iob[];

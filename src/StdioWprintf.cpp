@@ -133,29 +133,16 @@ EXTERN_C int __cdecl _NtCRT___ms_fwprintf(FILE* stream, const wchar_t* format, .
  */
 EXTERN_C int __cdecl _NtCRT__woutput_s(FILE* stream, const wchar_t* format, va_list ap)
 {
-    va_list Copy;
+    wchar_t Stack[256], *Buffer = Stack;
     int Length;
-    wchar_t* Buffer;
 
     if (stream == NULL || format == NULL)
     {
         _NtCRT_InvalidParameter(EINVAL);
         return -1;
     }
-    va_copy(Copy, ap);
-    Length = _NtCRT__vscwprintf(format, Copy);
-    va_end(Copy);
-    if (Length < 0)
-    {
-        return -1;
-    }
-    Buffer = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, ((size_t)Length + 1) * sizeof(wchar_t));
-    if (Buffer == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
-    }
-    _NtCRT__vsnwprintf(Buffer, (size_t)Length + 1, format, ap);
+    /* Formatted once, a %n of the format may change the arguments */
+    Length = _NtCRT_FormatGrowW(&Buffer, ARRAYSIZE(Stack), format, ap, NTCRT_PRINTF_LEGACY_WIDE);
     for (int i = 0; i < Length; i++)
     {
         if ((stream->_cnt -= sizeof(wchar_t)) >= 0)
@@ -169,7 +156,10 @@ EXTERN_C int __cdecl _NtCRT__woutput_s(FILE* stream, const wchar_t* format, va_l
             break;
         }
     }
-    RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
+    if (Buffer != Stack)
+    {
+        RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
+    }
     return Length;
 }
 
