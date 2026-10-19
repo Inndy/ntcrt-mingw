@@ -663,9 +663,10 @@ _NtCRT_ConvertedLength(
 {
     mbstate_t State = 0;
     char Bytes[MB_LEN_MAX];
-    size_t i, n = 0;
+    size_t i, n = 0, Max = Precision >= 0 ? (size_t)Precision : SIZE_MAX;
 
-    for (i = 0; i < Count; i++)
+    /* A precision that is reached reads no further, the array may end there */
+    for (i = 0; i < Count && n < Max; i++)
     {
         size_t k = wcrtomb(Bytes, s[i], &State);
 
@@ -678,7 +679,7 @@ _NtCRT_ConvertedLength(
         {
             break;
         }
-        if (Precision >= 0 && n + k > (size_t)Precision)
+        if (n + k > Max)
         {
             break;
         }
@@ -705,10 +706,13 @@ _NtCRT_ConvertedLength(
     _Out_ size_t* Used)
 {
     mbstate_t State = 0;
-    size_t i = 0, n = 0;
+    size_t i = 0, n = 0, Max = Precision >= 0 ? (size_t)Precision : SIZE_MAX;
 
-    /* mbrtowc returns a character above U+FFFF in two calls: the high surrogate, then the low one */
-    while (i < Count)
+    /*
+     * mbrtowc returns a character above U+FFFF in two calls: the high surrogate, then the low one. A precision that
+     * is reached reads no further, the array may end there.
+     */
+    while (i < Count && n < Max)
     {
         wchar_t Char;
         size_t k = mbrtowc(&Char, s + i, Count == SIZE_MAX ? MB_LEN_MAX : Count - i, &State);
@@ -717,7 +721,7 @@ _NtCRT_ConvertedLength(
         {
             return FALSE;
         }
-        if (k == 0 || (Precision >= 0 && n + (Char >= 0xD800 && Char <= 0xDBFF ? 2 : 1) > (size_t)Precision))
+        if (k == 0 || n + (Char >= 0xD800 && Char <= 0xDBFF ? 2 : 1) > Max)
         {
             break;
         }

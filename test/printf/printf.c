@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <windows.h>
 
 static int g_Failures;
 
@@ -151,8 +152,26 @@ int main(void)
         g_Failures++;
     }
 
-    /* A character that does not convert fails the call */
+    /* A precision ends an array without a null character: nothing after it is read (the page is not accessible) */
     setlocale(LC_ALL, "C.UTF-8");
+    {
+        char* Page = (char*)VirtualAlloc(NULL, 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        DWORD Old;
+        wchar_t* Wide = (wchar_t*)(Page + 0x1000) - 2;
+        char* Narrow = Page + 0x1000 - 1;
+
+        VirtualProtect(Page + 0x1000, 0x1000, PAGE_NOACCESS, &Old);
+        Wide[0] = 0xD83D;
+        Wide[1] = 0xDE00;
+        CHECK("\xf0\x9f\x98\x80|", "%.4ls|%.0ls", Wide, Wide + 2);
+        /* In the last byte of Wide */
+        *Narrow = 'n';
+        checkw(L"n|", 0, L"%.1s|%.0s", Narrow, Narrow + 1);
+        checkw(L"n|", 1, L"%.1S|%.0S", Narrow, Narrow + 1);
+        VirtualFree(Page, 0, MEM_RELEASE);
+    }
+
+    /* A character that does not convert fails the call */
     CHECK("\xe4\xb8\xad|\xf0\x9f\x98\x80", "%lc|%ls", (wint_t)0x4E2D, L"\xD83D\xDE00");
     errno = 0;
     check(NULL, -1, "%lc", (wint_t)0xD800);
