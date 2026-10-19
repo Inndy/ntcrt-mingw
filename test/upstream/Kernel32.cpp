@@ -1,0 +1,115 @@
+/* kernel32 functions of NtCRT (src/Kernel32.cpp) against kernel32 itself */
+
+#include <KNSoft/NDK/NDK.inl>
+
+#include <stdio.h>
+#include <string.h>
+
+typedef DWORD(WINAPI* PFN_GET_MODULE_FILE_NAME_A)(HMODULE hModule, LPSTR lpFilename, DWORD nSize);
+typedef DWORD(WINAPI* PFN_GET_MODULE_FILE_NAME_W)(HMODULE hModule, LPWSTR lpFilename, DWORD nSize);
+
+static BOOL g_Ok;
+
+static void Check(bool Ok, const char* What)
+{
+    if (!Ok)
+    {
+        printf("FAIL kernel32: %s\n", What);
+        g_Ok = FALSE;
+    }
+}
+
+#define CHECK(Expr) Check(Expr, #Expr)
+
+static PVOID GetKernel32Procedure(_In_z_ PCSTR Name)
+{
+    ANSI_STRING ProcedureName;
+    HMODULE Kernel32 = _Inline_GetModuleHandleW(L"kernel32.dll");
+    PVOID Address;
+
+    _Inline_RtlInitAnsiString(&ProcedureName, Name);
+    return Kernel32 != NULL && NT_SUCCESS(LdrGetProcedureAddress(Kernel32, &ProcedureName, 0, &Address)) ? Address
+                                                                                                           : NULL;
+}
+
+/* Truncated to nSize characters with the terminator, nSize 1 too */
+static void TestGetModuleFileNameA(void)
+{
+    PFN_GET_MODULE_FILE_NAME_A System = (PFN_GET_MODULE_FILE_NAME_A)GetKernel32Procedure("GetModuleFileNameA");
+    char Expected[MAX_PATH * 4], Actual[MAX_PATH * 4];
+    DWORD Length, Sizes[] = { 1, 2, 5, 0, 0 };
+
+    if (System == NULL)
+    {
+        return;
+    }
+    Length = GetModuleFileNameA(NULL, Actual, sizeof(Actual));
+    CHECK(Length != 0 && Length < sizeof(Actual));
+    Sizes[3] = Length;
+    Sizes[4] = Length + 1;
+    for (DWORD Size : Sizes)
+    {
+        DWORD ExpectedRet, ActualRet, ExpectedError, ActualError;
+
+        memset(Expected, 'x', sizeof(Expected));
+        memset(Actual, 'x', sizeof(Actual));
+        SetLastError(0);
+        ExpectedRet = System(NULL, Expected, Size);
+        ExpectedError = GetLastError();
+        SetLastError(0);
+        ActualRet = GetModuleFileNameA(NULL, Actual, Size);
+        ActualError = GetLastError();
+        if (ActualRet != ExpectedRet || ActualError != ExpectedError || memcmp(Actual, Expected, Size + 1) != 0)
+        {
+            printf("FAIL kernel32: GetModuleFileNameA of %lu: %lu %lu, kernel32 %lu %lu\n", Size, ActualRet,
+                   ActualError, ExpectedRet, ExpectedError);
+            g_Ok = FALSE;
+        }
+    }
+}
+
+static void TestGetModuleFileNameW(void)
+{
+    PFN_GET_MODULE_FILE_NAME_W System = (PFN_GET_MODULE_FILE_NAME_W)GetKernel32Procedure("GetModuleFileNameW");
+    WCHAR Expected[MAX_PATH], Actual[MAX_PATH];
+    DWORD Length, Sizes[] = { 1, 2, 5, 0, 0 };
+
+    if (System == NULL)
+    {
+        return;
+    }
+    Length = GetModuleFileNameW(NULL, Actual, ARRAYSIZE(Actual));
+    CHECK(Length != 0 && Length + 1 < ARRAYSIZE(Actual));
+    Sizes[3] = Length;
+    Sizes[4] = Length + 1;
+    for (DWORD Size : Sizes)
+    {
+        DWORD ExpectedRet, ActualRet, ExpectedError, ActualError;
+
+        memset(Expected, 'x', sizeof(Expected));
+        memset(Actual, 'x', sizeof(Actual));
+        SetLastError(0);
+        ExpectedRet = System(NULL, Expected, Size);
+        ExpectedError = GetLastError();
+        SetLastError(0);
+        ActualRet = GetModuleFileNameW(NULL, Actual, Size);
+        ActualError = GetLastError();
+        if (ActualRet != ExpectedRet || ActualError != ExpectedError ||
+            memcmp(Actual, Expected, (Size + 1) * sizeof(WCHAR)) != 0)
+        {
+            printf("FAIL kernel32: GetModuleFileNameW of %lu: %lu %lu, kernel32 %lu %lu\n", Size, ActualRet,
+                   ActualError, ExpectedRet, ExpectedError);
+            g_Ok = FALSE;
+        }
+    }
+}
+
+extern "C"
+BOOL
+TestKernel32(VOID)
+{
+    g_Ok = TRUE;
+    TestGetModuleFileNameA();
+    TestGetModuleFileNameW();
+    return g_Ok;
+}

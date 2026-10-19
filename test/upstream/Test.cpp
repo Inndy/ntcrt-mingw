@@ -7,6 +7,7 @@ extern "C" BOOL TestCodePage(VOID);
 extern "C" BOOL TestConversion(VOID);
 extern "C" BOOL TestSmoke(VOID);
 extern "C" BOOL TestMsvcrt(VOID);
+extern "C" BOOL TestKernel32(VOID);
 
 int
 __cdecl
@@ -45,6 +46,11 @@ main()
     if (!TestMsvcrt())
     {
         return 7;
+    }
+
+    if (!TestKernel32())
+    {
+        return 8;
     }
 
     return 0;

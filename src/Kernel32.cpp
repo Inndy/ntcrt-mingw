@@ -121,7 +121,10 @@ _K32_GetModuleFileNameW(
     _Out_writes_to_(nSize, ((return < nSize) ? (return + 1) : nSize)) LPWSTR lpFilename,
     _In_ DWORD nSize)
 {
-    return _Inline_GetModuleFileNameW(hModule, lpFilename, nSize);
+    DWORD Length = _Inline_GetModuleFileNameW(hModule, lpFilename, nSize);
+
+    /* Truncated to nSize characters with the terminator, kernel32 returns nSize */
+    return nSize != 0 && _Inline_GetLastError() == ERROR_INSUFFICIENT_BUFFER ? nSize : Length;
 }
 
 NTCRT_API
@@ -133,20 +136,24 @@ _K32_GetModuleFileNameA(
     _In_ DWORD nSize)
 {
     WCHAR Path[MAX_PATH * 4];
-    DWORD Length;
-    int Bytes;
+    CHAR Ansi[ARRAYSIZE(Path) * 3];
+    DWORD Length, Bytes;
 
     Length = _Inline_GetModuleFileNameW(hModule, Path, ARRAYSIZE(Path));
     if (Length == 0 || nSize == 0)
     {
         return 0;
     }
-    Bytes = _NtCRT_WideCharToMultiByte(_NtCRT_CodePage(), 0, Path, Length, lpFilename, nSize - 1, NULL, NULL);
-    if (Bytes == 0 && Length != 0)
+    Bytes = (DWORD)_NtCRT_WideCharToMultiByte(_NtCRT_CodePage(), 0, Path, Length, Ansi, sizeof(Ansi), NULL, NULL);
+    if (Bytes >= nSize)
     {
-        Bytes = nSize - 1;
+        /* Truncated to nSize bytes with the terminator, kernel32 returns nSize */
+        memcpy(lpFilename, Ansi, nSize - 1);
+        lpFilename[nSize - 1] = ANSI_NULL;
         _Inline_SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return nSize;
     }
+    memcpy(lpFilename, Ansi, Bytes);
     lpFilename[Bytes] = ANSI_NULL;
     return Bytes;
 }
