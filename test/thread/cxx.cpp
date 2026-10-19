@@ -354,8 +354,39 @@ static void Cxx20()
     Waiter.join();
 }
 
-int main()
+/*
+ * "last": the main thread, the last one, ends by pthread_exit, the process ends with it. Its thread_local destructors
+ * run with the atexit functions, one constructs another thread_local variable whose destructor runs too: "AB".
+ */
+struct LastB
 {
+    ~LastB() { std::printf("B"); }
+};
+
+static LastB& GetLastB()
+{
+    static thread_local LastB B;
+    return B;
+}
+
+struct LastA
+{
+    ~LastA()
+    {
+        GetLastB();
+        std::printf("A");
+    }
+};
+
+int main(int argc, char** argv)
+{
+    if (argc > 1)
+    {
+        static thread_local LastA A;
+
+        (void)A;
+        pthread_exit(nullptr);
+    }
     check(std::thread::hardware_concurrency() >= 1, "std::thread::hardware_concurrency");
     check(std::this_thread::get_id() == std::this_thread::get_id(), "std::this_thread::get_id");
     Mutexes();

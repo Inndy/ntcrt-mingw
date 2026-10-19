@@ -146,12 +146,6 @@ static PNTCRT_PTHREAD CurrentThread(void)
     return Thread;
 }
 
-static __attribute__((noreturn)) void ThreadEnd(PNTCRT_PTHREAD Thread, void* Result)
-{
-    Thread->Result = Result;
-    RtlExitUserThread((NTSTATUS)(ULONG_PTR)Result);
-}
-
 static NTSTATUS NTAPI ThreadStart(PVOID Parameter)
 {
     PNTCRT_PTHREAD Thread = (PNTCRT_PTHREAD)Parameter;
@@ -316,7 +310,12 @@ NTCRT_API void pthread_exit(void* res)
     }
     /* Outside the loader lock, which the TLS callback holds: a destructor may create or join a thread */
     _NtCRT_KeyDestructors();
-    ThreadEnd(Thread, res);
+    /*
+     * The last thread of the process ends it with its status, as Windows does: ntdll calls RtlExitUserProcess, whose
+     * DLL_PROCESS_DETACH runs the atexit functions and flushes the streams (see Startup.cpp)
+     */
+    Thread->Result = res;
+    RtlExitUserThread((NTSTATUS)(ULONG_PTR)res);
 }
 
 NTCRT_API pthread_t pthread_self(void)

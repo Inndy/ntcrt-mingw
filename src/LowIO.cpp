@@ -19,7 +19,18 @@ _NtCRT_LockFd(
         _NtCRT_GetPtd()->Doserrno = 0;
         return NULL;
     }
-    RtlEnterCriticalSection(&Entry->Lock);
+    /*
+     * While the process ends without exit the other threads are gone, a lock that one of them held is never released
+     * and entering its critical section would end the process: the fd is busy
+     */
+    if (!NtCurrentPeb()->Ldr->ShutdownInProgress)
+    {
+        RtlEnterCriticalSection(&Entry->Lock);
+    } else if (!RtlTryEnterCriticalSection(&Entry->Lock))
+    {
+        NTCRT_ERRNO = EBUSY;
+        return NULL;
+    }
     if (!(Entry->Flags & FOPEN))
     {
         RtlLeaveCriticalSection(&Entry->Lock);

@@ -257,7 +257,7 @@ test-cxx: $(BUILD)/cxx/stdcxx.exe
 
 # The pthread functions, <threads.h> and the threads of libstdc++. -lpthread and -pthread link no winpthreads.
 THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe \
-                $(BUILD)/thread/dllimport.exe $(BUILD)/thread/tlsslot.exe
+                $(BUILD)/thread/dllimport.exe $(BUILD)/thread/exit.exe $(BUILD)/thread/tlsslot.exe
 
 $(BUILD)/thread/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
@@ -275,17 +275,37 @@ $(BUILD)/thread/tlsslot.exe: test/thread/tlsslot.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 
+$(BUILD)/thread/exit.exe: test/thread/exit.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
 $(BUILD)/thread/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< -Wl,-Map=$(BUILD)/thread/cxx.map
 
+# exit.exe: the end of the process without exit (the last thread, ExitProcess), its status and output (a pipe)
 test-thread: $(THREAD_TESTS)
 	if grep -i winpthread $(BUILD)/thread/cxx.map; then echo "winpthreads is linked"; exit 1; fi
 	if grep 'libgcc\.a(emutls\.o)' $(BUILD)/thread/cxx.map; then echo "emutls of libgcc is linked"; exit 1; fi
 	for t in $(THREAD_TESTS); do \
-	    objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll && { echo "$$t imports more than ntdll.dll"; exit 1; }; \
-	    ./$$t || exit 1; \
+	    if objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll; then echo "$$t imports more than ntdll.dll"; exit 1; fi; \
 	done
+	for t in $(filter-out %/exit.exe,$(THREAD_TESTS)); do ./$$t || exit 1; done
+	t=$(BUILD)/thread/exit.exe; \
+	check() { out=$$($$t $$1); s=$$?; test $$s = $$2 && test "$$out" = "$$3" || { echo "exit.exe $$1: $$s '$$out'"; exit 1; }; }; \
+	check main 7 "main dtor:main atexit" && \
+	check c11 7 "c11 dtor:main atexit" && \
+	check last 9 "last dtor:main return dtor:last atexit" && \
+	check createthread 11 "createthread dtor:main worker atexit" && \
+	check exitprocess 5 "exitprocess atexit" && \
+	check locked 6 "locked atexit" && \
+	rm -f $(BUILD)/thread/exit.txt && \
+	check "lockedfd $(BUILD)/thread/exit.txt" 8 "lockedfd dup2:-1,1 atexit" && \
+	test "$$(cat $(BUILD)/thread/exit.txt)" = lockedfd && \
+	check "mingwthr $(BUILD)/thread/exit.txt" 4 "mingwthr atexit" && \
+	test "$$(cat $(BUILD)/thread/exit.txt)" = mingwthr && \
+	out=$$($(BUILD)/thread/cxx.exe last) && test "$$out" = "AB"
+	@echo "end of the process: ok"
 
 # libntcrt_start: pseudo relocations of data auto-imported from a DLL (built with the default runtime), _matherr
 $(BUILD)/start/data.dll: test/start/data.c

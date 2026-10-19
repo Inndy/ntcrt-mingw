@@ -183,6 +183,14 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
     }
 }
 
+/*
+ * EXIT_STARTED: exit, _exit or another end of the C runtime started, the end of the process does not do its work
+ * again. EXIT_PROCESS_END: the process ends without exit, _NtCRT_ProcessEnd did that work.
+ */
+#define EXIT_STARTED     1
+#define EXIT_PROCESS_END 2
+static LONG g_ExitState;
+
 static
 VOID
 NTAPI
@@ -196,6 +204,11 @@ _NtCRT_TlsCallback(
     if (Reason == DLL_THREAD_DETACH)
     {
         _NtCRT_ThreadDetach();
+    } else if (Reason == DLL_PROCESS_DETACH && __atomic_load_n(&g_ExitState, __ATOMIC_RELAXED) == EXIT_PROCESS_END &&
+               _NtCRT_FlushAllAtExit != NULL)
+    {
+        /* Again, after the key destructors of libmingw32 (__mingwthr_key_dtor, .CRT$XLD) */
+        _NtCRT_FlushAllAtExit(true);
     }
 }
 
@@ -562,8 +575,9 @@ _NtCRT_RunOnExit(void)
 
 extern "C"
 {
-    void (*_NtCRT_FlushAllAtExit)(void) = NULL;
+    void (*_NtCRT_FlushAllAtExit)(bool Terminating) = NULL;
 }
+
 
 static
 void
@@ -573,19 +587,54 @@ _NtCRT_DoExit(
     _In_ bool retcaller)
 {
     UNREFERENCED_PARAMETER(code);
+    __atomic_store_n(&g_ExitState, EXIT_STARTED, __ATOMIC_RELAXED);
     if (!quick)
     {
         _NtCRT_RunOnExit();
     }
     if (_NtCRT_FlushAllAtExit != NULL)
     {
-        _NtCRT_FlushAllAtExit();
+        _NtCRT_FlushAllAtExit(false);
     }
     if (!retcaller)
     {
         RtlExitUserProcess(code);
     }
 }
+
+/*
+ * The process ends without exit: by the end of its last thread, ExitProcess or RtlExitUserProcess, which ended the
+ * other threads (DLL_PROCESS_DETACH while ntdll shuts the process down, ShutdownInProgress is what
+ * RtlDllShutdownInProgress returns, Reserved is NULL for a TLS callback). The atexit functions run and the streams are
+ * flushed as msvcrt does at its DLL_PROCESS_DETACH, which precedes the TLS callbacks of the program (UCRT flushes
+ * only). This one is the first of them: the callback of libmingw32 stops taking thread_local destructors at
+ * DLL_PROCESS_DETACH, which the atexit functions may still register.
+ */
+static
+VOID
+NTAPI
+_NtCRT_ProcessEnd(
+    _In_ PVOID DllHandle,
+    _In_ DWORD Reason,
+    _In_ PVOID Reserved)
+{
+    UNREFERENCED_PARAMETER(DllHandle);
+    UNREFERENCED_PARAMETER(Reserved);
+    if (Reason != DLL_PROCESS_DETACH || !NtCurrentPeb()->Ldr->ShutdownInProgress ||
+        InterlockedCompareExchange(&g_ExitState, EXIT_PROCESS_END, 0) != 0)
+    {
+        return;
+    }
+    _NtCRT_RunOnExit();
+    if (_NtCRT_FlushAllAtExit != NULL)
+    {
+        _NtCRT_FlushAllAtExit(true);
+    }
+}
+
+/* After the start of the array (.CRT$XLA of tlssup.o), before the callback of libmingw32 (.CRT$XLB) */
+extern "C" __attribute__((section(".CRT$XLAA"), used)) const PIMAGE_TLS_CALLBACK _NtCRT_ProcessEndEntry =
+    _NtCRT_ProcessEnd;
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code)
 {
@@ -605,6 +654,7 @@ EXTERN_C void __cdecl _NtCRT__c_exit(void)
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__exit(int code)
 {
+    __atomic_store_n(&g_ExitState, EXIT_STARTED, __ATOMIC_RELAXED);
     RtlExitUserProcess(code);
 }
 

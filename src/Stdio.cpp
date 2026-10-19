@@ -385,20 +385,31 @@ _NtCRT_ForEachStream(
     return Count;
 }
 
-/* Context: 1 for flush returning error count, 0 for flush returning stream count */
+/*
+ * Context: 1 for flush returning error count, 0 for flush returning stream count, and 2 when the process ends without
+ * exit: a lock that a terminated thread held is never released and entering its critical section would end the
+ * process, that stream is left
+ */
 static
 int
 _NtCRT_FlushCallback(
     _In_ FILE* Stream,
-    _In_ int ErrorCount)
+    _In_ int Context)
 {
+    int ErrorCount = Context & 1;
     int Ret = 0;
 
     if (!_NtCRT_InUse(Stream))
     {
         return 0;
     }
-    _NtCRT_lock_file(Stream);
+    if ((Context & 2) == 0)
+    {
+        _NtCRT_lock_file(Stream);
+    } else if (!RtlTryEnterCriticalSection(_NtCRT_StreamLock(Stream)))
+    {
+        return 0;
+    }
     if (_NtCRT_InUse(Stream))
     {
         if (_NtCRT_flush_nolock(Stream) != 0)
@@ -419,9 +430,17 @@ EXTERN_C int __cdecl _NtCRT_flushall_impl(BOOL FlushOnly)
     return FlushOnly ? (Ret != 0 ? EOF : 0) : Ret;
 }
 
-EXTERN_C void _NtCRT_FlushAll(void)
+EXTERN_C void _NtCRT_FlushAll(bool Terminating)
 {
-    _NtCRT_flushall_impl(TRUE);
+    /*
+     * Nothing was written if the streams are not initialized (a terminated thread may have left that unfinished). The
+     * scan lock is entered as msvcrt does, the process ends there if a terminated thread held it.
+     */
+    if (Terminating && __atomic_load_n(&g_StdioState, __ATOMIC_ACQUIRE) != 2)
+    {
+        return;
+    }
+    _NtCRT_ForEachStream(_NtCRT_FlushCallback, Terminating ? 3 : 1);
 }
 
 static

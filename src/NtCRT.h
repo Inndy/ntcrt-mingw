@@ -332,10 +332,11 @@ extern "C" BOOL _NtCRT_ScanFloatText(const char* Text, int Kind, void* Value);
         return Ret; \
     }
 
-extern "C" void _NtCRT_FlushAll(void);
+/* Terminating: the process ends without exit, the other threads are gone */
+extern "C" void _NtCRT_FlushAll(bool Terminating);
 extern "C" void _NtCRT_CloseAll(void);
 /* _NtCRT_FlushAll, set by Stdio.cpp at startup so that exit does not link the streams of a program without them */
-extern "C" void (*_NtCRT_FlushAllAtExit)(void);
+extern "C" void (*_NtCRT_FlushAllAtExit)(bool Terminating);
 
 /* exit, see Startup.cpp */
 extern "C" __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code);

@@ -98,13 +98,13 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 37376 | 24576 | 14336 |
-| `puts` | 248832 | 445440 | 47616 | 35328 | 14336 |
+| `return 0` | 248832 | 445440 | 37376 | 25088 | 14336 |
+| `puts` | 248832 | 445440 | 48128 | 35328 | 14336 |
 | `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
-| `wprintf` | 248832 | 445440 | 82432 | 69120 | 41472 |
-| `sscanf("%d %lf %s")` | | | 96768 | 61440 | 56320 |
-| `std::cout` | 1257472 | 1420800 | 1155584 | 720896 | 1035776 |
-| `std::thread` | | | 187392 | 100352 | 135168 |
+| `wprintf` | 248832 | 445440 | 82944 | 69120 | 41472 |
+| `sscanf("%d %lf %s")` | | | 96768 | 61952 | 56320 |
+| `std::cout` | 1257472 | 1420800 | 1155584 | 720384 | 1035776 |
+| `std::thread` | | | 187392 | 98816 | 135168 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
@@ -319,6 +319,21 @@ code.
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
   joined (`EINVAL`).
+- A thread that ends by `pthread_exit`, `thrd_exit` or a return from the start routine just ends. The process ends as
+  Windows ends it, when its last thread ends, whatever created it (a thread of `CreateThread` keeps the process
+  running too), with the status of that thread: the low 32 bits of the result of the thread, not the `exit(0)` of
+  POSIX and C11. That last thread gets no thread detach: its key destructors run if it ended by `pthread_exit`, its
+  `thread_local` destructors with the `atexit` functions (libmingw32 registers them by `atexit`), as with msvcrt.
+- When the process ends without `exit` (the end of its last thread, `ExitProcess`, `RtlExitUserProcess`), a TLS
+  callback of NtCRT runs the `atexit` functions and flushes the streams at `DLL_PROCESS_DETACH`, before the other TLS
+  callbacks of the program, as msvcrt does in its `DLL_PROCESS_DETACH`, which precedes them (UCRT flushes only), and
+  flushes the streams again after the key destructors of libmingw32 (`__mingwthr_key_dtor`).
+  `_exit`, `abort` and a fatal error skip that work, `TerminateProcess` too. The other threads were ended at any point
+  by then: a stream whose lock, or the lock of whose fd, one of them held is not flushed (other I/O on that fd fails
+  with `EBUSY`), and an `atexit` function that takes the lock of such a stream, or waits for another thread, ends the
+  process there or hangs. NtCRT in a DLL does that work at the `DLL_PROCESS_DETACH` of the DLL, before its entry
+  point calls its `DllMain` and runs its `atexit` functions (a table of the DLL startup code of MinGW-w64): what they
+  write is not flushed.
 - Cancellation is deferred, at `pthread_testcancel`, `pthread_join`, `pthread_cond_wait`, `pthread_cond_timedwait`,
   `sem_wait`, `sem_timedwait`, `nanosleep`, `clock_nanosleep`, `sleep`, `usleep` and `pthread_delay_np` (`sleep` and
   `usleep` of libmingwex are replaced, they wait by `Sleep`). These wait alertably and `pthread_cancel` alerts the
@@ -427,6 +442,8 @@ NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 hea
 | `fopen` mode `x` | C11, `EEXIST` | `EINVAL` | as C | as C |
 | `tmpnam` | a name of up to `L_tmpnam` - 1 | `\s<pid>.<n>`, the root of the current drive | the temporary directory, `L_tmpnam` 260 in the headers of the SDK | as msvcrt, `L_tmpnam` 14 in the MinGW-w64 headers |
 | `tmpfile` | impl. | the root of the current drive, fails without write access to it | the temporary directory | the temporary directory |
+| the end of the last thread (`thrd_exit`, `pthread_exit` of winpthreads, `ExitThread`) | `exit(EXIT_SUCCESS)` (C11, POSIX) | the status of the thread, `atexit` functions run, streams flushed | the status of the thread, streams flushed | as msvcrt, as Windows ends a process (see "Threads") |
+| `ExitProcess`, `RtlExitUserProcess` | | `atexit` functions run, streams flushed | streams flushed | as msvcrt |
 
 ### Differences from msvcrt
 

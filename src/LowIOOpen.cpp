@@ -173,9 +173,12 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
         _NtCRT_SetErrnoFromNtStatus(Status);
         return -1;
     }
-    if (_NtCRT_FdEntry(fd2) != NULL && (_NtCRT_FdEntry(fd2)->Flags & FOPEN))
+    /* EBUSY: the process ends and a terminated thread holds the lock of fd2, which stays unusable */
+    if (_NtCRT_FdEntry(fd2) != NULL && (_NtCRT_FdEntry(fd2)->Flags & FOPEN) && _NtCRT_close(fd2) != 0 &&
+        NTCRT_ERRNO == EBUSY)
     {
-        _NtCRT_close(fd2);
+        NtClose(NewHandle);
+        return -1;
     }
     _NtCRT_SetFd(fd2, NewHandle, Flags);
     _NtCRT_FdEntry(fd2)->TextMode = TextMode;
