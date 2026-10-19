@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+int _NtCRT_Umask;
+
 /* The standard handle of fd 0, 1 or 2 */
 static __attribute__((noinline)) void _NtCRT_SetStdFd(int fd, HANDLE Handle)
 {
@@ -448,7 +450,7 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
     }
     Options = FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE;
     Attributes = FILE_ATTRIBUTE_NORMAL;
-    if ((oflag & _O_CREAT) && !(pmode & _S_IWRITE))
+    if ((oflag & _O_CREAT) && !(pmode & ~_NtCRT_Umask & _S_IWRITE))
     {
         Attributes = FILE_ATTRIBUTE_READONLY;
     }

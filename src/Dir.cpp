@@ -341,12 +341,10 @@ EXTERN_C int __cdecl _NtCRT__chmod(const char* path, int mode)
     NTCRT_WIDE_PATH_CALL(path, _NtCRT__wchmod(WidePath, mode));
 }
 
-static int g_Umask;
-
 EXTERN_C int __cdecl _NtCRT__umask(int mode)
 {
-    int Old = g_Umask;
-    g_Umask = mode & (_S_IREAD | _S_IWRITE);
+    int Old = _NtCRT_Umask;
+    _NtCRT_Umask = mode & (_S_IREAD | _S_IWRITE);
     return Old;
 }
 
@@ -357,12 +355,12 @@ EXTERN_C errno_t __cdecl _NtCRT__umask_s(int mode, int* oldmode)
     {
         return _NtCRT_InvalidParameter(EINVAL);
     }
-    *oldmode = g_Umask;
+    *oldmode = _NtCRT_Umask;
     if (mode & ~(_S_IREAD | _S_IWRITE))
     {
         return _NtCRT_InvalidParameter(EINVAL);
     }
-    g_Umask = mode;
+    _NtCRT_Umask = mode;
     return 0;
 }
 

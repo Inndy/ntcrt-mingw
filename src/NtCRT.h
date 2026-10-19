@@ -289,6 +289,8 @@ extern "C" long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origi
 extern "C" int __cdecl _NtCRT_chsize_s(int fd, long long size);
 extern "C" int __cdecl _NtCRT_open_handle(HANDLE Handle, int flags);
 extern "C" int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, int pmode);
+/* The permissions _umask takes from new files, see LowIOOpen.cpp */
+extern "C" int _NtCRT_Umask;
 extern "C" intptr_t __cdecl _NtCRT_get_osfhandle(int fd);
 extern "C" void __cdecl _NtCRT_WriteStderrRaw(const char* Text);
 extern "C" int __cdecl _NtCRT_isatty(int fd);

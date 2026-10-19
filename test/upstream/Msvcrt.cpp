@@ -307,6 +307,22 @@ static void TestDup2(void)
     _close(fd);
 }
 
+/* The mask of _umask takes the write permission of a new file */
+static void TestUmask(void)
+{
+    static const char Name[] = "ntcrt_msvcrt.tmp";
+    int fd;
+
+    remove(Name);
+    CHECK(_umask(_S_IWRITE) == 0);
+    fd = _open(Name, _O_CREAT | _O_EXCL | _O_WRONLY, _S_IREAD | _S_IWRITE);
+    CHECK(fd >= 0 && (GetFileAttributesA(Name) & FILE_ATTRIBUTE_READONLY));
+    _close(fd);
+    _umask(0);
+    _chmod(Name, _S_IREAD | _S_IWRITE);
+    remove(Name);
+}
+
 /* The buffer _getcwd allocates has maxlen bytes at least */
 static void TestGetcwd(void)
 {
@@ -355,6 +371,7 @@ TestMsvcrt(VOID)
     TestBinaryNarrow();
     TestStatNull();
     TestDup2();
+    TestUmask();
     TestGetcwd();
     TestMbcs();
     return g_Ok;
