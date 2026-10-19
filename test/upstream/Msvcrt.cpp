@@ -428,6 +428,9 @@ static void TestMultibyte(void)
     size_t Count;
 
     CHECK(wcstombs_s(&Count, Bytes, sizeof(Bytes), L"A\u0100", 1) == 0 && Count == 2 && strcmp(Bytes, "A") == 0);
+    /* A character beyond the count does not make a short buffer an encoding error */
+    CHECK(wcstombs_s(&Count, Bytes, 1, L"A\u0100", 1) == ERANGE);
+    CHECK(wcstombs_s(&Count, Bytes, 1, L"\u0100", 1) == EILSEQ);
     CHECK(wcstombs(Bytes, L"A\u0100", 1) == 1 && Bytes[0] == 'A');
     CHECK(wcsrtombs(Bytes, &WideSrc, 1, &State) == 1 && WideSrc != NULL && *WideSrc == 0x100);
     WideSrc = L"a\u0100";
@@ -437,6 +440,10 @@ static void TestMultibyte(void)
     if (setlocale(LC_CTYPE, "C.UTF-8") != NULL)
     {
         CHECK(mbstowcs_s(&Count, Wide, 4, "A\xff", 1) == 0 && Count == 2 && wcscmp(Wide, L"A") == 0);
+        CHECK(mbstowcs_s(&Count, Wide, 1, "A\xff", 1) == ERANGE && mbstowcs_s(&Count, Wide, 1, "\xff", 1) == EILSEQ);
+        /* The fourth byte of a character of a surrogate pair, a lone high surrogate */
+        CHECK(mbstowcs_s(&Count, Wide, 1, "\xF0\x9F\x98" "A", 1) == EILSEQ);
+        CHECK(wcstombs_s(&Count, Bytes, 1, L"\xD800", 1) == EILSEQ);
         Src = "a\xff";
         State = 0;
         wmemset(Wide, L'X', 4);

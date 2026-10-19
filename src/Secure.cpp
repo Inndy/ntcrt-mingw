@@ -8,6 +8,8 @@
 #include <wchar.h>
 
 EXTERN_C int __cdecl _NtCRT__putenv(const char* envstring);
+EXTERN_C size_t __cdecl _NtCRT_mbstowcs(wchar_t* dest, const char* src, size_t count);
+EXTERN_C size_t __cdecl _NtCRT_wcstombs(char* dest, const wchar_t* src, size_t count);
 EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring);
 
 template<typename TChar>
@@ -607,12 +609,62 @@ EXTERN_C errno_t __cdecl _NtCRT_wcsrtombs_s(
  * *pReturnValue counts the terminator, it is 0 after an encoding error.
  */
 
+/*
+ * Whether the characters that the first Count wide characters are converted from have an encoding error. A character
+ * of a surrogate pair is read whole: mbrtowc returns its high surrogate before its last byte.
+ */
+static bool _NtCRT_MbsInvalid(const char* Src, size_t Count)
+{
+    mbstate_t State = 0;
+    wchar_t Wide;
+
+    while (*Src != '\0' && (Count != 0 || !mbsinit(&State)))
+    {
+        size_t Length = mbrtowc(&Wide, Src, MB_LEN_MAX, &State);
+
+        if (Length >= (size_t)-2)
+        {
+            return true;
+        }
+        Src += Length;
+        Count -= Count != 0;
+    }
+    return false;
+}
+
+/* Whether the characters converted to the first Count bytes have an encoding error */
+static bool _NtCRT_WcsInvalid(const wchar_t* Src, size_t Count)
+{
+    mbstate_t State = 0;
+    char Bytes[MB_LEN_MAX];
+    size_t Done = 0;
+
+    for (; *Src != L'\0' && Done < Count; Src++)
+    {
+        size_t Length = wcrtomb(Bytes, *Src, &State);
+
+        if (Length == (size_t)-1)
+        {
+            return true;
+        }
+        Done += Length;
+    }
+    /* A high surrogate before the terminator */
+    return !mbsinit(&State);
+}
+
 EXTERN_C errno_t __cdecl _NtCRT_mbstowcs_s(
     size_t* pReturnValue, wchar_t* wcstr, size_t sizeInWords, const char* mbstr, size_t count)
 {
     mbstate_t State = 0;
-    errno_t Ret = _NtCRT_mbsrtowcs_s(pReturnValue, wcstr, sizeInWords, &mbstr, count, &State);
+    const char* Src = mbstr;
+    errno_t Ret = _NtCRT_mbsrtowcs_s(pReturnValue, wcstr, sizeInWords, &Src, count, &State);
 
+    /* An unconvertible character of the conversion takes precedence over a short buffer, as in msvcrt */
+    if (Ret == ERANGE && _NtCRT_MbsInvalid(mbstr, count))
+    {
+        Ret = NTCRT_ERRNO = EILSEQ;
+    }
     if (Ret == EILSEQ && pReturnValue != NULL)
     {
         *pReturnValue = 0;
@@ -624,8 +676,14 @@ EXTERN_C errno_t __cdecl _NtCRT_wcstombs_s(
     size_t* pReturnValue, char* mbstr, size_t sizeInBytes, const wchar_t* wcstr, size_t count)
 {
     mbstate_t State = 0;
-    errno_t Ret = _NtCRT_wcsrtombs_s(pReturnValue, mbstr, sizeInBytes, &wcstr, count, &State);
+    const wchar_t* Src = wcstr;
+    errno_t Ret = _NtCRT_wcsrtombs_s(pReturnValue, mbstr, sizeInBytes, &Src, count, &State);
 
+    /* An unconvertible character of the conversion takes precedence over a short buffer, as in msvcrt */
+    if (Ret == ERANGE && _NtCRT_WcsInvalid(wcstr, count))
+    {
+        Ret = NTCRT_ERRNO = EILSEQ;
+    }
     if (Ret == EILSEQ && pReturnValue != NULL)
     {
         *pReturnValue = 0;
