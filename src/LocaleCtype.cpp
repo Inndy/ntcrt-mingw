@@ -18,7 +18,6 @@
 #include <wctype.h>
 
 EXTERN_C int __cdecl _NtCRT__isctype(int, int);
-EXTERN_C int __cdecl _NtCRT_isleadbyte(int);
 EXTERN_C int __cdecl _NtCRT_iswalnum(wint_t);
 EXTERN_C int __cdecl _NtCRT_iswalpha(wint_t);
 EXTERN_C int __cdecl _NtCRT_iswcntrl(wint_t);
@@ -168,10 +167,14 @@ EXTERN_C int __cdecl _NtCRT__iswxdigit_l(wint_t c, _locale_t locale)
     return _NtCRT_iswxdigit(c);
 }
 
+/* The lead bytes of the ctype table differ between the locales */
 EXTERN_C int __cdecl _NtCRT__isctype_l(int c, int mask, _locale_t locale)
 {
-    NTCRT_LOCALE_SCOPE Scope(locale);
-    return _NtCRT__isctype(c, mask);
+    if (locale == NULL)
+    {
+        return _NtCRT__isctype(c, mask);
+    }
+    return c >= -1 && c <= 255 ? locale->locinfo->pctype[c] & mask : 0;
 }
 
 EXTERN_C int __cdecl _NtCRT__iswctype_l(wint_t c, wctype_t mask, _locale_t locale)
@@ -182,8 +185,7 @@ EXTERN_C int __cdecl _NtCRT__iswctype_l(wint_t c, wctype_t mask, _locale_t local
 
 EXTERN_C int __cdecl _NtCRT__isleadbyte_l(int c, _locale_t locale)
 {
-    NTCRT_LOCALE_SCOPE Scope(locale);
-    return _NtCRT_isleadbyte(c);
+    return _NtCRT__isctype_l((unsigned char)c, _LEADBYTE, locale);
 }
 
 EXTERN_C int __cdecl _NtCRT__tolower_l(int c, _locale_t locale)

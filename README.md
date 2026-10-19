@@ -168,7 +168,8 @@ Two locales: "C" and "C.UTF-8". Each category of `setlocale` is one of them.
   case mapping in "C.UTF-8", ASCII only in "C". Narrow case mapping (`toupper`, `_strupr`, `_stricmp`) is ASCII
   only and collation (`strcoll`, `wcscoll`) is code point order in both locales.
 - `_l` functions use the code page of the locale object, `_create_locale` does not change the current locale.
-- `_isctype`, `__iscsym` and `__iscsymf` classify by the current locale (`_LEADBYTE` for C2..F4 in "C.UTF-8").
+- `_isctype`, `__iscsym` and `__iscsymf` classify by the current locale, `_isctype_l` and `_isleadbyte_l` by the
+  locale object (`_LEADBYTE` for C2..F4 in "C.UTF-8").
 - `_setmbcp` (the `_mbs*` functions) is independent of `setlocale` and cannot select UTF-8 (65001) or 54936
   (GB18030, which has no NLS table).
 

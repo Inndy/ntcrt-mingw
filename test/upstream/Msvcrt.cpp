@@ -2,6 +2,7 @@
 
 #include <KNSoft/NDK/NDK.h>
 
+#include <ctype.h>
 #include <direct.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,8 +12,8 @@
 #include <malloc.h>
 #include <math.h>
 #include <mbctype.h>
-#include <process.h>
 #include <mbstring.h>
+#include <process.h>
 #include <share.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -472,6 +473,11 @@ static void TestMbcs(void)
         CHECK(wcsicmp(L"\u00e9", L"\u00c9") == 0 && wcsnicmp(L"\u00e9x", L"\u00c9y", 1) == 0);
         setlocale(LC_CTYPE, "C");
     }
+
+    /* The lead bytes of the locale object, not of the current locale */
+    _locale_t Utf8 = _create_locale(LC_ALL, "C.UTF-8");
+    CHECK(Utf8 != NULL && _isleadbyte_l(0xE4, Utf8) && _isctype_l(0xE4, _LEADBYTE, Utf8) && !isleadbyte(0xE4));
+    _free_locale(Utf8);
 }
 
 extern "C"
