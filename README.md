@@ -486,6 +486,7 @@ Beside the table above:
   restriction from a previous `_setmode`, and `signal` returns `SIG_DFL` after `raise(SIGILL)`/`raise(SIGSEGV)`
 - A read/write stream may read after `fflush` also when nothing was buffered (unbuffered or after a large `fwrite`),
   and `fseek`/`fsetpos` fail when flushing the output fails; msvcrt fails the read and reports the seek as done
+- `iswprint` is 0 for a tab, which is blank and a control character, as UCRT (msvcrt says printing)
 - `_mbsncat` and `_mbsnbcat` write nothing after the terminator of a source shorter than the count, msvcrt writes
   a second null byte past it
 - Unicode mode I/O:

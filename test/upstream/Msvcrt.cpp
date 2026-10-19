@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <wchar.h>
+#include <wctype.h>
 
 extern "C" BOOL __cdecl __crtGetStringTypeW(DWORD Unused, DWORD InfoType, LPCWSTR Src, int SrcCount, LPWORD Types);
 
@@ -444,6 +445,9 @@ static void TestMisc(void)
 {
     /* The table is set before any call of __sys_errlist */
     CHECK(_sys_errlist[EINVAL] != NULL && strcmp(_sys_errlist[EINVAL], "Invalid argument") == 0);
+
+    /* A tab is blank and a control character, not printing as UCRT (msvcrt says printing) */
+    CHECK(!iswprint(L'\t') && iswprint(L' ') && iswblank(L'\t'));
 }
 
 static void TestMbcs(void)

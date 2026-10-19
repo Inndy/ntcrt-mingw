@@ -710,9 +710,11 @@ EXTERN_C int __cdecl _NtCRT_iswgraph(wint_t c)
     return _NtCRT_iswctype(c, _PUNCT | _ALPHA | _DIGIT);
 }
 
+/* A control character is not printing, as the blank tab */
 EXTERN_C int __cdecl _NtCRT_iswprint(wint_t c)
 {
-    return _NtCRT_iswctype(c, _BLANK | _PUNCT | _ALPHA | _DIGIT);
+    int Type = _NtCRT_iswctype(c, _BLANK | _PUNCT | _ALPHA | _DIGIT | _CONTROL);
+    return Type & _CONTROL ? 0 : Type;
 }
 
 EXTERN_C int __cdecl _NtCRT_iswascii(wint_t c)
