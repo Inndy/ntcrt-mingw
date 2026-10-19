@@ -485,6 +485,8 @@ Beside the table above:
   restriction from a previous `_setmode`, and `signal` returns `SIG_DFL` after `raise(SIGILL)`/`raise(SIGSEGV)`
 - A read/write stream may read after `fflush` also when nothing was buffered (unbuffered or after a large `fwrite`),
   and `fseek`/`fsetpos` fail when flushing the output fails; msvcrt fails the read and reports the seek as done
+- `_mbsncat` and `_mbsnbcat` write nothing after the terminator of a source shorter than the count, msvcrt writes
+  a second null byte past it
 - Unicode mode I/O:
   - `_O_U8TEXT` reads accept any buffer size, msvcrt reads at least 4 bytes and fails with `EINVAL` when they
     convert to more units than the buffer holds, and it drops a truncated sequence at the end of the file

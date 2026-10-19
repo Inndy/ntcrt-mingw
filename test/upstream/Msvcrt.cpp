@@ -12,6 +12,7 @@
 #include <math.h>
 #include <mbctype.h>
 #include <process.h>
+#include <mbstring.h>
 #include <share.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -455,6 +456,11 @@ static void TestMbcs(void)
     CHECK(strcmp(Dir, "\\\x83\x5c\\") == 0 && strcmp(Fname, "\x83\x5c") == 0 && strcmp(Ext, ".bin") == 0);
     CHECK(_splitpath_s("\x83\x5c.b", NULL, 0, Dir, sizeof(Dir), Fname, sizeof(Fname), Ext, sizeof(Ext)) == 0 &&
           Dir[0] == 0 && strcmp(Fname, "\x83\x5c") == 0);
+    /* The source terminator ends the concatenation, nothing is written after it */
+    unsigned char Cat[3] = { 0, 0, 'X' };
+    CHECK(_mbsnbcat(Cat, (const unsigned char*)"A", 2) == Cat && strcmp((char*)Cat, "A") == 0 && Cat[2] == 'X');
+    Cat[0] = 0;
+    CHECK(_mbsncat(Cat, (const unsigned char*)"A", 2) == Cat && strcmp((char*)Cat, "A") == 0 && Cat[2] == 'X');
     CHECK(_setmbcp(1252) == 0);
     _splitpath("c:\\\x83\x5cx.bin", Drive, Dir, Fname, Ext);
     CHECK(strcmp(Dir, "\\\x83\x5c") == 0 && strcmp(Fname, "x") == 0);

@@ -2004,11 +2004,11 @@ static UCHAR_T* _NtCRT_Mbcs_mbsncat(const NTCRT_MBC& M, UCHAR_T* dst, const UCHA
             if ((*dst++ = *src++) == '\0')
             {
                 dst[-2] = '\0';
-                break;
+                return Start;
             }
         } else if ((*dst++ = *src++) == '\0')
         {
-            break;
+            return Start;
         }
     }
     _NtCRT_MbsCatFinish(M, Start, dst);
@@ -2043,11 +2043,11 @@ static UCHAR_T* _NtCRT_Mbcs_mbsnbcat(const NTCRT_MBC& M, UCHAR_T* dst, const UCH
             if ((*dst++ = *src++) == '\0')
             {
                 dst[-2] = '\0';
-                break;
+                return Start;
             }
         } else if ((*dst++ = *src++) == '\0')
         {
-            break;
+            return Start;
         }
     }
     _NtCRT_MbsCatFinish(M, Start, dst);
