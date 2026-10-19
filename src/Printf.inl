@@ -168,8 +168,8 @@ typedef struct _NTCRT_PRINTF_SPEC
     BOOL Space;
     BOOL Alt;
     BOOL Zero;
-    int Width;
-    int Precision; /* -1 if none */
+    unsigned Width; /* Beyond INT_MAX if no output fits the int that printf returns */
+    int Precision;  /* -1 if none */
     NTCRT_PRINTF_LENGTH Length;
     int Text; /* Width of a string or character: 1 narrow (h), 2 wide (l, w), 0 by the conversion */
 } NTCRT_PRINTF_SPEC;
@@ -896,17 +896,18 @@ _NtCRT_ParseArgPosition(
     return n - 1;
 }
 
+/* A number that saturates beyond INT_MAX */
 template<typename TChar>
 static
-int
+unsigned
 _NtCRT_ParseNumber(
     _Inout_ const TChar** p)
 {
-    int n = 0;
+    unsigned n = 0;
 
     for (; **p >= '0' && **p <= '9'; (*p)++)
     {
-        n = n < INT_MAX / 10 ? n * 10 + (**p - '0') : INT_MAX;
+        n = n <= INT_MAX / 10 ? n * 10 + (unsigned)(**p - '0') : (unsigned)INT_MAX + 1;
     }
     return n;
 }
@@ -972,12 +973,12 @@ _NtCRT_Format(
 
             f++;
             Width = (int)Arg(_NtCRT_ParseArgPosition(&f));
+            /* A negative width is the flag - and its magnitude, that of INT_MIN too */
             if (Width < 0)
             {
                 Spec.Left = TRUE;
-                Width = Width == INT_MIN ? INT_MAX : -Width;
             }
-            Spec.Width = Width;
+            Spec.Width = Width < 0 ? 0u - (unsigned)Width : (unsigned)Width;
         } else
         {
             Spec.Width = _NtCRT_ParseNumber(&f);
@@ -993,7 +994,9 @@ _NtCRT_Format(
                 Spec.Precision = Spec.Precision < 0 ? -1 : Spec.Precision;
             } else
             {
-                Spec.Precision = _NtCRT_ParseNumber(&f);
+                unsigned Precision = _NtCRT_ParseNumber(&f);
+
+                Spec.Precision = Precision > INT_MAX ? INT_MAX : (int)Precision;
             }
         }
         if (Spec.Left)

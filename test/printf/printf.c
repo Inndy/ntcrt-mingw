@@ -152,6 +152,23 @@ int main(void)
         g_Failures++;
     }
 
+    /* Widths up to INT_MAX, the magnitude of INT_MIN and more do not fit */
+    {
+        static const char* const Formats[] = { "%2147483640d", "%*d", "%2147483648d", "%99999999999d" };
+        static const int Want[] = { 2147483640, -1, -1, -1 };
+
+        for (int i = 0; i < 4; i++)
+        {
+            errno = 0;
+            Ret = i == 1 ? __mingw_snprintf(NULL, 0, Formats[i], INT_MIN, 1) : __mingw_snprintf(NULL, 0, Formats[i], 1);
+            if (Ret != Want[i] || (Ret == -1 && errno != EOVERFLOW))
+            {
+                printf("FAIL width \"%s\": %d errno %d\n", Formats[i], Ret, errno);
+                g_Failures++;
+            }
+        }
+    }
+
     /* A precision ends an array without a null character: nothing after it is read (the page is not accessible) */
     setlocale(LC_ALL, "C.UTF-8");
     {
