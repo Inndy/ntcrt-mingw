@@ -73,13 +73,20 @@ $(BUILD)/libntcrt_start.a: $(START_OBJS)
 	rm -f $@
 	ar rcs $@ $^
 
-# An object for each NTCRT_IMPORT / NTCRT_IMPORT_ONLY name, see NtCRT.h
-$(BUILD)/exports.stamp: $(SRCS) src/Exports.awk | $(BUILD)
-	rm -rf $(BUILD)/exports
+# The NTCRT_IMPORT / NTCRT_IMPORT_ONLY lines of the sources, read by every make and written only when they change:
+# an edit of a function assembles no stub
+$(BUILD)/exports.txt: FORCE | $(BUILD)
+	sed -n -E 's/^NTCRT_IMPORT(_ONLY)?\(([A-Za-z0-9_]+), *([A-Za-z0-9_]+)\);.*/\1 \2 \3/p' $(SRCS) > $@.tmp
+	if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
+
+# An object for each name, see NtCRT.h. Only the stubs that Exports.awk writes are assembled, those of names that are
+# gone are removed. The stubs written are removed when they fail to assemble, so that the next make writes them again.
+$(BUILD)/exports.stamp: $(BUILD)/exports.txt src/Exports.awk
+	rm -f $@
 	mkdir -p $(BUILD)/exports
-	sed -n -E 's/^NTCRT_IMPORT(_ONLY)?\(([A-Za-z0-9_]+), *([A-Za-z0-9_]+)\);.*/\1 \2 \3/p' $(SRCS) | \
-	    awk -v dir=$(BUILD)/exports -f src/Exports.awk
-	cd $(BUILD)/exports && ls *.s | xargs -P 8 -n 64 $(LIB_AS) -c
+	awk -v dir=$(BUILD)/exports -v keep=$(BUILD)/exports.keep -f src/Exports.awk $< > $(BUILD)/exports.new
+	cd $(BUILD)/exports && ls | grep -v -x -F -f ../exports.keep | xargs -r rm -f
+	cd $(BUILD)/exports && xargs -r -P 8 -n 64 $(LIB_AS) -c < ../exports.new || { xargs rm -f < ../exports.new; exit 1; }
 	touch $@
 
 $(BUILD)/libntcrt.a: $(OBJS) $(BUILD)/exports.stamp
@@ -419,5 +426,5 @@ compare: $(LIBS) $(DRIVER)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
+.PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
         test-start test-wine test-pthread size compare clean
