@@ -231,7 +231,10 @@ EXTERN_C int __cdecl _NtCRT_dup(int fd)
     return NewFd;
 }
 
-/* Set the text mode of a newly opened text fd by oflag, _fmode and the BOM of the file as msvcrt */
+/*
+ * Set the text mode of a newly opened text fd by oflag, _fmode and the BOM of the file as msvcrt, and remove a
+ * Ctrl+Z at its end
+ */
 static
 int
 _NtCRT_SetUnicodeMode(
@@ -243,6 +246,7 @@ _NtCRT_SetUnicodeMode(
     PNTCRT_FD Entry = _NtCRT_FdEntry(fd);
     UCHAR TextMode = NTCRT_TM_ANSI;
     BOOL CheckBom = FALSE, WriteBom = FALSE;
+    long long Position = -1;    /* Where the text starts after the BOM and Ctrl+Z checks, -1 if they read nothing */
     int Access = oflag & (_O_RDONLY | _O_WRONLY | _O_RDWR);
 
     if ((oflag & (_O_TEXT | UnicodeModes)) == 0)
@@ -292,16 +296,16 @@ _NtCRT_SetUnicodeMode(
     {
         ULONG Bom = 0;
         int Count = _NtCRT_read(fd, &Bom, 3);
-        long long Position = 0;
 
         if (Count == -1)
         {
             return -1;
         }
+        Position = 0;
         if (Count == 3 && Bom == 0xBFBBEF)
         {
             TextMode = NTCRT_TM_UTF8;
-            Position = -1;
+            Position = 3;
         } else if (Count >= 2 && (Bom & 0xFFFF) == 0xFFFE)
         {
             NTCRT_ERRNO = EINVAL;
@@ -311,10 +315,41 @@ _NtCRT_SetUnicodeMode(
             TextMode = NTCRT_TM_UTF16LE;
             Position = 2;
         }
-        if (Position != -1 && _NtCRT_lseeki64(fd, Position, SEEK_SET) == -1)
+    }
+
+    /*
+     * As msvcrt, a Ctrl+Z at the end of a text file opened for reading and writing is removed for appending. In a
+     * UTF-16 file it is the half of a unit.
+     */
+    if (Access == _O_RDWR && !(Entry->Flags & (FDEV | FPIPE)) && TextMode != NTCRT_TM_UTF16LE)
+    {
+        long long End = _NtCRT_lseeki64(fd, -1, SEEK_END);
+        char c = 0;
+
+        if (End == -1)
         {
-            return -1;
+            /* An empty file, errno is left as EINVAL */
+            if (_NtCRT_GetPtd()->Doserrno != ERROR_NEGATIVE_SEEK)
+            {
+                return -1;
+            }
+        } else
+        {
+            if (_NtCRT_read(fd, &c, 1) == 0 && c == 0x1A)
+            {
+                if (_NtCRT_chsize_s(fd, End) != 0)
+                {
+                    return -1;
+                }
+                /* Nothing is left, as an empty file */
+                WriteBom = End == 0 && (oflag & UnicodeModes) != 0;
+            }
+            Position = Position < 0 ? 0 : Position;
         }
+    }
+    if (Position >= 0 && _NtCRT_lseeki64(fd, Position, SEEK_SET) == -1)
+    {
+        return -1;
     }
     if (WriteBom && TextMode != NTCRT_TM_ANSI)
     {
@@ -467,28 +502,6 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
     {
         NtClose(Handle);
         return -1;
-    }
-
-    /* As msvcrt, a Ctrl+Z at the end of a text file opened for reading and writing is removed for appending */
-    if ((Flags & (FTEXT | FDEV | FPIPE)) == FTEXT && (oflag & _O_RDWR))
-    {
-        long long Position = _NtCRT_lseeki64(fd, -1, SEEK_END);
-        char c = 0;
-
-        if (Position == -1)
-        {
-            /* An empty file, errno is left as EINVAL */
-            if (_NtCRT_GetPtd()->Doserrno != ERROR_NEGATIVE_SEEK)
-            {
-                _NtCRT_close(fd);
-                return -1;
-            }
-        } else if ((_NtCRT_read(fd, &c, 1) == 0 && c == 0x1A && _NtCRT_chsize_s(fd, Position) != 0) ||
-                   _NtCRT_lseeki64(fd, 0, SEEK_SET) == -1)
-        {
-            _NtCRT_close(fd);
-            return -1;
-        }
     }
     if ((Flags & FTEXT) && _NtCRT_SetUnicodeMode(fd, oflag, Disposition) != 0)
     {

@@ -489,6 +489,8 @@ Beside the table above:
     estimates them and `fseek` to its result can land elsewhere
   - `_O_U8TEXT`/`_O_U16TEXT` console fds read by `ReadConsoleW` and write to the handle of the fd, a surrogate
     pair split between writes is kept until it is complete
+  - a UTF-16 text file opened for reading and writing keeps its last byte, msvcrt (UCRT too) removes it as a
+    Ctrl+Z when it is 0x1A, the high byte of a unit such as U+1A00
 - `_getch`, `_getwch` and `_kbhit` take the character reported with the release of Alt, msvcrt reports the
   keypad digits typed with Alt as Alt+arrow keys and loses the character (UCRT too)
 - In the "C" locale `mblen` is 1 for every non-NUL byte, msvcrt returns -1 for bytes 0x80..0xFF when `n` is 1

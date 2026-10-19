@@ -198,6 +198,40 @@ static void TestUtf8Pending(void)
     CloseHandle(Client);
 }
 
+static void WriteBytes(const char* Name, const void* Bytes, size_t Size)
+{
+    FILE* File = fopen(Name, "wb");
+
+    CHECK(File != NULL && fwrite(Bytes, 1, Size, File) == Size);
+    if (File != NULL)
+    {
+        fclose(File);
+    }
+}
+
+/* A Ctrl+Z at the end of a text file opened for reading and writing is removed, the last byte of UTF-16 is kept */
+static void TestCtrlZ(void)
+{
+    static const char Name[] = "ntcrt_msvcrt.tmp";
+    wchar_t Unit;
+    int fd;
+
+    WriteBytes(Name, "a\x1a", 2);
+    fd = _open(Name, _O_RDWR | _O_TEXT);
+    CHECK(fd >= 0 && _filelength(fd) == 1 && _tell(fd) == 0);
+    _close(fd);
+    WriteBytes(Name, "\xff\xfe\x00\x1a", 4);
+    fd = _open(Name, _O_RDWR | _O_U16TEXT);
+    CHECK(fd >= 0 && _filelength(fd) == 4 && _read(fd, &Unit, sizeof(Unit)) == 2 && Unit == 0x1A00);
+    _close(fd);
+    /* Nothing is left, the file gets the BOM of an empty one */
+    WriteBytes(Name, "\x1a", 1);
+    fd = _open(Name, _O_RDWR | _O_U8TEXT);
+    CHECK(fd >= 0 && _filelength(fd) == 3 && _tell(fd) == 3);
+    _close(fd);
+    remove(Name);
+}
+
 /* The buffer _getcwd allocates has maxlen bytes at least */
 static void TestGetcwd(void)
 {
@@ -242,6 +276,7 @@ TestMsvcrt(VOID)
     TestTmpnam();
     TestFiles();
     TestUtf8Pending();
+    TestCtrlZ();
     TestGetcwd();
     TestMbcs();
     return g_Ok;
