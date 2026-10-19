@@ -233,6 +233,25 @@ static void TestCtrlZ(void)
     remove(Name);
 }
 
+/* A binary fd keeps no Unicode restriction of a previous _setmode */
+static void TestBinaryNarrow(void)
+{
+    static const char Name[] = "ntcrt_msvcrt.tmp";
+    FILE* File;
+
+    WriteBytes(Name, "a", 1);
+    File = fopen(Name, "rb");
+    CHECK(File != NULL);
+    if (File != NULL)
+    {
+        _setmode(_fileno(File), _O_U16TEXT);
+        _setmode(_fileno(File), _O_BINARY);
+        CHECK(fgetc(File) == 'a');
+        fclose(File);
+    }
+    remove(Name);
+}
+
 /* The stat functions converting from _stat64 reject a NULL buffer as it does */
 static void TestStatNull(void)
 {
@@ -333,6 +352,7 @@ TestMsvcrt(VOID)
     TestFiles();
     TestUtf8Pending();
     TestCtrlZ();
+    TestBinaryNarrow();
     TestStatNull();
     TestDup2();
     TestGetcwd();

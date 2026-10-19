@@ -337,11 +337,12 @@ EXTERN_C int __cdecl _NtCRT_fd_crlf(int fd)
     return Entry != NULL && (Entry->Flags & FOPEN) && (Entry->Flags & FCRLF);
 }
 
-/* Narrow stream I/O is invalid on a Unicode text mode fd or one opened with _O_WTEXT */
+/* Narrow stream I/O is invalid on a Unicode text mode fd or one opened with _O_WTEXT, not after _O_BINARY */
 EXTERN_C int __cdecl _NtCRT_fd_narrow_invalid(int fd)
 {
     PNTCRT_FD Entry = _NtCRT_FdEntry(fd);
-    return Entry != NULL && (Entry->Flags & FOPEN) && (Entry->TextMode != NTCRT_TM_ANSI || Entry->WideOnly);
+    return Entry != NULL && (Entry->Flags & (FOPEN | FTEXT)) == (FOPEN | FTEXT) &&
+           (Entry->TextMode != NTCRT_TM_ANSI || Entry->WideOnly);
 }
 
 EXTERN_C int __cdecl _NtCRT_isatty(int fd)
