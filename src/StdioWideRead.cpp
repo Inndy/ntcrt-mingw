@@ -34,7 +34,9 @@ _NtCRT_getwc_nolock(
             {
                 if (!mbsinit(&Mb->GetState))
                 {
+                    /* A truncated sequence is an encoding error as an invalid one */
                     Mb->GetState = 0;
+                    Stream->_flag |= _IOERR;
                     NTCRT_ERRNO = EILSEQ;
                 }
                 return WEOF;
@@ -151,6 +153,7 @@ EXTERN_C wint_t __cdecl _NtCRT__ungetwc_nolock(wint_t ch, FILE* stream)
 EXTERN_C wchar_t* __cdecl _NtCRT_fgetws(wchar_t* str, int n, FILE* stream)
 {
     wchar_t* p = str;
+    int Error;
 
     if (str == NULL || n <= 0 || stream == NULL)
     {
@@ -158,12 +161,15 @@ EXTERN_C wchar_t* __cdecl _NtCRT_fgetws(wchar_t* str, int n, FILE* stream)
         return NULL;
     }
     _NtCRT_lock_file(stream);
+    /* A read or encoding error in this call fails it, also after some characters */
+    Error = stream->_flag & _IOERR;
+    stream->_flag &= ~_IOERR;
     while (--n > 0)
     {
         wint_t Ch = _NtCRT_getwc_nolock(stream);
         if (Ch == WEOF)
         {
-            if (p == str)
+            if (p == str || (stream->_flag & _IOERR))
             {
                 str = NULL;
             }
@@ -179,6 +185,7 @@ EXTERN_C wchar_t* __cdecl _NtCRT_fgetws(wchar_t* str, int n, FILE* stream)
     {
         *p = L'\0';
     }
+    stream->_flag |= Error;
     _NtCRT_unlock_file(stream);
     return str;
 }

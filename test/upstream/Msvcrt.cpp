@@ -347,7 +347,7 @@ static void PutFile(const char* Name, const char* Data, size_t Size)
 static void TestStreams(void)
 {
     static const char Name[] = "ntcrt_streams.tmp";
-    wchar_t Unit = 0;
+    wchar_t Line[8], Unit = 0;
     FILE* File;
     fpos_t Pos;
     int fd;
@@ -389,6 +389,22 @@ static void TestStreams(void)
     CHECK(fsetpos(File, &Pos) != 0 && ferror(File));
     fclose(File);
 
+    /* fgetws fails on an encoding error after some characters */
+    if (setlocale(LC_ALL, "C.UTF-8") != NULL)
+    {
+        PutFile(Name, "A\xFF", 2);
+        File = fopen(Name, "r");
+        errno = 0;
+        CHECK(File != NULL && fgetws(Line, ARRAYSIZE(Line), File) == NULL && errno == EILSEQ && ferror(File));
+        fclose(File);
+        PutFile(Name, "A\xE2\x82", 3);
+        File = fopen(Name, "r");
+        CHECK(File != NULL && fgetws(Line, ARRAYSIZE(Line), File) == NULL && ferror(File));
+        clearerr(File);
+        CHECK(fgetws(Line, ARRAYSIZE(Line), File) == NULL && !ferror(File));
+        fclose(File);
+        setlocale(LC_ALL, "C");
+    }
     remove(Name);
 }
 

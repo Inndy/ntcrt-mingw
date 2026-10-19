@@ -421,7 +421,8 @@ waiters).
 - `_getch` and `_getwch` take Alt and keypad digits as the composition of a character, which the console
   reports with the release of Alt. A pseudo console (Windows Terminal) types a character beyond U+FFFF in this
   way, one surrogate per composition.
-- `getwc`, `putwc` and `ungetwc` of a narrow stream convert by UTF-8 with a state per stream in "C.UTF-8".
+- `getwc`, `putwc` and `ungetwc` of a narrow stream convert by UTF-8 with a state per stream in "C.UTF-8". An
+  invalid or truncated sequence read sets the error indicator and `EILSEQ`, `fgetws` returns `NULL` for it.
 - `_O_U8TEXT` reads return the characters of complete UTF-8 sequences, a sequence split by the read size is
   completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream and
   `_tell` of its fd are exact, except between the two units of a surrogate pair, where no byte offset exists.
