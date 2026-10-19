@@ -509,6 +509,24 @@ static void floats(void)
         Ret = sscanf(Long, "%lf", &d);
         EXPECT(Ret == 1 && d == 1.0, "2000 zeros: %d %g", Ret, d);
     }
+
+    /* The digits move the point by more than the exponent saturates at: 0x1p0 */
+    {
+        size_t Zeros = 67108865;
+        char* Long = malloc(Zeros + 16);
+        char* End;
+
+        strcpy(Long, "0x1");
+        memset(Long + 3, '0', Zeros);
+        strcpy(Long + 3 + Zeros, "p-268435460");
+        errno = 0;
+        d = strtod(Long, &End);
+        f = strtof(Long, NULL);
+        ld = strtold(Long, NULL);
+        EXPECT(d == 1.0 && f == 1.0f && ld == 1.0L && *End == '\0' && errno == 0,
+               "0x1, %zu zeros, p-268435460: %g %g %g", Zeros, d, (double)f, (double)ld);
+        free(Long);
+    }
 }
 
 static void locales(void)

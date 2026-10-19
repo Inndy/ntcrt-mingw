@@ -234,7 +234,7 @@ typedef struct _NTCRT_FLOAT_TEXT
     int Special;     /* 1 infinity, 2 NaN */
     size_t Digits;   /* Offset of the digits and the point */
     size_t DigitEnd; /* Offset after them */
-    int Exp10;       /* The exponent written after the digits, for the decimal fallback */
+    LONG64 Exp10;    /* The exponent written after the digits, for the decimal fallback */
 } NTCRT_FLOAT_TEXT;
 
 template<typename TChar>
@@ -265,15 +265,16 @@ static inline int _NtCRT_HexDigit(TChar c)
 }
 
 /*
- * An optional exponent of the character ExpChar, the length taken, 0 if there is none. It saturates at 2**28: far
- * past any result once the position of the digits is added, which cannot overflow then. Go 1.27 saturates at 10000,
- * before that position is added, so the zeros of a long number made 0 or infinity of 1.
+ * An optional exponent of the character ExpChar, the length taken, 0 if there is none. It saturates at 2**60, past
+ * the position of the digits of any string (4 bits for each of 2**57 bytes of address space at most), so adding that
+ * position cannot overflow. Go 1.27 saturates at 10000, before that position is added, so the zeros of a long number
+ * made 0 or infinity of 1.
  */
 template<typename TChar>
-static size_t _NtCRT_ScanExponent(const TChar* s, char ExpChar, int* Exp)
+static size_t _NtCRT_ScanExponent(const TChar* s, char ExpChar, LONG64* Exp)
 {
     size_t i = 1;
-    int Sign = 1, e = 0;
+    LONG64 Sign = 1, e = 0;
 
     if (_NtCRT_Lower(s[0]) != ExpChar)
     {
@@ -289,7 +290,7 @@ static size_t _NtCRT_ScanExponent(const TChar* s, char ExpChar, int* Exp)
     }
     for (; s[i] >= '0' && s[i] <= '9'; i++)
     {
-        e = e < (1 << 28) / 10 ? e * 10 + (int)(s[i] - '0') : 1 << 28;
+        e = e < (1ll << 60) / 10 ? e * 10 + (s[i] - '0') : 1ll << 60;
     }
     *Exp = e * Sign;
     return i;
@@ -304,7 +305,8 @@ template<typename TChar>
 static size_t _NtCRT_ScanFloat(const TChar* s, NTCRT_FLOAT_TEXT* t)
 {
     size_t i = 0, n;
-    int Base = 10, MaxMantDigits = 19, nd = 0, ndMant = 0, dp = 0, e;
+    int Base = 10, MaxMantDigits = 19, ndMant = 0;
+    LONG64 nd = 0, dp = 0, e;
     BOOL SawDot = FALSE, SawDigits = FALSE;
 
     memset(t, 0, sizeof(*t));
@@ -413,22 +415,25 @@ static size_t _NtCRT_ScanFloat(const TChar* s, NTCRT_FLOAT_TEXT* t)
     t->Exp10 = e;
     if (t->Mantissa != 0)
     {
-        t->Exp = dp - ndMant;
+        /* The position of the digits is added first, then clamped far past the range of any type */
+        dp = dp < -(1 << 28) ? -(1 << 28) : dp > 1 << 28 ? 1 << 28 : dp;
+        t->Exp = (int)dp - ndMant;
     }
     return i;
 }
 
 /*
  * The decimal of the digits of t at s. The point counts all the significant digits before it, also those past
- * the 800 the decimal holds (decimal.set of Go 1.27 counts only the ones it holds).
+ * the 800 the decimal holds (decimal.set of Go 1.27 counts only the ones it holds). The point is t->Exp plus the
+ * up to 19 digits of t->Mantissa, the callers take only a t->Exp in the range of their type.
  */
 template<typename TChar>
 static void _NtCRT_DecimalSet(NTCRT_DECIMAL* b, const TChar* s, const NTCRT_FLOAT_TEXT* t)
 {
     BOOL SawDot = FALSE;
-    int nd = 0;
+    LONG64 nd = 0, dp = 0;
 
-    b->nd = b->dp = 0;
+    b->nd = 0;
     b->Neg = t->Neg;
     b->Trunc = FALSE;
     for (size_t i = t->Digits; i < t->DigitEnd; i++)
@@ -436,12 +441,12 @@ static void _NtCRT_DecimalSet(NTCRT_DECIMAL* b, const TChar* s, const NTCRT_FLOA
         if (s[i] == '.')
         {
             SawDot = TRUE;
-            b->dp = nd;
+            dp = nd;
             continue;
         }
         if (s[i] == '0' && nd == 0)
         {
-            b->dp--;
+            dp--;
             continue;
         }
         nd++;
@@ -455,9 +460,9 @@ static void _NtCRT_DecimalSet(NTCRT_DECIMAL* b, const TChar* s, const NTCRT_FLOA
     }
     if (!SawDot)
     {
-        b->dp = nd;
+        dp = nd;
     }
-    b->dp += t->Exp10;
+    b->dp = (int)(dp + t->Exp10);
 }
 
 /*
@@ -1044,7 +1049,8 @@ static BOOL _NtCRT_BigLongDoubleBits(NTCRT_DECIMAL* d, ULONG64* Mant, int* Biase
 template<typename TChar>
 static int _NtCRT_HexMantissa(const TChar* s, const NTCRT_FLOAT_TEXT* t, unsigned __int128* m, BOOL* Sticky)
 {
-    int nd = 0, ndMant = 0;
+    LONG64 nd = 0;
+    int ndMant = 0;
 
     *m = 0;
     *Sticky = FALSE;
@@ -1067,7 +1073,7 @@ static int _NtCRT_HexMantissa(const TChar* s, const NTCRT_FLOAT_TEXT* t, unsigne
         }
     }
     /* t->Exp is of the first 16 digits */
-    return t->Exp + 4 * ((nd < 16 ? nd : 16) - ndMant);
+    return t->Exp + 4 * ((nd < 16 ? (int)nd : 16) - ndMant);
 }
 
 template<typename TChar>
