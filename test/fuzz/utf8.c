@@ -643,7 +643,8 @@ static void check_wcs(const WCMODEL* m, int Size, int Restartable)
             ;
     else
         k = m->Chars;
-    if (k < m->Chars)
+    /* Conversion stops when the buffer is full, before an encoding error */
+    if (k < m->Chars || (Size >= 0 && m->ByteAt[k] == Size && m->Invalid >= 0))
     {
         Expect = m->ByteAt[k];
         Stop = m->UnitAt[k];

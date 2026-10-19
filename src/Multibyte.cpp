@@ -216,8 +216,14 @@ _NtCRT_WcsToMbs(
     {
         char Buffer[MB_LEN_MAX];
         mbstate_t Saved = *State;
-        size_t Length = _NtCRT_WcrToMb(CodePage, Buffer, *p, State);
+        size_t Length;
 
+        /* A full buffer ends the conversion before the next character, the low surrogate of a pair goes on */
+        if (Dest != NULL && Done == Count && !((unsigned int)Saved & NTCRT_MBS_HIGH_SAVED))
+        {
+            break;
+        }
+        Length = _NtCRT_WcrToMb(CodePage, Buffer, *p, State);
         if (Length == NTCRT_ERROR)
         {
             /* At the high surrogate of an invalid pair */
@@ -286,7 +292,7 @@ EXTERN_C size_t __cdecl _NtCRT_wcstombs(char* dest, const wchar_t* src, size_t c
     return _NtCRT_WcsToMbs(dest, &src, count, &State);
 }
 
-/* Count the multibyte characters in at most MaxBytes bytes, NTCRT_ERROR for an encoding error */
+/* Count the multibyte characters in at most MaxBytes bytes, MaxBytes without a null byte, NTCRT_ERROR for an error */
 EXTERN_C size_t _NtCRT_MbsLength(const char* Str, size_t MaxBytes)
 {
     size_t Count = 0, i = 0;
@@ -309,7 +315,7 @@ EXTERN_C size_t _NtCRT_MbsLength(const char* Str, size_t MaxBytes)
         i += Length;
         Count++;
     }
-    return Count;
+    return i < MaxBytes ? Count : MaxBytes;
 }
 
 #pragma endregion

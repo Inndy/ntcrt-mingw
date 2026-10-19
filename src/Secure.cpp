@@ -8,8 +8,6 @@
 #include <wchar.h>
 
 EXTERN_C int __cdecl _NtCRT__putenv(const char* envstring);
-EXTERN_C size_t __cdecl _NtCRT_mbstowcs(wchar_t* dest, const char* src, size_t count);
-EXTERN_C size_t __cdecl _NtCRT_wcstombs(char* dest, const wchar_t* src, size_t count);
 EXTERN_C int __cdecl _NtCRT__wputenv(const wchar_t* envstring);
 
 template<typename TChar>
@@ -425,117 +423,6 @@ EXTERN_C errno_t __cdecl _NtCRT__ui64tow_s(unsigned long long value, wchar_t* bu
     return _NtCRT_XToAS(value, false, buffer, size, radix);
 }
 
-/*
- * Multibyte conversion by mbstowcs and wcstombs.
- * *pReturnValue counts the terminator, Count is the maximum to store without it or _TRUNCATE, ignored without a buffer.
- */
-
-EXTERN_C errno_t __cdecl _NtCRT_mbstowcs_s(
-    size_t* pReturnValue, wchar_t* wcstr, size_t sizeInWords, const char* mbstr, size_t count)
-{
-    size_t Length;
-    errno_t Ret = 0;
-
-    if (pReturnValue != NULL)
-    {
-        *pReturnValue = 0;
-    }
-    if ((wcstr == NULL && sizeInWords > 0) || (wcstr != NULL && sizeInWords == 0))
-    {
-        return _NtCRT_InvalidParameter(EINVAL);
-    }
-    if (wcstr != NULL)
-    {
-        *wcstr = L'\0';
-    }
-    if (mbstr == NULL)
-    {
-        return count == 0 ? 0 : _NtCRT_InvalidParameter(EINVAL);
-    }
-    Length = _NtCRT_mbstowcs(NULL, mbstr, 0);
-    if (Length == (size_t)-1)
-    {
-        NTCRT_ERRNO = EILSEQ;
-        return EILSEQ;
-    }
-    if (wcstr != NULL && count != _TRUNCATE && count < Length)
-    {
-        Length = count;
-    }
-    if (wcstr != NULL)
-    {
-        if (Length >= sizeInWords)
-        {
-            if (count != _TRUNCATE)
-            {
-                return _NtCRT_InvalidParameter(ERANGE);
-            }
-            Length = sizeInWords - 1;
-            Ret = STRUNCATE;
-        }
-        Length = _NtCRT_mbstowcs(wcstr, mbstr, Length);
-        wcstr[Length] = L'\0';
-    }
-    if (pReturnValue != NULL)
-    {
-        *pReturnValue = Length + 1;
-    }
-    return Ret;
-}
-
-EXTERN_C errno_t __cdecl _NtCRT_wcstombs_s(
-    size_t* pReturnValue, char* mbstr, size_t sizeInBytes, const wchar_t* wcstr, size_t count)
-{
-    size_t Length;
-    errno_t Ret = 0;
-
-    if (pReturnValue != NULL)
-    {
-        *pReturnValue = 0;
-    }
-    if ((mbstr == NULL && sizeInBytes > 0) || (mbstr != NULL && sizeInBytes == 0))
-    {
-        return _NtCRT_InvalidParameter(EINVAL);
-    }
-    if (mbstr != NULL)
-    {
-        *mbstr = '\0';
-    }
-    if (wcstr == NULL)
-    {
-        return count == 0 ? 0 : _NtCRT_InvalidParameter(EINVAL);
-    }
-    Length = _NtCRT_wcstombs(NULL, wcstr, 0);
-    if (Length == (size_t)-1)
-    {
-        NTCRT_ERRNO = EILSEQ;
-        return EILSEQ;
-    }
-    if (mbstr != NULL && count != _TRUNCATE && count < Length)
-    {
-        Length = count;
-    }
-    if (mbstr != NULL)
-    {
-        if (Length >= sizeInBytes)
-        {
-            if (count != _TRUNCATE)
-            {
-                return _NtCRT_InvalidParameter(ERANGE);
-            }
-            Length = sizeInBytes - 1;
-            Ret = STRUNCATE;
-        }
-        Length = _NtCRT_wcstombs(mbstr, wcstr, Length);
-        mbstr[Length] = '\0';
-    }
-    if (pReturnValue != NULL)
-    {
-        *pReturnValue = Length + 1;
-    }
-    return Ret;
-}
-
 /* Restartable conversions, by the C99 functions of mingw-w64 */
 
 EXTERN_C errno_t __cdecl _NtCRT_wcrtomb_s(
@@ -618,7 +505,7 @@ EXTERN_C errno_t __cdecl _NtCRT_mbsrtowcs_s(
         if (Length != (size_t)-1)
         {
             wcstr[Length] = L'\0';
-            if (Length == Limit && *mbstr != NULL && **mbstr != '\0' && Limit < count)
+            if (*mbstr != NULL && **mbstr != '\0' && Limit < count)
             {
                 if (count != _TRUNCATE)
                 {
@@ -631,6 +518,15 @@ EXTERN_C errno_t __cdecl _NtCRT_mbsrtowcs_s(
     }
     if (Length == (size_t)-1)
     {
+        /* The converted prefix is not kept */
+        if (wcstr != NULL)
+        {
+            *wcstr = L'\0';
+        }
+        if (pReturnValue != NULL)
+        {
+            *pReturnValue = (size_t)-1;
+        }
         NTCRT_ERRNO = EILSEQ;
         return EILSEQ;
     }
@@ -688,12 +584,51 @@ EXTERN_C errno_t __cdecl _NtCRT_wcsrtombs_s(
     }
     if (Length == (size_t)-1)
     {
+        if (mbstr != NULL)
+        {
+            *mbstr = '\0';
+        }
+        if (pReturnValue != NULL)
+        {
+            *pReturnValue = (size_t)-1;
+        }
         NTCRT_ERRNO = EILSEQ;
         return EILSEQ;
     }
     if (pReturnValue != NULL)
     {
         *pReturnValue = Length + 1;
+    }
+    return Ret;
+}
+
+/*
+ * Multibyte conversion as mbsrtowcs_s and wcsrtombs_s from the initial state, the conversion stops at count.
+ * *pReturnValue counts the terminator, it is 0 after an encoding error.
+ */
+
+EXTERN_C errno_t __cdecl _NtCRT_mbstowcs_s(
+    size_t* pReturnValue, wchar_t* wcstr, size_t sizeInWords, const char* mbstr, size_t count)
+{
+    mbstate_t State = 0;
+    errno_t Ret = _NtCRT_mbsrtowcs_s(pReturnValue, wcstr, sizeInWords, &mbstr, count, &State);
+
+    if (Ret == EILSEQ && pReturnValue != NULL)
+    {
+        *pReturnValue = 0;
+    }
+    return Ret;
+}
+
+EXTERN_C errno_t __cdecl _NtCRT_wcstombs_s(
+    size_t* pReturnValue, char* mbstr, size_t sizeInBytes, const wchar_t* wcstr, size_t count)
+{
+    mbstate_t State = 0;
+    errno_t Ret = _NtCRT_wcsrtombs_s(pReturnValue, mbstr, sizeInBytes, &wcstr, count, &State);
+
+    if (Ret == EILSEQ && pReturnValue != NULL)
+    {
+        *pReturnValue = 0;
     }
     return Ret;
 }

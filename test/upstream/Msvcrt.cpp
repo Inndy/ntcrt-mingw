@@ -408,6 +408,36 @@ static void TestStreams(void)
     remove(Name);
 }
 
+/* The conversions stop at the count, an encoding error leaves an empty destination */
+static void TestMultibyte(void)
+{
+    char Bytes[4] = { 'X', 'X', 'X', 'X' };
+    wchar_t Wide[4] = { L'X', L'X', L'X', L'X' };
+    const wchar_t* WideSrc = L"A\u0100";
+    const char* Src;
+    mbstate_t State = 0;
+    size_t Count;
+
+    CHECK(wcstombs_s(&Count, Bytes, sizeof(Bytes), L"A\u0100", 1) == 0 && Count == 2 && strcmp(Bytes, "A") == 0);
+    CHECK(wcstombs(Bytes, L"A\u0100", 1) == 1 && Bytes[0] == 'A');
+    CHECK(wcsrtombs(Bytes, &WideSrc, 1, &State) == 1 && WideSrc != NULL && *WideSrc == 0x100);
+    WideSrc = L"a\u0100";
+    memset(Bytes, 'X', sizeof(Bytes));
+    CHECK(wcsrtombs_s(&Count, Bytes, sizeof(Bytes), &WideSrc, 3, &State) == EILSEQ && Count == (size_t)-1 &&
+          Bytes[0] == '\0');
+    if (setlocale(LC_CTYPE, "C.UTF-8") != NULL)
+    {
+        CHECK(mbstowcs_s(&Count, Wide, 4, "A\xff", 1) == 0 && Count == 2 && wcscmp(Wide, L"A") == 0);
+        Src = "a\xff";
+        State = 0;
+        wmemset(Wide, L'X', 4);
+        CHECK(mbsrtowcs_s(&Count, Wide, 4, &Src, 3, &State) == EILSEQ && Count == (size_t)-1 && Wide[0] == L'\0');
+        /* No null byte in the bytes counted, as UCRT */
+        CHECK(_mbstrnlen("\xC3\xA9", 2) == 2 && _mbstrnlen("\xC3\xA9", 3) == 1);
+        setlocale(LC_CTYPE, "C");
+    }
+}
+
 static void TestMisc(void)
 {
     /* The table is set before any call of __sys_errlist */
@@ -445,6 +475,7 @@ TestMsvcrt(VOID)
     g_Ok = TRUE;
     TestNullArguments();
     TestConversions();
+    TestMultibyte();
     TestMisc();
     TestTime();
     TestTmpnam();
