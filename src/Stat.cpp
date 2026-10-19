@@ -217,7 +217,7 @@ _Exit:
     return Result;
 }
 
-/* Other stat variants convert from _stat64 */
+/* Other stat variants convert from _stat64, which rejects a NULL buffer */
 
 #define NTCRT_STAT_CONVERT(Dst, Src) \
     do { \
@@ -237,7 +237,7 @@ _Exit:
 EXTERN_C int __cdecl _NtCRT_fstati64(int fd, struct _stati64* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_fstat64(fd, &Stat);
+    int Result = _NtCRT_fstat64(fd, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);
@@ -248,7 +248,7 @@ EXTERN_C int __cdecl _NtCRT_fstati64(int fd, struct _stati64* buffer)
 EXTERN_C int __cdecl _NtCRT_stati64(const char* path, struct _stati64* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_stat64(path, &Stat);
+    int Result = _NtCRT_stat64(path, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);
@@ -259,7 +259,7 @@ EXTERN_C int __cdecl _NtCRT_stati64(const char* path, struct _stati64* buffer)
 EXTERN_C int __cdecl _NtCRT_wstati64(const wchar_t* path, struct _stati64* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_wstat64(path, &Stat);
+    int Result = _NtCRT_wstat64(path, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);
@@ -270,7 +270,7 @@ EXTERN_C int __cdecl _NtCRT_wstati64(const wchar_t* path, struct _stati64* buffe
 EXTERN_C int __cdecl _NtCRT_fstat32(int fd, struct _stat32* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_fstat64(fd, &Stat);
+    int Result = _NtCRT_fstat64(fd, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);
@@ -281,7 +281,7 @@ EXTERN_C int __cdecl _NtCRT_fstat32(int fd, struct _stat32* buffer)
 EXTERN_C int __cdecl _NtCRT_stat32(const char* path, struct _stat32* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_stat64(path, &Stat);
+    int Result = _NtCRT_stat64(path, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);
@@ -292,7 +292,7 @@ EXTERN_C int __cdecl _NtCRT_stat32(const char* path, struct _stat32* buffer)
 EXTERN_C int __cdecl _NtCRT_wstat32(const wchar_t* path, struct _stat32* buffer)
 {
     struct _stat64 Stat;
-    int Result = _NtCRT_wstat64(path, &Stat);
+    int Result = _NtCRT_wstat64(path, buffer != NULL ? &Stat : NULL);
     if (Result == 0)
     {
         NTCRT_STAT_CONVERT(buffer, Stat);

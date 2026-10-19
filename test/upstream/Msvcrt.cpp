@@ -233,6 +233,17 @@ static void TestCtrlZ(void)
     remove(Name);
 }
 
+/* The stat functions converting from _stat64 reject a NULL buffer as it does */
+static void TestStatNull(void)
+{
+    errno = 0;
+    CHECK(_stat32(".", NULL) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(_wstati64(L".", NULL) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(_fstat32(0, NULL) == -1 && errno == EINVAL);
+}
+
 static int g_Dup2Fd;
 static volatile LONG g_Dup2Done;
 
@@ -322,6 +333,7 @@ TestMsvcrt(VOID)
     TestFiles();
     TestUtf8Pending();
     TestCtrlZ();
+    TestStatNull();
     TestDup2();
     TestGetcwd();
     TestMbcs();
