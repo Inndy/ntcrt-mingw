@@ -316,6 +316,8 @@ TestMultiByteToWideCharErrors(
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_ACP, 0, "A", 0, Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_ACP, 0, "A", 1, Buffer, -1) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_ACP, 0, "A", 1, NULL, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 1252, 0, "A", -1, Buffer, 0) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_UTF8, 0, "A", -1, Buffer, 0) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_ACP, 0, SameBuffer, 1, (LPWSTR)SameBuffer, 1) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_UTF8, MB_PRECOMPOSED, "A", 1, Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, MB_ERR_INVALID_CHARS, InvalidDbcs, sizeof(InvalidDbcs), NULL, 0) &&
@@ -337,6 +339,8 @@ TestWideCharToMultiByteErrors(
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_ACP, 0, L"A", 0, Buffer, _countof(Buffer)) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_ACP, 0, L"A", 1, Buffer, -1) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_ACP, 0, L"A", 1, NULL, _countof(Buffer)) &&
+        CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, 1252, 0, L"A", -1, Buffer, 0) &&
+        CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_UTF8, 0, L"A", -1, Buffer, 0) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_ACP, 0, SameBuffer, 1, (LPSTR)SameBuffer, 1) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_UTF8, WC_COMPOSITECHECK, L"A", 1, Buffer, _countof(Buffer)) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, 1200, 0, L"A", 1, Buffer, _countof(Buffer)) &&

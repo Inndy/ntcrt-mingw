@@ -395,6 +395,12 @@ __acrt_MultiByteToWideChar(
         return 0;
     }
 
+    /* A size of 0 asks for the size, the buffer is not used */
+    if (cchWideChar == 0)
+    {
+        lpWideCharStr = NULL;
+    }
+
     Error = _CRT_ResolveCodePage(CodePage, &ResolvedCodePage);
     if (Error != ERROR_SUCCESS)
     {
@@ -545,6 +551,12 @@ __acrt_WideCharToMultiByte(
     {
         _Inline_SetLastError(ERROR_INVALID_PARAMETER);
         return 0;
+    }
+
+    /* A size of 0 asks for the size, the buffer is not used */
+    if (cbMultiByte == 0)
+    {
+        lpMultiByteStr = NULL;
     }
 
     Error = _CRT_ResolveCodePage(CodePage, &ResolvedCodePage);
