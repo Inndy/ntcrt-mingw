@@ -384,7 +384,8 @@ code.
   `pthread_getschedparam` reads the priority of the thread (5 set is 2, `THREAD_PRIORITY_HIGHEST`), winpthreads
   returns the value set.
 - `pthread_setname_np` and `pthread_getname_np` set and read the description of the thread (Windows 10 1607 and
-  later, `ENOTSUP` before) in the ANSI code page. `pthread_num_processors_np` counts the affinity of the process.
+  later; before, `pthread_setname_np` fails with `ENOTSUP` and `pthread_getname_np` reads an empty name) in the ANSI
+  code page. `pthread_num_processors_np` counts the affinity of the process.
 - Clocks: `CLOCK_REALTIME` and `CLOCK_REALTIME_COARSE` are the system time (the resolution of the clock tick, as
   `time` and `GetSystemTimeAsFileTime`), `CLOCK_MONOTONIC` is `QueryPerformanceCounter`, the CPU time clocks are of the
   process and the thread. `nanosleep` and `clock_nanosleep` are not interrupted (no `EINTR`, `remain` is not written)
