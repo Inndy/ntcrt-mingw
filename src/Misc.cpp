@@ -1338,6 +1338,35 @@ EXTERN_C void* __cdecl _NtCRT__getdllprocaddr(intptr_t handle, char* name, intpt
     return NULL;
 }
 
+typedef void(__cdecl* _PVFV)(void);
+
+/* The table of a DLL, which runs it at its detach: *pbegin from malloc, grown by realloc, the functions not encoded */
+EXTERN_C _onexit_t __cdecl _NtCRT___dllonexit(_onexit_t func, _PVFV** pbegin, _PVFV** pend)
+{
+    _onexit_t Result = NULL;
+    size_t Count;
+
+    _NtCRT_lock(_EXIT_LOCK1);
+    Count = *pend - *pbegin;
+    if (RtlSizeHeap(NTCRT_HEAP, 0, *pbegin) < (Count + 1) * sizeof(_PVFV))
+    {
+        _PVFV* Table = (_PVFV*)RtlReAllocateHeap(NTCRT_HEAP, 0, *pbegin, (Count + 32) * sizeof(_PVFV));
+
+        if (Table == NULL)
+        {
+            goto _Exit;
+        }
+        *pbegin = Table;
+        *pend = Table + Count;
+    }
+    *(*pend)++ = (_PVFV)func;
+    Result = func;
+
+_Exit:
+    _NtCRT_unlock(_EXIT_LOCK1);
+    return Result;
+}
+
 #pragma endregion
 
 #pragma region Runtime services
@@ -1705,6 +1734,7 @@ NTCRT_IMPORT(_locking, _NtCRT__locking);
 NTCRT_IMPORT(_loaddll, _NtCRT__loaddll);
 NTCRT_IMPORT(_unloaddll, _NtCRT__unloaddll);
 NTCRT_IMPORT(_getdllprocaddr, _NtCRT__getdllprocaddr);
+NTCRT_IMPORT(__dllonexit, _NtCRT___dllonexit);
 NTCRT_IMPORT(_set_error_mode, _NtCRT__set_error_mode);
 NTCRT_IMPORT(_seterrormode, _NtCRT__seterrormode);
 NTCRT_IMPORT(_set_doserrno, _NtCRT__set_doserrno);

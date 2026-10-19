@@ -912,7 +912,6 @@ NTCRT_IMPORT(__getmainargs, _NtCRT___getmainargs);
 NTCRT_IMPORT(_initterm, _NtCRT__initterm);
 NTCRT_IMPORT(_initterm_e, _NtCRT__initterm_e);
 NTCRT_IMPORT(_onexit, _NtCRT__onexit);
-NTCRT_IMPORT(__dllonexit, _NtCRT__onexit);
 NTCRT_IMPORT_ONLY(atexit, _NtCRT_atexit);
 NTCRT_IMPORT(exit, _NtCRT_exit);
 NTCRT_IMPORT(_exit, _NtCRT__exit);

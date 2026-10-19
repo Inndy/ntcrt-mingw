@@ -535,6 +535,29 @@ static void TestMbcs(void)
     _free_locale(Utf8);
 }
 
+typedef void(__cdecl* PVFV)(void);
+
+extern "C" _onexit_t __cdecl __dllonexit(_onexit_t func, PVFV** pbegin, PVFV** pend);
+
+static int __cdecl OnExitNothing(void)
+{
+    return 0;
+}
+
+static void TestDllOnExit(void)
+{
+    PVFV* Begin = (PVFV*)malloc(2 * sizeof(PVFV));
+    PVFV* End = Begin;
+
+    /* __dllonexit appends to the table of the caller (a DLL), which it grows */
+    for (int i = 0; i < 40; i++)
+    {
+        CHECK(__dllonexit(OnExitNothing, &Begin, &End) == OnExitNothing);
+    }
+    CHECK(End - Begin == 40 && Begin[0] == (PVFV)OnExitNothing && Begin[39] == (PVFV)OnExitNothing);
+    free(Begin);
+}
+
 extern "C"
 BOOL
 TestMsvcrt(VOID)
@@ -556,5 +579,6 @@ TestMsvcrt(VOID)
     TestGetcwd();
     TestStreams();
     TestMbcs();
+    TestDllOnExit();
     return g_Ok;
 }
