@@ -25,7 +25,19 @@ _NtCRT_ftell_nolock(
     {
         return Position;
     }
-    if (Stream->_flag & _IOWRT)
+    if ((Stream->_flag & _IOWRT) && _NtCRT_fd_textmode(Stream->_file) >= NTCRT_FD_UTF8)
+    {
+        /* The buffer holds UTF-16 units, written as UTF-8 or UTF-16 with LF as CRLF */
+        BOOL Utf8 = _NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_UTF8;
+
+        for (const char* p = Stream->_base; p + sizeof(wchar_t) <= Stream->_ptr; p += sizeof(wchar_t))
+        {
+            wchar_t c;
+
+            memcpy(&c, p, sizeof(wchar_t));
+            Position += _NtCRT_UnitBytes(c, Utf8);
+        }
+    } else if (Stream->_flag & _IOWRT)
     {
         Position += Stream->_ptr - Stream->_base;
         if (_NtCRT_fd_textmode(Stream->_file))
@@ -40,11 +52,10 @@ _NtCRT_ftell_nolock(
         }
     } else if ((Stream->_flag & _IOREAD) && _NtCRT_fd_textmode(Stream->_file) >= NTCRT_FD_UTF8)
     {
-        /* The bytes of the unread units in the file, a newline was CRLF */
+        /* The bytes of the unread units in the file, a newline was CRLF; the fd counts the units it read ahead */
         BOOL Utf8 = _NtCRT_fd_textmode(Stream->_file) == NTCRT_FD_UTF8;
         const char* p = Stream->_ptr;
 
-        Position -= _NtCRT_fd_pending_bytes(Stream->_file);
         for (int i = 0; i + (int)sizeof(wchar_t) <= Stream->_cnt; i += sizeof(wchar_t))
         {
             wchar_t c;

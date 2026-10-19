@@ -332,6 +332,48 @@ static void TestGetcwd(void)
     free(Cwd);
 }
 
+static void PutFile(const char* Name, const char* Data, size_t Size)
+{
+    FILE* File = fopen(Name, "wb");
+
+    if (File != NULL)
+    {
+        fwrite(Data, 1, Size, File);
+        fclose(File);
+    }
+}
+
+/* Positioning of streams by C */
+static void TestStreams(void)
+{
+    static const char Name[] = "ntcrt_streams.tmp";
+    wchar_t Unit = 0;
+    FILE* File;
+    int fd;
+
+    /* A position query keeps the characters an fd or a stream read ahead */
+    PutFile(Name, "\xE2\x82\xAC" "AB", 5);
+    fd = _open(Name, _O_RDONLY | _O_U8TEXT);
+    CHECK(fd >= 0 && _read(fd, &Unit, 2) == 2 && Unit == 0x20AC && _telli64(fd) == 3);
+    CHECK(_read(fd, &Unit, 2) == 2 && Unit == L'A' && _telli64(fd) == 4);
+    _close(fd);
+    File = fopen(Name, "r, ccs=UTF-8");
+    CHECK(File != NULL && setvbuf(File, NULL, _IONBF, 0) == 0 && fgetwc(File) == 0x20AC);
+    CHECK(ftell(File) == 3 && fgetwc(File) == L'A' && ftell(File) == 4);
+    fclose(File);
+
+    /* The position of Unicode output counts the encoded bytes after the BOM */
+    File = fopen(Name, "w, ccs=UTF-8");
+    CHECK(File != NULL && fputwc(0x20AC, File) == 0x20AC && ftell(File) == 6);
+    CHECK(fputwc(L'\n', File) == L'\n' && ftell(File) == 8);
+    fclose(File);
+    File = fopen(Name, "w, ccs=UTF-16LE");
+    CHECK(File != NULL && fputwc(0x20AC, File) == 0x20AC && fputwc(L'\n', File) == L'\n' && ftell(File) == 8);
+    fclose(File);
+
+    remove(Name);
+}
+
 static void TestMbcs(void)
 {
     char Drive[8], Dir[32], Fname[32], Ext[8];
@@ -373,6 +415,7 @@ TestMsvcrt(VOID)
     TestDup2();
     TestUmask();
     TestGetcwd();
+    TestStreams();
     TestMbcs();
     return g_Ok;
 }

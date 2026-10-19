@@ -45,13 +45,26 @@ EXTERN_C int __cdecl _NtCRT_close(int fd)
 EXTERN_C long long __cdecl _NtCRT_lseeki64(int fd, long long offset, int origin)
 {
     PNTCRT_FD Entry = _NtCRT_LockFd(fd);
-    long long Result;
+    long long Result, Ahead;
 
     if (Entry == NULL)
     {
         return -1;
     }
-    Result = _NtCRT_SeekHandle(Entry->Handle, offset, origin);
+    /* The current position is before the units read ahead */
+    Ahead = origin == SEEK_CUR && Entry->PendingCount != 0 ? _NtCRT_fd_pending_bytes(fd) : 0;
+    if (origin == SEEK_CUR && offset == 0)
+    {
+        /* A query keeps the state of reading */
+        Result = _NtCRT_SeekHandle(Entry->Handle, 0, SEEK_CUR);
+        if (Result >= 0)
+        {
+            Result = Result > Ahead ? Result - Ahead : 0;
+        }
+        _NtCRT_UnlockFd(Entry);
+        return Result;
+    }
+    Result = _NtCRT_SeekHandle(Entry->Handle, offset - Ahead, origin);
     if (Result >= 0)
     {
         Entry->Flags &= ~FEOFLAG;

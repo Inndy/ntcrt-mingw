@@ -423,8 +423,8 @@ waiters).
   way, one surrogate per composition.
 - `getwc`, `putwc` and `ungetwc` of a narrow stream convert by UTF-8 with a state per stream in "C.UTF-8".
 - `_O_U8TEXT` reads return the characters of complete UTF-8 sequences, a sequence split by the read size is
-  completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream is
-  exact, except between the two units of a surrogate pair, where no byte offset exists.
+  completed by the next read and an invalid or truncated sequence is U+FFFD. `ftell` of a Unicode mode stream and
+  `_tell` of its fd are exact, except between the two units of a surrogate pair, where no byte offset exists.
 
 ### C, msvcrt and UCRT
 
