@@ -37,7 +37,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
 - `test/thread/` the pthread functions, `<threads.h>` and the threads of libstdc++ (`make test-thread`)
-- `test/start/` pseudo relocations of data auto-imported from a DLL and `_matherr` (`make test-start`)
+- `test/start/` pseudo relocations of data auto-imported from a DLL, `_matherr` and the narrow `argv` of
+  characters converted to bytes that a parser would take for a backslash or a quote (`make test-start`)
 - `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
 - `test/wine/` the msvcrt and ucrtbase tests of Wine 11.0 on NtCRT (`make test-wine`, downloads them into the build
@@ -417,7 +418,10 @@ waiters).
 - The narrow file name functions (`fopen`, `_open`, `_stat`, `_mkdir`, `_findfirst`, `_fullpath`, `rename`,
   ...) convert names by UTF-8 when `LC_CTYPE` is "C.UTF-8" and by the ANSI code page otherwise. An invalid name
   fails with `EILSEQ`, there is no best-fit conversion. `argv`, `environ` and `_acmdln` are in the ANSI code
-  page, which is UTF-8 with the `activeCodePage` manifest setting.
+  page, which is UTF-8 with the `activeCodePage` manifest setting. The narrow `argv` is the wide one converted
+  argument by argument, msvcrt parses the converted command line: there the trail byte 0x5C of a double-byte
+  character (A5 5C in code page 950) is a backslash and a character converted to a quote by best fit (U+FF02 in code
+  page 1252) ends an argument.
 - When `LC_CTYPE` is "C.UTF-8", a text mode console fd writes and reads UTF-8 through `WriteConsoleW` and
   `ReadConsoleW` whatever the console code page is: a character split between writes is kept until it is
   complete, reads translate CRLF to LF and a Ctrl+Z at the start of a line is the end of the file. The console

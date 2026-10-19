@@ -341,8 +341,14 @@ $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe: test/start/matherr
 	$(NTCRT_CC) -O2 -w -static -o $(BUILD)/start/matherr.exe $<
 	$(NTCRT_CC) -O2 -w -static -DCUSTOM -o $(BUILD)/start/matherr_custom.exe $<
 
-test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe
+$(BUILD)/start/argv.exe: test/start/argv.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -static -o $@ $<
+
+test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
+            $(BUILD)/start/argv.exe
 	cd $(BUILD)/start && ./reloc.exe
+	$(BUILD)/start/argv.exe
 	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
 	@echo "start: ok"

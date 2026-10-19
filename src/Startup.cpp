@@ -493,12 +493,31 @@ _NtCRT___getmainargs(
     _NtCRT_InitRuntime();
     if (_NtCRT_argv == NULL)
     {
-        _NtCRT_acmdln = _NtCRT_WideToAnsi(NtCurrentPeb()->ProcessParameters->CommandLine.Buffer);
-        if (_NtCRT_acmdln == NULL || (_NtCRT_argv = _NtCRT_BuildArgv<char>(_NtCRT_acmdln, &_NtCRT_argc)) == NULL)
+        /*
+         * The wide command line is parsed and each argument converted, so that no converted byte is taken for a quote
+         * or a backslash: the trail byte 0x5C of a double-byte character (A5 5C in code page 950), or a character that
+         * the code page maps to one by best fit (U+FF02).
+         */
+        PWSTR CommandLine = NtCurrentPeb()->ProcessParameters->CommandLine.Buffer;
+        wchar_t** Wide = _NtCRT_BuildArgv<wchar_t>(CommandLine, &_NtCRT_argc);
+
+        _NtCRT_acmdln = _NtCRT_WideToAnsi(CommandLine);
+        if (Wide == NULL || _NtCRT_acmdln == NULL ||
+            (_NtCRT_argv = (char**)RtlAllocateHeap(NTCRT_HEAP, 0, (_NtCRT_argc + 1) * sizeof(char*))) == NULL)
         {
             _NtCRT_amsg_exit(8); /* _RT_SPACEARG */
             return -1;
         }
+        for (int i = 0; i < _NtCRT_argc; i++)
+        {
+            if ((_NtCRT_argv[i] = _NtCRT_WideToAnsi(Wide[i])) == NULL)
+            {
+                _NtCRT_amsg_exit(8);
+                return -1;
+            }
+        }
+        _NtCRT_argv[_NtCRT_argc] = NULL;
+        RtlFreeHeap(NTCRT_HEAP, 0, Wide);
     }
     _NtCRT_InitEnviron();
     _NtCRT_initenv = _NtCRT_environ;
