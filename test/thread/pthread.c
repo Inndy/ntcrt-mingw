@@ -1702,6 +1702,32 @@ static unsigned __stdcall OnceForeign(void* Arg)
     return 0;
 }
 
+static volatile LONG g_BeginGo, g_BeginDone;
+static volatile ULONG_PTR g_BeginCommitted;
+
+static void __cdecl BeginThread(void* Arg)
+{
+    while (!g_BeginGo)
+    {
+        SleepMs(1);
+    }
+    g_BeginDone = 1;
+    if (Arg != NULL)
+    {
+        _endthread();
+    }
+}
+
+/* The committed stack, from the guard page up */
+static unsigned __stdcall BeginStack(void* Arg)
+{
+    NT_TIB* Tib = (NT_TIB*)NtCurrentTeb();
+
+    (void)Arg;
+    g_BeginCommitted = (ULONG_PTR)Tib->StackBase - (ULONG_PTR)Tib->StackLimit;
+    return 0;
+}
+
 static void TestForeign(void)
 {
     uintptr_t Handle = _beginthreadex(NULL, 0, OnceForeign, NULL, 0, NULL);
@@ -1710,6 +1736,29 @@ static void TestForeign(void)
     CHECK(WaitForSingleObject((HANDLE)Handle, INFINITE) == WAIT_OBJECT_0);
     CloseHandle((HANDLE)Handle);
     CHECK(pthread_once(&g_OnceForeign, OnceForeignAgain) == 0 && g_OnceForeignCalls == 11);
+
+    /* The handle of _beginthread is valid until the thread returns or calls _endthread, which close it */
+    for (int i = 0; i < 2; i++)
+    {
+        g_BeginGo = 0;
+        g_BeginDone = 0;
+        Handle = _beginthread(BeginThread, 0, i != 0 ? (void*)1 : NULL);
+        CHECK(Handle != (uintptr_t)-1);
+        CHECK(WaitForSingleObject((HANDLE)Handle, 0) == WAIT_TIMEOUT);
+        CHECK(GetThreadPriority((HANDLE)Handle) == THREAD_PRIORITY_NORMAL);
+        g_BeginGo = 1;
+        while (!g_BeginDone)
+        {
+            SleepMs(1);
+        }
+    }
+
+    /* STACK_SIZE_PARAM_IS_A_RESERVATION: 64 MB reserved, the default committed */
+    Handle = _beginthreadex(NULL, 64 << 20, BeginStack, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    CHECK(Handle != 0);
+    CHECK(WaitForSingleObject((HANDLE)Handle, INFINITE) == WAIT_OBJECT_0);
+    CloseHandle((HANDLE)Handle);
+    CHECK(g_BeginCommitted != 0 && g_BeginCommitted < (1 << 20));
 }
 
 int main(void)

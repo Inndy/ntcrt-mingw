@@ -62,6 +62,7 @@ typedef struct _NTCRT_PTD
     unsigned int LocaleCodePage;       /* LC_CTYPE code page + 1 of the "_l" function running, 0 if none */
     char StrerrorBuffer[128];
     struct _NTCRT_PARKER* Parker; /* The event of the waits (PthreadWait.cpp), a reference */
+    HANDLE ThreadHandle;          /* Of a thread of _beginthread, which _endthread closes */
 } NTCRT_PTD, *PNTCRT_PTD;
 
 /* _NtCRT_FallbackPtd is shared by the threads that could not get their own, _NtCRT_PtdSlot is its TLS slot */

@@ -7,6 +7,8 @@
 typedef unsigned(__stdcall* _NtCRT_beginthreadex_proc)(void*);
 typedef void(__cdecl* _NtCRT_beginthread_proc)(void*);
 
+EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthread(void);
+
 typedef struct _NTCRT_THREAD_PARAM
 {
     _NtCRT_beginthreadex_proc StartEx;
@@ -30,7 +32,18 @@ _NtCRT_ThreadStartEx(
         Result = Param.StartEx(Param.ArgList);
     } else
     {
+        /* The handle that _beginthread returned stays valid until _endthread or the return closes it, as in msvcrt */
+        PNTCRT_PTD Ptd = _NtCRT_GetPtd();
+
+        if (Ptd != &_NtCRT_FallbackPtd)
+        {
+            Ptd->ThreadHandle = Param.Handle;
+        } else
+        {
+            NtClose(Param.Handle);
+        }
         Param.Start(Param.ArgList);
+        _NtCRT__endthread();
     }
     /* The TLS callback frees the per-thread data after the thread_local destructors of C++ */
     RtlExitUserThread((NTSTATUS)Result);
@@ -42,7 +55,7 @@ _NtCRT_CreateThread(
     _In_opt_ PSECURITY_DESCRIPTOR SecurityDescriptor,
     _In_ unsigned StackSize,
     _In_ PNTCRT_THREAD_PARAM Template,
-    _In_ bool Suspended,
+    _In_ unsigned Flags,
     _Out_opt_ unsigned* ThreadId)
 {
     NTSTATUS Status;
@@ -57,12 +70,13 @@ _NtCRT_CreateThread(
         return NULL;
     }
     *Param = *Template;
+    /* Suspended until the thread of _beginthread has its handle */
     Status = RtlCreateUserThread(NtCurrentProcess(),
                                  SecurityDescriptor,
-                                 Suspended,
+                                 TRUE,
                                  0,
-                                 0,
-                                 StackSize,
+                                 (Flags & STACK_SIZE_PARAM_IS_A_RESERVATION) != 0 ? StackSize : 0,
+                                 (Flags & STACK_SIZE_PARAM_IS_A_RESERVATION) != 0 ? 0 : StackSize,
                                  (PTHREAD_START_ROUTINE)_NtCRT_ThreadStartEx,
                                  Param,
                                  &Handle,
@@ -72,6 +86,11 @@ _NtCRT_CreateThread(
         RtlFreeHeap(NTCRT_HEAP, 0, Param);
         _NtCRT_SetErrnoFromNtStatus(Status);
         return NULL;
+    }
+    Param->Handle = Handle;
+    if ((Flags & CREATE_SUSPENDED) == 0)
+    {
+        NtResumeThread(Handle, NULL);
     }
     if (ThreadId != NULL)
     {
@@ -102,7 +121,7 @@ _NtCRT__beginthreadex(
                                                            : NULL,
                                           stack_size,
                                           &Param,
-                                          (initflag & CREATE_SUSPENDED) != 0,
+                                          initflag,
                                           thrdaddr);
 }
 
@@ -122,14 +141,8 @@ _NtCRT__beginthread(
         NTCRT_ERRNO = EINVAL;
         return (uintptr_t)-1;
     }
-    /* _beginthread closes the handle on thread exit in msvcrt, here the caller never owns it */
-    Handle = _NtCRT_CreateThread(NULL, stack_size, &Param, false, NULL);
-    if (Handle == NULL)
-    {
-        return (uintptr_t)-1;
-    }
-    NtClose(Handle);
-    return (uintptr_t)Handle;
+    Handle = _NtCRT_CreateThread(NULL, stack_size, &Param, 0, NULL);
+    return Handle != NULL ? (uintptr_t)Handle : (uintptr_t)-1;
 }
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthreadex(unsigned retval)
@@ -137,8 +150,16 @@ EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthreadex(unsigned ret
     RtlExitUserThread((NTSTATUS)retval);
 }
 
+/* Closes the handle of a thread of _beginthread, which then may be that of another object */
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthread(void)
 {
+    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
+
+    if (Ptd->ThreadHandle != NULL)
+    {
+        NtClose(Ptd->ThreadHandle);
+        Ptd->ThreadHandle = NULL;
+    }
     _NtCRT__endthreadex(0);
 }
 
