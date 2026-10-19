@@ -116,6 +116,13 @@ extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG_PTR Value, U
 extern "C" void _NtCRT_Wake(const volatile void* Address, BOOL All);
 
 /*
+ * _NtCRT_Waiting: whether a thread is queued on Address (parked or about to). _NtCRT_Backoff: a round of a wait for
+ * another thread that runs, pause, then yield, then sleep 1 ms (Rounds from 0).
+ */
+extern "C" bool _NtCRT_Waiting(const volatile void* Address);
+extern "C" void _NtCRT_Backoff(ULONG* Rounds);
+
+/*
  * The rounds of YieldProcessor (pause) that a thread spends on a lock, a post or a signal before it parks, while no
  * thread is parked on it: a park and an unpark cost about 4 us, 100 rounds 1.4 us on Zen 5 (3.5 us where a pause
  * takes 140 cycles, as on Intel since Skylake). None when the affinity of the process has one processor (at the

@@ -314,7 +314,10 @@ code.
   unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels),
   timed by `pthread_mutex_timedlock`. A condition wait unlocks a recursive mutex whatever its count and restores it.
 - Condition variables wait by `CLOCK_REALTIME` or `CLOCK_MONOTONIC` (`pthread_condattr_setclock`), or a relative
-  time (`pthread_cond_timedwait_relative_np`). An absolute `CLOCK_REALTIME` time follows changes of the clock.
+  time (`pthread_cond_timedwait_relative_np`). An absolute `CLOCK_REALTIME` time follows changes of the clock. A
+  condition counts its waiters from before they unlock the mutex until their wait ends: POSIX lets a thread destroy
+  and free a condition on which no thread is blocked, right after a broadcast, while the woken threads may still be
+  in `pthread_cond_wait`, and `pthread_cond_destroy` waits for them to leave (`EBUSY` while a thread is blocked on it).
 - Read-write locks prefer readers: a thread may take a read lock again while a writer waits, so writers can starve. A
   writer locking again gets `EDEADLK` (`EBUSY` from the try functions). A barrier counts up to 2^21 - 1 threads
   (`EINVAL` beyond). The last thread of a round waits until the threads released from the previous one left the

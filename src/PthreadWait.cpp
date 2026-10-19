@@ -54,7 +54,7 @@ static NTCRT_WAIT_BUCKET* WaitBucket(const volatile void* Address)
  * A round of a wait for another thread that runs (the holder of a bucket, a waker that unparked): pause, then yield,
  * then sleep without alerts, which lets a thread of a lower priority that was preempted run
  */
-static void Backoff(ULONG* Rounds)
+EXTERN_C void _NtCRT_Backoff(ULONG* Rounds)
 {
     LARGE_INTEGER Delay;
 
@@ -91,7 +91,7 @@ static bool LockClaimed(NTCRT_WAIT_BUCKET* Bucket, NTCRT_WAIT_NODE* Node)
         {
             return false;
         }
-        Backoff(&Rounds);
+        _NtCRT_Backoff(&Rounds);
     }
     return true;
 }
@@ -304,7 +304,7 @@ static LONG Claimed(NTCRT_WAIT_NODE* Node, bool Alerted)
 
     while (((State = __atomic_load_n(&Node->State, __ATOMIC_ACQUIRE)) & NODE_DONE) == 0)
     {
-        Backoff(&Rounds);
+        _NtCRT_Backoff(&Rounds);
     }
     if (!Alerted && __atomic_load_n(&_NtCRT_ParkerMode, __ATOMIC_RELAXED) == NTCRT_PARKER_ALERT)
     {
@@ -479,6 +479,20 @@ _NtCRT_Wake(
         Woken = Node->Next;
         Release(Node);
     }
+}
+
+/* A waker takes the nodes it claims out: a woken thread is not waiting */
+EXTERN_C bool _NtCRT_Waiting(const volatile void* Address)
+{
+    NTCRT_WAIT_BUCKET* Bucket = WaitBucket(Address);
+    NTCRT_WAIT_NODE* Node;
+
+    Lock(Bucket);
+    for (Node = Bucket->Head; Node != NULL && Node->Address != Address; Node = Node->Next)
+    {
+    }
+    Unlock(Bucket);
+    return Node != NULL;
 }
 
 /* pthread_cancel: end the cancellable wait of Thread on Address, if it waits there */

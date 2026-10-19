@@ -269,6 +269,127 @@ static void* FarSignal(void* Arg)
     return Arg;
 }
 
+/*
+ * POSIX lets a thread destroy a condition once no thread is blocked on it: the first waiter that a broadcast woke
+ * destroys it and decommits its page while the others may still be in pthread_cond_wait
+ */
+#define FREED_WAITERS 6
+#define FREED_ROUNDS  4000
+
+static pthread_cond_t* volatile g_FreedCond;
+static volatile LONG g_FreedRound, g_FreedDone, g_FreedWaiting, g_FreedArrived, g_FreedBy;
+
+static void* FreedWaiter(void* Arg)
+{
+    (void)Arg;
+    for (LONG Round = 1; Round <= FREED_ROUNDS; Round++)
+    {
+        pthread_cond_t* Cond;
+
+        while (g_FreedRound < Round)
+        {
+            YieldProcessor();
+        }
+        Cond = g_FreedCond;
+        pthread_mutex_lock(&g_Mutex);
+        g_FreedWaiting++;
+        while (g_FreedDone != Round)
+        {
+            pthread_cond_wait(Cond, &g_Mutex);
+        }
+        pthread_mutex_unlock(&g_Mutex);
+        if (InterlockedCompareExchange(&g_FreedBy, Round, Round - 1) == Round - 1)
+        {
+            CHECK(pthread_cond_destroy(Cond) == 0);
+            VirtualFree(Cond, 4096, MEM_DECOMMIT);
+        }
+        InterlockedIncrement(&g_FreedArrived);
+    }
+    return NULL;
+}
+
+static void* BlockedWaiter(void* Arg)
+{
+    pthread_mutex_lock(&g_Mutex);
+    g_FreedWaiting = 1;
+    while (g_FreedDone == 0)
+    {
+        pthread_cond_wait((pthread_cond_t*)Arg, &g_Mutex);
+    }
+    pthread_mutex_unlock(&g_Mutex);
+    return NULL;
+}
+
+static void TestCondFreed(void)
+{
+    pthread_t Threads[FREED_WAITERS];
+    pthread_cond_t Cond = PTHREAD_COND_INITIALIZER;
+    char* Pages = (char*)VirtualAlloc(NULL, 64 * 4096, MEM_RESERVE, PAGE_READWRITE);
+
+    for (int i = 0; i < FREED_WAITERS; i++)
+    {
+        CHECK(pthread_create(&Threads[i], NULL, FreedWaiter, NULL) == 0);
+    }
+    for (LONG Round = 1; Round <= FREED_ROUNDS; Round++)
+    {
+        pthread_cond_t* Fresh = (pthread_cond_t*)VirtualAlloc(Pages + Round % 64 * 4096, 4096, MEM_COMMIT,
+                                                              PAGE_READWRITE);
+
+        pthread_cond_init(Fresh, NULL);
+        g_FreedCond = Fresh;
+        g_FreedArrived = 0;
+        g_FreedRound = Round;
+        /* Each waiter counted itself under the mutex, which it released in pthread_cond_wait: all are blocked */
+        for (;;)
+        {
+            pthread_mutex_lock(&g_Mutex);
+            if (g_FreedWaiting == FREED_WAITERS)
+            {
+                break;
+            }
+            pthread_mutex_unlock(&g_Mutex);
+            YieldProcessor();
+        }
+        g_FreedWaiting = 0;
+        g_FreedDone = Round;
+        pthread_cond_broadcast(Fresh);
+        pthread_mutex_unlock(&g_Mutex);
+        while (g_FreedArrived != FREED_WAITERS)
+        {
+            YieldProcessor();
+        }
+    }
+    for (int i = 0; i < FREED_WAITERS; i++)
+    {
+        CHECK(pthread_join(Threads[i], NULL) == 0);
+    }
+    VirtualFree(Pages, 0, MEM_RELEASE);
+
+    /* A thread blocked on the condition: EBUSY */
+    g_FreedWaiting = 0;
+    g_FreedDone = 0;
+    CHECK(pthread_create(&Threads[0], NULL, BlockedWaiter, &Cond) == 0);
+    for (;;)
+    {
+        pthread_mutex_lock(&g_Mutex);
+        if (g_FreedWaiting)
+        {
+            break;
+        }
+        pthread_mutex_unlock(&g_Mutex);
+        SleepMs(1);
+    }
+    pthread_mutex_unlock(&g_Mutex);
+    SleepMs(50);
+    CHECK(pthread_cond_destroy(&Cond) == EBUSY);
+    pthread_mutex_lock(&g_Mutex);
+    g_FreedDone = 1;
+    pthread_cond_signal(&Cond);
+    pthread_mutex_unlock(&g_Mutex);
+    CHECK(pthread_join(Threads[0], NULL) == 0);
+    CHECK(pthread_cond_destroy(&Cond) == 0);
+}
+
 static void TestCond(void)
 {
     pthread_t Producers[4], Consumers[4];
@@ -367,6 +488,7 @@ static void TestCond(void)
         CHECK(pthread_cond_timedwait(&g_NotEmpty, &g_Mutex, &Time) == ETIMEDOUT);
     }
     pthread_mutex_unlock(&g_Mutex);
+    TestCondFreed();
 }
 
 /* Read-write locks */
