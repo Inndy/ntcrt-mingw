@@ -61,21 +61,33 @@ typedef struct _NTCRT_PTD
     RTL_HEAP_WALK_ENTRY HeapWalkEntry; /* Last entry returned by _heapwalk */
     unsigned int LocaleCodePage;       /* LC_CTYPE code page + 1 of the "_l" function running, 0 if none */
     char StrerrorBuffer[128];
+    struct _NTCRT_PARKER* Parker; /* The event of the waits (PthreadWait.cpp), a reference */
 } NTCRT_PTD, *PNTCRT_PTD;
 
+/* _NtCRT_FallbackPtd is shared by the threads that could not get their own, _NtCRT_PtdSlot is its TLS slot */
 extern "C" PNTCRT_PTD _NtCRT_GetPtd(void);
+extern "C" NTCRT_PTD _NtCRT_FallbackPtd;
+extern "C" DWORD _NtCRT_PtdSlot(void);
 
 /*
  * The thread functions (Pthread*.cpp), set when a program uses them so that the others do not link them:
  * _NtCRT_ThreadExit is _NtCRT_KeyExit, which runs the destructors of pthread keys (_NtCRT_KeyDestructors, which
  * pthread_exit runs first) and then _NtCRT_PthreadExit, the end of the pthread_t of the thread, at the exit of a
- * thread. Once a thread was cancelled, _NtCRT_TestCancel ends a
- * cancelled thread at a cancellation point (Pass passes on a wake that the thread may have taken from others), and
- * _NtCRT_CleanupList is the cleanup handlers of the thread, which it gives a pthread_t, NULL if out of memory.
+ * thread. Once a thread was cancelled, _NtCRT_TestCancel ends a cancelled thread at a cancellation point (Pass passes
+ * on a wake that the thread may have taken from others) and _NtCRT_CancelRequested tells whether the thread has a
+ * cancellation pending that acts. _NtCRT_CleanupList is the cleanup handlers of the thread, which it gives a
+ * pthread_t, NULL if out of memory. _NtCRT_DelayHook is _NtCRT_Delay, the sleep that pthread_cancel can end, set at
+ * startup. _NtCRT_WaitSlot, set at startup too, is where a cancellable wait of the thread publishes its address for
+ * pthread_cancel (NULL for a thread without a pthread_t). _NtCRT_ParkerExit is _NtCRT_ParkerRelease, of the parker in
+ * the per-thread data at the exit of a thread.
  */
 extern "C" void (*_NtCRT_ThreadExit)(void);
 extern "C" void (*_NtCRT_TestCancel)(void (*Pass)(void* Object), void* Object);
+extern "C" bool (*_NtCRT_CancelRequested)(void);
 extern "C" struct _pthread_cleanup** (*_NtCRT_CleanupList)(void);
+extern "C" NTSTATUS (*_NtCRT_DelayHook)(PLARGE_INTEGER Timeout);
+extern "C" const volatile void* volatile* (*_NtCRT_WaitSlot)(void);
+extern "C" void (*_NtCRT_ParkerExit)(struct _NTCRT_PARKER* Parker);
 extern "C" void (*_NtCRT_PthreadExit)(void);
 extern "C" void _NtCRT_KeyExit(void);
 extern "C" void _NtCRT_KeyDestructors(void);
@@ -93,12 +105,36 @@ static inline void _NtCRT_CancelPoint(void (*Pass)(void* Object), void* Object)
 
 /*
  * Wait while the Size bytes (4 or 8) at Address are Value, until _NtCRT_Wake of the address or the timeout. Returns
- * STATUS_SUCCESS (woken, or the value differs), STATUS_TIMEOUT, or with Alertable STATUS_ALERTED or STATUS_USER_APC.
- * The waker changes the value before the wake.
+ * STATUS_SUCCESS (woken, or the value differs), STATUS_TIMEOUT, or with NTCRT_WAIT_CANCEL (a cancellation point)
+ * STATUS_CANCELLED when pthread_cancel requested the thread to end. The waker changes the value before the wake. No
+ * wait is alertable.
  */
+#define NTCRT_WAIT_CANCEL 1
 extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG_PTR Value, ULONG Size, PLARGE_INTEGER Timeout,
-                                BOOLEAN Alertable);
+                                ULONG Flags);
 extern "C" void _NtCRT_Wake(const volatile void* Address, BOOL All);
+
+/*
+ * The parker of a thread (PthreadWait.cpp): NtWaitForAlertByThreadId (NTCRT_PARKER_ALERT, Windows 8 and later) or an
+ * event (NTCRT_PARKER_EVENT), _NtCRT_ParkerMode once chosen. An event has references: _NtCRT_ParkerCreate makes one
+ * with Refs (true and NULL without events, false if out of resources), _NtCRT_ParkerSelf adds one to that of the
+ * thread (NULL without), _NtCRT_ParkerRelease drops one. The per-thread data holds the event of a thread.
+ * _NtCRT_CancelWait ends the cancellable wait of a thread (its ID) on an address. _NtCRT_Delay parks the thread
+ * until Timeout: STATUS_SUCCESS when it passed, STATUS_ALERTED if pthread_cancel ended it (or spuriously).
+ */
+#define NTCRT_PARKER_ALERT 1
+#define NTCRT_PARKER_EVENT 2
+typedef struct _NTCRT_PARKER
+{
+    volatile LONG Refs;
+    HANDLE Event;
+} NTCRT_PARKER, *PNTCRT_PARKER;
+extern "C" LONG _NtCRT_ParkerMode;
+extern "C" bool _NtCRT_ParkerCreate(PNTCRT_PARKER* Parker, LONG Refs);
+extern "C" PNTCRT_PARKER _NtCRT_ParkerSelf(void);
+extern "C" void _NtCRT_ParkerRelease(PNTCRT_PARKER Parker);
+extern "C" void _NtCRT_CancelWait(DWORD Thread, const volatile void* Address);
+extern "C" NTSTATUS _NtCRT_Delay(PLARGE_INTEGER Timeout);
 
 /*
  * Times of the thread functions in 100 ns units (PthreadTime.cpp). _NtCRT_Timeout makes the NT timeout of Units, a

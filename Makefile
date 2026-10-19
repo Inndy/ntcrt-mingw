@@ -256,42 +256,56 @@ test-cxx: $(BUILD)/cxx/stdcxx.exe
 	./$<
 
 # The pthread functions, <threads.h> and the threads of libstdc++. -lpthread and -pthread link no winpthreads.
-THREAD_TESTS := $(BUILD)/thread/pthread.exe $(BUILD)/thread/c11.exe $(BUILD)/thread/cxx.exe \
-                $(BUILD)/thread/dllimport.exe $(BUILD)/thread/exit.exe $(BUILD)/thread/tlsslot.exe
+# PARKER=event: the thread tests (test-thread, test-pthread) wait on the parker of Windows 7 and earlier, an event per
+# thread, in place of NtWaitForAlertByThreadId: test/thread/parker.c is linked in, in directories of their own.
+ifeq ($(PARKER),event)
+PARKER_OBJ := $(BUILD)/parker-event.o
+THREAD := $(BUILD)/thread-event
+PTHREAD := $(BUILD)/pthread-event
+else
+THREAD := $(BUILD)/thread
+PTHREAD := $(BUILD)/pthread
+endif
 
-$(BUILD)/thread/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER)
-	mkdir -p $(@D)
-	$(NTCRT_CC) -std=c17 -O2 -static -pthread -o $@ $< -lpthread
+$(BUILD)/parker-event.o: test/thread/parker.c | $(BUILD)
+	$(CC) -O2 -c -o $@ $<
 
-$(BUILD)/thread/c11.exe: test/thread/c11.c $(LIBS) $(DRIVER)
-	mkdir -p $(@D)
-	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+THREAD_TESTS := $(THREAD)/pthread.exe $(THREAD)/c11.exe $(THREAD)/cxx.exe \
+                $(THREAD)/dllimport.exe $(THREAD)/exit.exe $(THREAD)/tlsslot.exe
 
-$(BUILD)/thread/dllimport.exe: test/thread/dllimport.c $(LIBS) $(DRIVER)
+$(THREAD)/pthread.exe: test/thread/pthread.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
-	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+	$(NTCRT_CC) -std=c17 -O2 -static -pthread -o $@ $< $(PARKER_OBJ) -lpthread
 
-$(BUILD)/thread/tlsslot.exe: test/thread/tlsslot.c $(LIBS) $(DRIVER)
+$(THREAD)/c11.exe: test/thread/c11.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
-	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< $(PARKER_OBJ)
 
-$(BUILD)/thread/exit.exe: test/thread/exit.c $(LIBS) $(DRIVER)
+$(THREAD)/dllimport.exe: test/thread/dllimport.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
-	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< $(PARKER_OBJ)
 
-$(BUILD)/thread/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER)
+$(THREAD)/tlsslot.exe: test/thread/tlsslot.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
-	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< -Wl,-Map=$(BUILD)/thread/cxx.map
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< $(PARKER_OBJ)
+
+$(THREAD)/exit.exe: test/thread/exit.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $< $(PARKER_OBJ)
+
+$(THREAD)/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER) $(PARKER_OBJ)
+	mkdir -p $(@D)
+	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< $(PARKER_OBJ) -Wl,-Map=$(THREAD)/cxx.map
 
 # exit.exe: the end of the process without exit (the last thread, ExitProcess), its status and output (a pipe)
 test-thread: $(THREAD_TESTS)
-	if grep -i winpthread $(BUILD)/thread/cxx.map; then echo "winpthreads is linked"; exit 1; fi
-	if grep 'libgcc\.a(emutls\.o)' $(BUILD)/thread/cxx.map; then echo "emutls of libgcc is linked"; exit 1; fi
+	if grep -i winpthread $(THREAD)/cxx.map; then echo "winpthreads is linked"; exit 1; fi
+	if grep 'libgcc\.a(emutls\.o)' $(THREAD)/cxx.map; then echo "emutls of libgcc is linked"; exit 1; fi
 	for t in $(THREAD_TESTS); do \
 	    if objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll; then echo "$$t imports more than ntdll.dll"; exit 1; fi; \
 	done
 	for t in $(filter-out %/exit.exe,$(THREAD_TESTS)); do ./$$t || exit 1; done
-	t=$(BUILD)/thread/exit.exe; \
+	t=$(THREAD)/exit.exe; \
 	check() { out=$$($$t $$1); s=$$?; test $$s = $$2 && test "$$out" = "$$3" || { echo "exit.exe $$1: $$s '$$out'"; exit 1; }; }; \
 	check main 7 "main dtor:main atexit" && \
 	check c11 7 "c11 dtor:main atexit" && \
@@ -299,12 +313,12 @@ test-thread: $(THREAD_TESTS)
 	check createthread 11 "createthread dtor:main worker atexit" && \
 	check exitprocess 5 "exitprocess atexit" && \
 	check locked 6 "locked atexit" && \
-	rm -f $(BUILD)/thread/exit.txt && \
-	check "lockedfd $(BUILD)/thread/exit.txt" 8 "lockedfd dup2:-1,1 atexit" && \
-	test "$$(cat $(BUILD)/thread/exit.txt)" = lockedfd && \
-	check "mingwthr $(BUILD)/thread/exit.txt" 4 "mingwthr atexit" && \
-	test "$$(cat $(BUILD)/thread/exit.txt)" = mingwthr && \
-	out=$$($(BUILD)/thread/cxx.exe last) && test "$$out" = "AB"
+	rm -f $(THREAD)/exit.txt && \
+	check "lockedfd $(THREAD)/exit.txt" 8 "lockedfd dup2:-1,1 atexit" && \
+	test "$$(cat $(THREAD)/exit.txt)" = lockedfd && \
+	check "mingwthr $(THREAD)/exit.txt" 4 "mingwthr atexit" && \
+	test "$$(cat $(THREAD)/exit.txt)" = mingwthr && \
+	out=$$($(THREAD)/cxx.exe last) && test "$$out" = "AB"
 	@echo "end of the process: ok"
 
 # libntcrt_start: pseudo relocations of data auto-imported from a DLL (built with the default runtime), _matherr
@@ -377,14 +391,12 @@ test-wine: $(WINE_TESTS:%=$(WINE)/%.exe)
 # test (incrementally) and runs it with a timeout, test/pthread/skip.txt leaves out what NtCRT does not support or
 # what is specific to pthreads4w or Linux. PTHREAD_TESTS="suite/test ..." (shell patterns) runs some, RUNS=n each n
 # times, TIMEOUT=s.
-PTHREAD := $(BUILD)/pthread
-
 $(PTHREAD)/src.stamp: test/pthread/fetch.sh
 	sh $< $(PTHREAD)/src
 	touch $@
 
-test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER)
-	set -f; NTCRT_CC="$(NTCRT_CC)" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
+test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER) $(PARKER_OBJ)
+	set -f; NTCRT_CC="$(NTCRT_CC)$(if $(PARKER_OBJ), $(CURDIR)/$(PARKER_OBJ))" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
 
 test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start
 

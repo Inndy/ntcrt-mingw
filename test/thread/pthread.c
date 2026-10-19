@@ -1,6 +1,7 @@
 // The pthread functions of NtCRT: races of several threads, the mutex types, timeouts, keys, once, cancellation
 
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <process.h>
 #include <pthread.h>
@@ -32,6 +33,14 @@ static long long NowMs(void)
 
     clock_gettime(CLOCK_MONOTONIC, &Time);
     return Time.tv_sec * 1000LL + Time.tv_nsec / 1000000;
+}
+
+static long long NowNs(void)
+{
+    struct timespec Time;
+
+    clock_gettime(CLOCK_MONOTONIC, &Time);
+    return Time.tv_sec * 1000000000LL + Time.tv_nsec;
 }
 
 static struct timespec RealtimeIn(long Ms)
@@ -248,6 +257,18 @@ static void* Consumer(void* Arg)
     }
 }
 
+static volatile int g_FarSignaled;
+
+static void* FarSignal(void* Arg)
+{
+    SleepMs(100);
+    pthread_mutex_lock(&g_Mutex);
+    g_FarSignaled = 1;
+    pthread_cond_signal(&g_NotEmpty);
+    pthread_mutex_unlock(&g_Mutex);
+    return Arg;
+}
+
 static void TestCond(void)
 {
     pthread_t Producers[4], Consumers[4];
@@ -322,6 +343,24 @@ static void TestCond(void)
         Start = NowMs();
         CHECK(pthread_cond_timedwait_relative_np(&g_NotEmpty, &g_Mutex, &Time) == ETIMEDOUT);
         CHECK(NowMs() - Start >= 50);
+        /* The longest relative time short of none (29000 years) waits for the signal */
+        {
+            pthread_t Signaler;
+
+            g_FarSignaled = 0;
+            Start = NowMs();
+            CHECK(pthread_create(&Signaler, NULL, FarSignal, NULL) == 0);
+            while (!g_FarSignaled)
+            {
+                Time.tv_sec = 922337203683;
+                Time.tv_nsec = 999999999;
+                CHECK(pthread_cond_timedwait_relative_np(&g_NotEmpty, &g_Mutex, &Time) == 0);
+            }
+            CHECK(NowMs() - Start >= 50);
+            pthread_mutex_unlock(&g_Mutex);
+            CHECK(pthread_join(Signaler, NULL) == 0);
+            pthread_mutex_lock(&g_Mutex);
+        }
 
         /* A time past */
         Time.tv_sec = 1;
@@ -578,35 +617,79 @@ static void* BarrierReuse(void* Arg)
     return Arg;
 }
 
-/* An APC that posts the semaphore its thread waits for */
+/*
+ * No wait of NtCRT is alertable: an APC queued to a thread that waits in sem_wait or pthread_cond_wait runs at the
+ * next alertable wait of the thread itself (SleepEx). Arg2 of an APC is what it does: count, take a mutex that the
+ * thread that queued it holds, or end the thread.
+ */
 NTSTATUS NTAPI NtQueueApcThread(HANDLE Thread, void(NTAPI* Routine)(void*, void*, void*), void* Arg1, void* Arg2,
                                 void* Arg3);
+NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE Thread);
+NTSTATUS NTAPI NtSetInformationThread(HANDLE Thread, int Class, void* Information, ULONG Length);
 
-static void NTAPI PostApc(void* Sem, void* Arg2, void* Arg3)
+static volatile long g_ApcRan;
+static volatile int g_ApcStarted;
+static int g_ApcReady;
+static pthread_cond_t g_ApcCond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t g_ApcMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void NTAPI CountApc(void* Arg1, void* Arg2, void* Arg3)
 {
-    (void)Arg2;
+    (void)Arg1;
     (void)Arg3;
-    sem_post(Sem);
-}
-
-/* Two APCs that each post the semaphore the other thread waits for, once both run */
-static volatile long g_InApc;
-
-static void NTAPI PairPostApc(void* Sem, void* Arg2, void* Arg3)
-{
-    (void)Arg2;
-    (void)Arg3;
-    __sync_fetch_and_add(&g_InApc, 1);
-    while (g_InApc < 2)
+    if (Arg2 == (void*)1)
     {
-        sched_yield();
+        pthread_mutex_lock(&g_ApcMutex);
+        pthread_mutex_unlock(&g_ApcMutex);
+    } else if (Arg2 == (void*)2)
+    {
+        pthread_exit((void*)42);
     }
-    sem_post(Sem);
+    __sync_fetch_and_add(&g_ApcRan, 1);
 }
 
-static void* SemWaitOne(void* Arg)
+/* Waits on the semaphore Arg (or the condition if NULL), returns 10 * the APCs run before + those after SleepEx */
+static void* WaitApc(void* Arg)
 {
-    return (void*)(intptr_t)sem_wait(Arg);
+    long Before;
+
+    g_ApcStarted = 1;
+    if (Arg != NULL)
+    {
+        CHECK(sem_wait(Arg) == 0);
+    } else
+    {
+        pthread_mutex_lock(&g_Mutex);
+        while (!g_ApcReady)
+        {
+            pthread_cond_wait(&g_ApcCond, &g_Mutex);
+        }
+        pthread_mutex_unlock(&g_Mutex);
+    }
+    Before = g_ApcRan;
+    SleepEx(0, TRUE);
+    return (void*)(intptr_t)(Before * 10 + g_ApcRan);
+}
+
+/* Starts WaitApc: an APC queued before the thread runs would run at its start, the thread then waits */
+static void StartWaitApc(pthread_t* Thread, void* Arg)
+{
+    g_ApcStarted = 0;
+    CHECK(pthread_create(Thread, NULL, WaitApc, Arg) == 0);
+    while (!g_ApcStarted)
+    {
+        SleepMs(1);
+    }
+    SleepMs(30);
+}
+
+/* Overwrites the stack that an ended thread left */
+static void* FillStack(void* Arg)
+{
+    volatile char Fill[65536];
+
+    memset((char*)Fill, 0xCC, sizeof(Fill));
+    return Arg;
 }
 
 static void TestSync(void)
@@ -712,18 +795,56 @@ static void TestSync(void)
     {
         void* Result;
 
+        HANDLE None = NULL;
+
+        /* The APC waits for the semaphore or the condition, then runs in SleepEx */
         CHECK(sem_init(&g_Sem, 0, 0) == 0);
-        CHECK(pthread_create(&Threads[0], NULL, SemWaitOne, &g_Sem) == 0);
-        SleepMs(50);
-        CHECK(NtQueueApcThread(pthread_gethandle(Threads[0]), PostApc, &g_Sem, NULL, NULL) == 0);
-        CHECK(pthread_join(Threads[0], &Result) == 0 && Result == NULL);
-        CHECK(pthread_create(&Threads[0], NULL, SemWaitOne, &g_Sem) == 0);
-        CHECK(pthread_create(&Threads[1], NULL, SemWaitOne, &g_Sem) == 0);
-        SleepMs(50);
-        CHECK(NtQueueApcThread(pthread_gethandle(Threads[0]), PairPostApc, &g_Sem, NULL, NULL) == 0);
-        CHECK(NtQueueApcThread(pthread_gethandle(Threads[1]), PairPostApc, &g_Sem, NULL, NULL) == 0);
-        CHECK(pthread_join(Threads[0], &Result) == 0 && Result == NULL);
-        CHECK(pthread_join(Threads[1], &Result) == 0 && Result == NULL);
+        for (int i = 0; i < 2; i++)
+        {
+            g_ApcRan = 0;
+            StartWaitApc(&Threads[0], i == 0 ? &g_Sem : NULL);
+            CHECK(NtQueueApcThread(pthread_gethandle(Threads[0]), CountApc, NULL, NULL, NULL) == 0);
+            SleepMs(30);
+            CHECK(g_ApcRan == 0);
+            if (i == 0)
+            {
+                CHECK(sem_post(&g_Sem) == 0);
+            } else
+            {
+                pthread_mutex_lock(&g_Mutex);
+                g_ApcReady = 1;
+                pthread_cond_signal(&g_ApcCond);
+                pthread_mutex_unlock(&g_Mutex);
+            }
+            CHECK(pthread_join(Threads[0], &Result) == 0 && Result == (void*)1);
+        }
+        /* An APC that ends its thread, which waits in sem_wait (it left a node on a stack that was gone) */
+        StartWaitApc(&Threads[0], &g_Sem);
+        CHECK(NtQueueApcThread(pthread_gethandle(Threads[0]), CountApc, NULL, (void*)2, NULL) == 0);
+        SleepMs(30);
+        CHECK(sem_post(&g_Sem) == 0);
+        CHECK(pthread_join(Threads[0], &Result) == 0 && Result == (void*)42);
+        for (int i = 0; i < 8; i++)
+        {
+            CHECK(pthread_create(&Threads[i], NULL, FillStack, NULL) == 0);
+            CHECK(pthread_join(Threads[i], NULL) == 0);
+        }
+        CHECK(sem_post(&g_Sem) == 0 && sem_wait(&g_Sem) == 0);
+        /*
+         * A waker impersonating the anonymous token (which may not open the thread) while the APC waits for a mutex
+         * it holds: the post wakes the thread, the APC runs after
+         */
+        g_ApcRan = 0;
+        StartWaitApc(&Threads[0], &g_Sem);
+        pthread_mutex_lock(&g_ApcMutex);
+        CHECK(NtQueueApcThread(pthread_gethandle(Threads[0]), CountApc, NULL, (void*)1, NULL) == 0);
+        SleepMs(30);
+        CHECK(NtImpersonateAnonymousToken(GetCurrentThread()) == 0);
+        CHECK(sem_post(&g_Sem) == 0);
+        CHECK(NtSetInformationThread(GetCurrentThread(), 5 /* ThreadImpersonationToken */, &None, sizeof(None)) == 0);
+        SleepMs(30);
+        pthread_mutex_unlock(&g_ApcMutex);
+        CHECK(pthread_join(Threads[0], &Result) == 0 && Result == (void*)1);
         CHECK(sem_destroy(&g_Sem) == 0);
     }
 }
@@ -1023,21 +1144,76 @@ static void* CancelCondWait(void* Arg)
     return NULL;
 }
 
-/* nanosleep, sleep or usleep of 10 s */
+/* A wait of 10 s (or for ever) at each cancellation point but pthread_cond_wait and pthread_testcancel */
+#define CANCEL_POINTS 10
+static sem_t g_Never;
+static pthread_t g_NeverEnds;
+
+static void* WaitNever(void* Arg)
+{
+    sem_wait(&g_Never);
+    return Arg;
+}
+
 static void* CancelSleep(void* Arg)
 {
     struct timespec Time = { 10, 0 };
+    struct timespec Abs = RealtimeIn(10000);
+    sem_t Sem;
 
-    if (Arg == NULL)
+    switch ((intptr_t)Arg)
     {
+    case 0:
         nanosleep(&Time, NULL);
-    } else if (Arg == (void*)1)
-    {
+        break;
+    case 1:
         sleep(10);
-    } else
-    {
+        break;
+    case 2:
         usleep(10000000);
+        break;
+    case 3:
+        clock_nanosleep(CLOCK_MONOTONIC, 0, &Time, NULL);
+        break;
+    case 4:
+        clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &Abs, NULL);
+        break;
+    case 5:
+        pthread_delay_np(&Time);
+        break;
+    case 6:
+        sem_init(&Sem, 0, 0);
+        sem_wait(&Sem);
+        break;
+    case 7:
+        sem_init(&Sem, 0, 0);
+        sem_timedwait(&Sem, &Abs);
+        break;
+    case 8:
+        pthread_mutex_lock(&g_Mutex);
+        pthread_cleanup_push(UnlockCleanup, &g_Mutex);
+        pthread_cond_timedwait(&g_NotEmpty, &g_Mutex, &Abs);
+        pthread_cleanup_pop(1);
+        break;
+    default:
+        pthread_join(g_NeverEnds, NULL);
+        break;
     }
+    return NULL;
+}
+
+/* With cancellation disabled, pthread_cancel does not end a wait: the post does, then the cancellation acts */
+static sem_t g_DisabledSem;
+static volatile long g_DisabledPosted;
+
+static void* CancelDisabledWait(void* Arg)
+{
+    (void)Arg;
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0);
+    CHECK(sem_wait(&g_DisabledSem) == 0);
+    CHECK(g_DisabledPosted == 1);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0);
+    pthread_testcancel();
     return NULL;
 }
 
@@ -1048,6 +1224,47 @@ static void SpinEnded(void* Arg)
 {
     (void)Arg;
     __sync_fetch_and_add(&g_SpinsEnded, 1);
+}
+
+/*
+ * Detached, cancelled at once while it starts and uses the heap, as others do: a cancel must not alert a thread in
+ * a wait of ntdll (the lock of the heap, a critical section, deadlocked on such an alert)
+ */
+static volatile long g_HeapEnded, g_HeapStop;
+
+static void HeapEnded(void* Arg)
+{
+    (void)Arg;
+    __sync_fetch_and_add(&g_HeapEnded, 1);
+}
+
+static void* CancelHeap(void* Arg)
+{
+    pthread_cleanup_push(HeapEnded, NULL);
+    for (int i = 0; i < 50; i++)
+    {
+        /* Through a volatile pointer, that the compiler keeps the pair */
+        void* volatile Block = malloc(64 + i);
+
+        free(Block);
+    }
+    for (;;)
+    {
+        pthread_testcancel();
+    }
+    pthread_cleanup_pop(0);
+    return Arg;
+}
+
+static void* HeapHammer(void* Arg)
+{
+    while (!g_HeapStop)
+    {
+        void* volatile Block = malloc(128);
+
+        free(Block);
+    }
+    return Arg;
 }
 
 static void* CancelSpin(void* Arg)
@@ -1091,6 +1308,73 @@ static void* OwnPriority(void* Arg)
         return (void*)(intptr_t)-100;
     }
     return (void*)(intptr_t)Param.sched_priority;
+}
+
+/* Blocks the thread detach of BlockedEnd until g_BlockRelease, after the callback of NtCRT (.CRT$XLF) */
+static volatile DWORD g_BlockTid;
+static HANDLE g_BlockEntered, g_BlockRelease;
+static volatile int g_Joining;
+
+static void NTAPI BlockDetach(PVOID Module, DWORD Reason, PVOID Reserved)
+{
+    (void)Module;
+    (void)Reserved;
+    if (Reason == DLL_THREAD_DETACH && g_BlockTid == GetCurrentThreadId())
+    {
+        SetEvent(g_BlockEntered);
+        WaitForSingleObject(g_BlockRelease, INFINITE);
+    }
+}
+
+__attribute__((section(".CRT$XLG"), used)) static const PIMAGE_TLS_CALLBACK BlockDetachPtr = BlockDetach;
+
+static void* BlockedEnd(void* Gate)
+{
+    g_BlockTid = GetCurrentThreadId();
+    sem_wait(Gate);
+    return Gate;
+}
+
+static volatile long long g_JoinCancelledNs;
+
+/* Whether a thread waits in NtWaitForMultipleObjects (its instruction pointer is in the stub of ntdll), x64 */
+static bool InMultipleWait(pthread_t Thread)
+{
+    static uintptr_t Stub;
+    HANDLE Handle = pthread_gethandle(Thread);
+    CONTEXT Context;
+    bool In;
+
+    if (Stub == 0)
+    {
+        Stub = (uintptr_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtWaitForMultipleObjects");
+    }
+    memset(&Context, 0, sizeof(Context));
+    Context.ContextFlags = CONTEXT_CONTROL;
+    if (SuspendThread(Handle) == (DWORD)-1)
+    {
+        return false;
+    }
+    In = GetThreadContext(Handle, &Context) && Context.Rip - Stub < 32;
+    ResumeThread(Handle);
+    return In;
+}
+
+static void JoinCancelled(void* Arg)
+{
+    (void)Arg;
+    g_JoinCancelledNs = NowNs();
+}
+
+static void* JoinBlocked(void* Thread)
+{
+    void* Result = NULL;
+
+    pthread_cleanup_push(JoinCancelled, NULL);
+    g_Joining = 1;
+    pthread_join((pthread_t)Thread, &Result);
+    pthread_cleanup_pop(0);
+    return Result;
 }
 
 static void TestThreads(void)
@@ -1142,14 +1426,28 @@ static void TestThreads(void)
     {
         long long Start = NowMs();
 
-        for (intptr_t i = 0; i < 3; i++)
+        CHECK(sem_init(&g_Never, 0, 0) == 0);
+        CHECK(pthread_create(&g_NeverEnds, NULL, WaitNever, NULL) == 0);
+        for (intptr_t i = 0; i < CANCEL_POINTS; i++)
         {
             CHECK(pthread_create(&Thread, NULL, CancelSleep, (void*)i) == 0);
-            SleepMs(50);
+            SleepMs(30);
             CHECK(pthread_cancel(Thread) == 0);
             CHECK(pthread_join(Thread, &Result) == 0 && Result == PTHREAD_CANCELED);
         }
         CHECK(NowMs() - Start < 5000);
+        CHECK(pthread_mutex_trylock(&g_Mutex) == 0 && pthread_mutex_unlock(&g_Mutex) == 0);
+        /* A cancelled join leaves the thread joinable */
+        CHECK(sem_post(&g_Never) == 0);
+        CHECK(pthread_join(g_NeverEnds, NULL) == 0);
+        CHECK(sem_init(&g_DisabledSem, 0, 0) == 0);
+        CHECK(pthread_create(&Thread, NULL, CancelDisabledWait, NULL) == 0);
+        SleepMs(30);
+        CHECK(pthread_cancel(Thread) == 0);
+        SleepMs(50);
+        g_DisabledPosted = 1;
+        CHECK(sem_post(&g_DisabledSem) == 0);
+        CHECK(pthread_join(Thread, &Result) == 0 && Result == PTHREAD_CANCELED);
         Start = NowMs();
         CHECK(pthread_create(&Thread, NULL, CancelDisabled, NULL) == 0);
         SleepMs(20);
@@ -1173,6 +1471,32 @@ static void TestThreads(void)
             SleepMs(1);
         }
         CHECK(g_SpinsEnded == 200);
+
+        pthread_t Hammers[4];
+        long long Start = NowMs();
+
+        CHECK(pthread_attr_init(&Detached) == 0);
+        CHECK(pthread_attr_setdetachstate(&Detached, PTHREAD_CREATE_DETACHED) == 0);
+        for (int i = 0; i < 4; i++)
+        {
+            CHECK(pthread_create(&Hammers[i], NULL, HeapHammer, NULL) == 0);
+        }
+        for (int i = 0; i < 3000; i++)
+        {
+            CHECK(pthread_create(&Thread, &Detached, CancelHeap, NULL) == 0);
+            CHECK(pthread_cancel(Thread) == 0);
+        }
+        while (g_HeapEnded != 3000 && NowMs() - Start < 30000)
+        {
+            SleepMs(1);
+        }
+        CHECK(g_HeapEnded == 3000);
+        CHECK(pthread_attr_destroy(&Detached) == 0);
+        g_HeapStop = 1;
+        for (int i = 0; i < 4; i++)
+        {
+            CHECK(pthread_join(Hammers[i], NULL) == 0);
+        }
     }
 
     /* Names (Windows 10 1607 and later) */
@@ -1215,6 +1539,60 @@ static void TestThreads(void)
         CHECK(pthread_setschedparam(pthread_self(), SCHED_OTHER, &Param) == 0);
         CHECK(sched_get_priority_min(SCHED_OTHER) == THREAD_PRIORITY_IDLE);
         CHECK(sched_yield() == 0);
+    }
+    /*
+     * A TLS callback of the program after that of NtCRT that waits, when the thread is marked ended: a try join is
+     * EBUSY, a join (in a thread that waits in it before, then for the handle) is cancelled at once, while the
+     * callback still waits (the joiner then waits for the loader lock to end)
+     */
+    {
+        sem_t Gate;
+        pthread_t Ended, Joiner;
+        long long Start;
+        void* Result;
+
+        g_BlockEntered = CreateEventW(NULL, FALSE, FALSE, NULL);
+        g_BlockRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
+        CHECK(g_BlockEntered != NULL && g_BlockRelease != NULL && sem_init(&Gate, 0, 0) == 0);
+        CHECK(pthread_create(&Ended, NULL, BlockedEnd, &Gate) == 0);
+        CHECK(sem_post(&Gate) == 0);
+        CHECK(WaitForSingleObject(g_BlockEntered, 10000) == WAIT_OBJECT_0);
+        CHECK(_pthread_tryjoin(Ended, NULL) == EBUSY);
+        SetEvent(g_BlockRelease);
+        CHECK(pthread_join(Ended, &Result) == 0 && Result == &Gate);
+        ResetEvent(g_BlockRelease);
+
+        g_Joining = 0;
+        g_JoinCancelledNs = 0;
+        CHECK(pthread_create(&Ended, NULL, BlockedEnd, &Gate) == 0);
+        CHECK(pthread_create(&Joiner, NULL, JoinBlocked, (void*)Ended) == 0);
+        while (!g_Joining)
+        {
+            SleepMs(1);
+        }
+        SleepMs(30);
+        CHECK(sem_post(&Gate) == 0);
+        CHECK(WaitForSingleObject(g_BlockEntered, 10000) == WAIT_OBJECT_0);
+        Start = NowNs();
+        while (!InMultipleWait(Joiner) && NowNs() - Start < 5000000000LL)
+        {
+            SleepMs(1);
+        }
+        CHECK(InMultipleWait(Joiner));
+        Start = NowNs();
+        CHECK(pthread_cancel(Joiner) == 0);
+        while (g_JoinCancelledNs == 0 && NowNs() - Start < 5000000000LL)
+        {
+            SleepMs(1);
+        }
+        CHECK(g_JoinCancelledNs != 0 && g_JoinCancelledNs - Start < 1000000000LL);
+        SetEvent(g_BlockRelease);
+        CHECK(pthread_join(Joiner, &Result) == 0 && Result == PTHREAD_CANCELED);
+        CHECK(pthread_join(Ended, &Result) == 0 && Result == &Gate);
+        g_BlockTid = 0;
+        CloseHandle(g_BlockEntered);
+        CloseHandle(g_BlockRelease);
+        CHECK(sem_destroy(&Gate) == 0);
     }
 }
 
@@ -1262,6 +1640,43 @@ static void TestClocks(void)
     CHECK(clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &Time, NULL) == 0);
     CHECK(NowMs() - Start >= 15);
     CHECK(clock_nanosleep(CLOCK_THREAD_CPUTIME_ID, 0, &Time, NULL) == ENOTSUP);
+
+    /*
+     * With a timer resolution of 0.5 ms a relative wait of the system may end early, these take their time. Windows 11
+     * ignores the resolution of a process without a visible window unless it opts out.
+     */
+    {
+        NTSTATUS NTAPI NtSetTimerResolution(ULONG DesiredTime, BOOLEAN SetResolution, PULONG ActualTime);
+        NTSTATUS NTAPI NtSetInformationProcess(HANDLE Process, int Class, void* Information, ULONG Length);
+        ULONG Throttling[3] = { 1, 4 /* PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION */, 0 };
+        struct timespec Two = { 0, 2000000 };
+        long long Least[3] = { LLONG_MAX, LLONG_MAX, LLONG_MAX };
+        ULONG Actual;
+
+        NtSetInformationProcess(GetCurrentProcess(), 77 /* ProcessPowerThrottlingState */, Throttling,
+                                sizeof(Throttling));
+        NtSetTimerResolution(5000, TRUE, &Actual);
+        pthread_mutex_lock(&g_Mutex);
+        for (int i = 0; i < 50; i++)
+        {
+            long long Times[4];
+
+            Times[0] = NowNs();
+            nanosleep(&Two, NULL);
+            Times[1] = NowNs();
+            clock_nanosleep(CLOCK_MONOTONIC, 0, &Two, NULL);
+            Times[2] = NowNs();
+            pthread_cond_timedwait_relative_np(&g_NotEmpty, &g_Mutex, &Two);
+            Times[3] = NowNs();
+            for (int k = 0; k < 3; k++)
+            {
+                Least[k] = Times[k + 1] - Times[k] < Least[k] ? Times[k + 1] - Times[k] : Least[k];
+            }
+        }
+        pthread_mutex_unlock(&g_Mutex);
+        NtSetTimerResolution(5000, FALSE, &Actual);
+        CHECK(Least[0] >= 2000000 && Least[1] >= 2000000 && Least[2] >= 2000000);
+    }
 }
 
 /* The first pthread use, in a thread of _beginthreadex: a once whose routine cancels the thread is reset */

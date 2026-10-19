@@ -69,7 +69,7 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
                 }
                 Raw |= RW_WAITERS;
             }
-            if (_NtCRT_Wait(l, (ULONG_PTR)Raw, sizeof(*l), Wait, FALSE) == STATUS_TIMEOUT)
+            if (_NtCRT_Wait(l, (ULONG_PTR)Raw, sizeof(*l), Wait, 0) == STATUS_TIMEOUT)
             {
                 return ETIMEDOUT;
             }

@@ -103,8 +103,8 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 | `printf("%d")` | 248832 | 445440 | 81920 | 66048 | 41984 |
 | `wprintf` | 248832 | 445440 | 82944 | 69120 | 41472 |
 | `sscanf("%d %lf %s")` | | | 96768 | 61952 | 56320 |
-| `std::cout` | 1257472 | 1420800 | 1155584 | 720384 | 1035776 |
-| `std::thread` | | | 187392 | 98816 | 135168 |
+| `std::cout` | 1257472 | 1420800 | 1157632 | 721920 | 1035776 |
+| `std::thread` | | | 190976 | 102912 | 135168 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
@@ -286,8 +286,19 @@ code.
 
 - A mutex, condition variable, read-write lock, spin lock, barrier or semaphore is the word of its type, nothing is
   allocated and no kernel object created: a static initializer or 0 is a valid object and `pthread_*_destroy` only
-  checks. A thread waits by address (`src/PthreadWait.cpp`) on the keyed event of the system
-  (`NtWaitForKeyedEvent`, Vista and later) with its node in a table of buckets, as `RtlWaitOnAddress` of Windows 8.
+  checks. A thread waits by address (`src/PthreadWait.cpp`) with its node in a table of buckets, as `RtlWaitOnAddress`
+  of Windows 8, and parks: the waker takes the node out under the lock of the bucket, unparks the thread and marks the
+  node done, it never blocks; the waiter leaves once its node is done. The parker is chosen at the first wait by the
+  exports of ntdll, not by the version: `NtWaitForAlertByThreadId` and `NtAlertThreadByThreadId` (Windows 8 and later,
+  found by `LdrGetProcedureAddress`, not imported), else an auto-reset event per thread (`NtWaitForSingleObject` and
+  `NtSetEvent`), created by `pthread_create` and `thrd_create` (`EAGAIN` if it cannot be), for other threads at their
+  first wait, closed when the thread ends. A thread that cannot get one (out of memory or handles) looks at its node
+  after each sleep of 1 ms, which lasts a clock tick (15.6 ms by default). The waits of ntdll (critical sections, SRW
+  locks) take the same alerts, and a critical section deadlocks on one it did not send (threads alerted while they start
+  and allocate hang the lock of the heap): a thread is alerted only for its node of a wait of NtCRT, consumes the alert
+  before it leaves, and waits in no SRW lock while the alert may be on its way. `make PARKER=event test-thread` and
+  `test-pthread` run the tests on the event (an initializer of `test/thread/parker.c` chooses it), the default on the
+  alerts of Windows 11.
 - Mutexes are normal (`PTHREAD_MUTEX_DEFAULT`, a normal mutex locked again by its owner deadlocks, any thread may
   unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels),
   timed by `pthread_mutex_timedlock`. A condition wait unlocks a recursive mutex whatever its count and restores it.
@@ -318,7 +329,10 @@ code.
 - `pthread_create` creates a thread by `RtlCreateUserThread` with the stack size of the attribute as its reservation,
   a stack address of `pthread_attr_setstack` is not used. A `pthread_t` points to the data of the thread. A thread not
   created by `pthread_create` (the main thread, `CreateThread`) gets a detached one from `pthread_self`, it cannot be
-  joined (`EINVAL`).
+  joined (`EINVAL`). A joiner parks until the TLS callback of NtCRT marks the thread ended (a thread ended by
+  `TerminateThread` cannot be joined), then waits for its handle while the TLS callbacks of the program after that
+  of NtCRT run (`_pthread_tryjoin` is `EBUSY` meanwhile), with an event that `pthread_cancel` sets: that of the
+  parker, or with the alerts one the joiner makes at its first such wait (without one, it looks every 10 ms).
 - A thread that ends by `pthread_exit`, `thrd_exit` or a return from the start routine just ends. The process ends as
   Windows ends it, when its last thread ends, whatever created it (a thread of `CreateThread` keeps the process
   running too), with the status of that thread: the low 32 bits of the result of the thread, not the `exit(0)` of
@@ -336,15 +350,17 @@ code.
   write is not flushed.
 - Cancellation is deferred, at `pthread_testcancel`, `pthread_join`, `pthread_cond_wait`, `pthread_cond_timedwait`,
   `sem_wait`, `sem_timedwait`, `nanosleep`, `clock_nanosleep`, `sleep`, `usleep` and `pthread_delay_np` (`sleep` and
-  `usleep` of libmingwex are replaced, they wait by `Sleep`). These wait alertably and `pthread_cancel` alerts the
-  thread (`NtAlertThread`), so a user APC queued to a thread also runs in them, as a spurious wakeup (an APC may post
-  or signal what its thread waits for; a wake that the waiter does not take within 1 ms, as in an APC, alerts it). An
-  APC must not end its thread while the thread waits in NtCRT (`pthread_exit`, `ExitThread`, `pthread_testcancel`
-  with a cancellation pending): the node of the wait stays in the table, on a stack that is gone. A waker that cannot
-  open the thread to alert it (`THREAD_ALERT` denied, as to a token it impersonates) waits for the release, which
-  deadlocks if the APC waits for the waker. A cancelled thread passes on a signal or a post it was woken by, runs its
-  cleanup handlers (`pthread_cleanup_push`) with cancellation disabled and its key destructors; the stack is not
-  unwound (no C++ destructors run). `PTHREAD_CANCEL_ASYNCHRONOUS` is kept and acts as deferred.
+  `usleep` of libmingwex are replaced, they wait by `Sleep`). These publish the address they wait on (the sleeps one of
+  their own) and look at the cancellation before they park; `pthread_cancel` marks the cancellation, then takes the node
+  of the thread out of that wait as a waker does, so no cancellation is lost, and one of a thread that disabled it is a
+  spurious wake. A relative time (a sleep, `pthread_cond_timedwait_relative_np`, a condition of `CLOCK_MONOTONIC`) is
+  counted on the performance counter: with a finer timer resolution than the clock tick the system may end the park
+  early, the thread parks for the rest. No wait of NtCRT is alertable: a user APC runs in the alertable waits of the
+  program only (`SleepEx`, `WaitForSingleObjectEx`, ...), and the identity of the waker (a token it impersonates) does
+  not matter. A special user APC (`QueueUserAPC2`, Windows 11), which runs whatever the thread waits in, must not call
+  the thread functions, as a signal handler must not. A cancelled thread passes on a signal or a post it was woken by, runs its cleanup handlers
+  (`pthread_cleanup_push`) with cancellation disabled and its key destructors; the stack is not unwound (no C++
+  destructors run). `PTHREAD_CANCEL_ASYNCHRONOUS` is kept and acts as deferred.
 - Priorities are those of Windows as in winpthreads: `sched_priority` from `THREAD_PRIORITY_IDLE` (-15) to
   `THREAD_PRIORITY_TIME_CRITICAL` (15), between the levels toward normal; `SCHED_OTHER` only (`ENOTSUP` for
   `SCHED_FIFO` and `SCHED_RR`). `PTHREAD_INHERIT_SCHED` gives a thread the priority of its creator.

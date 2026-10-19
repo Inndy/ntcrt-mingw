@@ -107,19 +107,18 @@ EXTERN_C void _NtCRT_SetErrnoFromNtStatus(NTSTATUS Status)
 /* Per-thread data, freed by the TLS callback on thread exit */
 
 static DWORD g_PtdIndex = TLS_OUT_OF_INDEXES;
-static NTCRT_PTD g_FallbackPtd;
+NTCRT_PTD _NtCRT_FallbackPtd;
 
-EXTERN_C PNTCRT_PTD _NtCRT_GetPtd(void)
+EXTERN_C DWORD _NtCRT_PtdSlot(void)
 {
-    PNTCRT_PTD Ptd;
-    DWORD Index = g_PtdIndex;
+    DWORD Index = __atomic_load_n(&g_PtdIndex, __ATOMIC_ACQUIRE);
 
     if (Index == TLS_OUT_OF_INDEXES)
     {
         DWORD NewIndex = _Inline_TlsAlloc();
         if (NewIndex == TLS_OUT_OF_INDEXES)
         {
-            return &g_FallbackPtd;
+            return NewIndex;
         }
         Index = _InterlockedCompareExchange((volatile LONG*)&g_PtdIndex, NewIndex, TLS_OUT_OF_INDEXES);
         if (Index != TLS_OUT_OF_INDEXES)
@@ -130,13 +129,25 @@ EXTERN_C PNTCRT_PTD _NtCRT_GetPtd(void)
             Index = NewIndex;
         }
     }
+    return Index;
+}
+
+EXTERN_C PNTCRT_PTD _NtCRT_GetPtd(void)
+{
+    PNTCRT_PTD Ptd;
+    DWORD Index = _NtCRT_PtdSlot();
+
+    if (Index == TLS_OUT_OF_INDEXES)
+    {
+        return &_NtCRT_FallbackPtd;
+    }
     Ptd = (PNTCRT_PTD)_Inline_TlsGetValue2(Index);
     if (Ptd == NULL)
     {
         Ptd = (PNTCRT_PTD)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, sizeof(*Ptd));
         if (Ptd == NULL)
         {
-            return &g_FallbackPtd;
+            return &_NtCRT_FallbackPtd;
         }
         _Inline_TlsSetValue(Index, Ptd);
     }
@@ -147,7 +158,11 @@ extern "C"
 {
     void (*_NtCRT_ThreadExit)(void) = NULL;
     void (*_NtCRT_TestCancel)(void (*Pass)(void* Object), void* Object) = NULL;
+    bool (*_NtCRT_CancelRequested)(void) = NULL;
     struct _pthread_cleanup** (*_NtCRT_CleanupList)(void) = NULL;
+    NTSTATUS (*_NtCRT_DelayHook)(PLARGE_INTEGER Timeout) = NULL;
+    const volatile void* volatile* (*_NtCRT_WaitSlot)(void) = NULL;
+    void (*_NtCRT_ParkerExit)(struct _NTCRT_PARKER* Parker) = NULL;
 }
 
 EXTERN_C void _NtCRT_ThreadDetach(void)
@@ -155,7 +170,7 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
     void (*ThreadExit)(void) = __atomic_load_n(&_NtCRT_ThreadExit, __ATOMIC_ACQUIRE);
     PNTCRT_PTD Ptd;
 
-    /* The key destructors may use the per-thread data */
+    /* The key destructors may use the per-thread data and wait */
     if (ThreadExit != NULL)
     {
         ThreadExit();
@@ -167,6 +182,11 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
     Ptd = (PNTCRT_PTD)_Inline_TlsGetValue2(g_PtdIndex);
     if (Ptd != NULL)
     {
+        /* _NtCRT_ParkerExit is set before a parker */
+        if (Ptd->Parker != NULL)
+        {
+            _NtCRT_ParkerExit(Ptd->Parker);
+        }
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->TmBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->AsctimeBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->WcserrorBuffer);

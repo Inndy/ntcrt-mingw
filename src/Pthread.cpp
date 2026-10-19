@@ -11,8 +11,8 @@
  *
  * pthread_exit runs the cleanup handlers and the key destructors, then the thread ends in the TLS callback
  * (_NtCRT_ThreadDetach) after the thread_local destructors of C++ (the callback of libmingw32 precedes it): the
- * destructors of the values set since, then ThreadExit (_NtCRT_PthreadExit). A joiner waits for the handle, signaled
- * after the callbacks.
+ * destructors of the values set since, then ThreadExit (_NtCRT_PthreadExit), which marks the thread ended and wakes
+ * its joiner. The joiner then waits for the handle, signaled after the last callbacks.
  */
 typedef struct _NTCRT_PTHREAD
 {
@@ -25,6 +25,10 @@ typedef struct _NTCRT_PTHREAD
     volatile LONG State;
     volatile LONG Cancel;
     volatile LONG Pins; /* Of pthread_cancel, -1 when free */
+    DWORD Tid;
+    PNTCRT_PARKER Parker;              /* A reference, its event serves as CancelEvent */
+    HANDLE CancelEvent;                /* Of the wait for the handle in pthread_join, set by pthread_cancel */
+    const volatile void* WaitAddress; /* Of a cancellable wait, for pthread_cancel */
 } NTCRT_PTHREAD, *PNTCRT_PTHREAD;
 
 #define THREAD_DETACHED 1
@@ -36,7 +40,7 @@ typedef struct _NTCRT_PTHREAD
 #define CANCEL_ASYNC    4 /* Kept, acts as deferred */
 
 static NTCRT_PTHREAD g_FallbackThread = { NULL, NULL, NULL, NULL, NULL, NULL, THREAD_DETACHED | THREAD_FOREIGN, 0,
-                                          0 };
+                                          0,    0,    NULL, NULL, NULL };
 
 /* The TLS slot of the pthread_t of a thread */
 static DWORD g_SelfIndex = TLS_OUT_OF_INDEXES;
@@ -76,6 +80,12 @@ static void ThreadFree(PNTCRT_PTHREAD Thread)
     if (InterlockedDecrement(&Thread->Pins) < 0)
     {
         NtClose(Thread->Handle);
+        /* Its own, not that of its parker */
+        if (Thread->CancelEvent != NULL && (Thread->Parker == NULL || Thread->CancelEvent != Thread->Parker->Event))
+        {
+            NtClose(Thread->CancelEvent);
+        }
+        _NtCRT_ParkerRelease(Thread->Parker);
         RtlFreeHeap(NTCRT_HEAP, 0, Thread);
     }
 }
@@ -92,7 +102,10 @@ static void ThreadExit(void)
     if ((Thread->State & THREAD_FOREIGN) != 0 || (InterlockedOr(&Thread->State, THREAD_EXITED) & THREAD_DETACHED) != 0)
     {
         ThreadFree(Thread);
+        return;
     }
+    /* The wake does not read the data, which the joiner (or pthread_detach) may free once it sees the state */
+    _NtCRT_Wake(&Thread->State, TRUE);
 }
 
 static PNTCRT_PTHREAD CurrentThread(void);
@@ -105,6 +118,14 @@ static _pthread_cleanup** CleanupList(void)
     return Thread != &g_FallbackThread ? &Thread->Cleanup : NULL;
 }
 
+/* Where a cancellable wait of the thread publishes its address, NULL without a pthread_t (none can cancel it) */
+static const volatile void* volatile* WaitSlot(void)
+{
+    PNTCRT_PTHREAD Thread = ThreadSelf();
+
+    return Thread != NULL ? &Thread->WaitAddress : NULL;
+}
+
 /*
  * Exit work of the threads: the keys, then ThreadExit. A thread that has a pthread_t may be cancelled. Set at startup
  * by a program that links this, before any thread can get a pthread_t in the routine of a once.
@@ -114,6 +135,8 @@ static void __cdecl ThreadExitHook(void)
     _NtCRT_PthreadExit = ThreadExit;
     _NtCRT_ThreadExit = _NtCRT_KeyExit;
     _NtCRT_CleanupList = CleanupList;
+    _NtCRT_DelayHook = _NtCRT_Delay;
+    _NtCRT_WaitSlot = WaitSlot;
 }
 extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_ThreadExitHookPtr)(void) =
     ThreadExitHook;
@@ -130,6 +153,8 @@ static PNTCRT_PTHREAD CurrentThread(void)
             return &g_FallbackThread;
         }
         Thread->State = THREAD_DETACHED | THREAD_FOREIGN;
+        Thread->Tid = _Inline_GetCurrentThreadId();
+        Thread->Parker = _NtCRT_ParkerSelf();
         NtDuplicateObject(NtCurrentProcess(),
                           NtCurrentThread(),
                           NtCurrentProcess(),
@@ -159,30 +184,40 @@ static NTSTATUS NTAPI ThreadStart(PVOID Parameter)
     __builtin_unreachable();
 }
 
-/* TlsSetValue of the slot of pthread_self for the thread, still suspended: it can fail only here */
-static bool ThreadSetSelf(PNTCRT_PTHREAD Thread)
+/*
+ * TlsSetValue of the slots of pthread_self and of the per-thread data (with the event of the parker) for the thread,
+ * still suspended: they can fail only here
+ */
+static bool ThreadSetSelf(PNTCRT_PTHREAD Thread, DWORD PtdIndex, PNTCRT_PTD Ptd)
 {
     THREAD_BASIC_INFORMATION Info;
-    DWORD Index = __atomic_load_n(&g_SelfIndex, __ATOMIC_RELAXED);
-    PVOID* Slots;
+    DWORD Indexes[2] = { __atomic_load_n(&g_SelfIndex, __ATOMIC_RELAXED), PtdIndex };
+    PVOID Values[2] = { Thread, Ptd };
+    PVOID* Slots = NULL;
 
     if (!NT_SUCCESS(NtQueryInformationThread(Thread->Handle, ThreadBasicInformation, &Info, sizeof(Info), NULL)))
     {
         return false;
     }
-    if (Index < TLS_MINIMUM_AVAILABLE)
+    for (int i = 0; i < 2 && Indexes[i] != TLS_OUT_OF_INDEXES; i++)
     {
-        Info.TebBaseAddress->TlsSlots[Index] = Thread;
-        return true;
+        if (Indexes[i] < TLS_MINIMUM_AVAILABLE)
+        {
+            Info.TebBaseAddress->TlsSlots[Indexes[i]] = Values[i];
+            continue;
+        }
+        /* The loader frees them at the exit of the thread */
+        if (Slots == NULL)
+        {
+            Slots = (PVOID*)RtlAllocateHeap(RtlProcessHeap(), HEAP_ZERO_MEMORY, TLS_EXPANSION_SLOTS * sizeof(PVOID));
+            if (Slots == NULL)
+            {
+                return false;
+            }
+            Info.TebBaseAddress->TlsExpansionSlots = Slots;
+        }
+        Slots[Indexes[i] - TLS_MINIMUM_AVAILABLE] = Values[i];
     }
-    /* The loader frees them at the exit of the thread */
-    Slots = (PVOID*)RtlAllocateHeap(RtlProcessHeap(), HEAP_ZERO_MEMORY, TLS_EXPANSION_SLOTS * sizeof(PVOID));
-    if (Slots == NULL)
-    {
-        return false;
-    }
-    Slots[Index - TLS_MINIMUM_AVAILABLE] = Thread;
-    Info.TebBaseAddress->TlsExpansionSlots = Slots;
     return true;
 }
 
@@ -228,6 +263,9 @@ EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)
 {
     const pthread_attr_t* attr = (const pthread_attr_t*)Attr;
     PNTCRT_PTHREAD Thread;
+    CLIENT_ID ClientId;
+    PNTCRT_PTD Ptd = NULL;
+    DWORD PtdIndex = TLS_OUT_OF_INDEXES;
     NTSTATUS Status;
 
     if (!ThreadSelfSlot())
@@ -248,6 +286,20 @@ EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)
         Thread->Cancel = ((attr->p_state & PTHREAD_CANCEL_ENABLE) == 0 ? CANCEL_DISABLED : 0) |
                          ((attr->p_state & PTHREAD_CANCEL_ASYNCHRONOUS) != 0 ? CANCEL_ASYNC : 0);
     }
+    /* With events, that of the thread: a reference of its per-thread data and one of pthread_cancel */
+    if (!_NtCRT_ParkerCreate(&Thread->Parker, 2))
+    {
+        goto _Fail;
+    }
+    if (Thread->Parker != NULL)
+    {
+        Ptd = (PNTCRT_PTD)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, sizeof(*Ptd));
+        if (Ptd == NULL || (PtdIndex = _NtCRT_PtdSlot()) == TLS_OUT_OF_INDEXES)
+        {
+            goto _Fail;
+        }
+        Ptd->Parker = Thread->Parker;
+    }
     /* Suspended until the handle is stored: a detached thread frees its NTCRT_PTHREAD */
     Status = RtlCreateUserThread(NtCurrentProcess(),
                                  NULL,
@@ -258,18 +310,17 @@ EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)
                                  (PTHREAD_START_ROUTINE)ThreadStart,
                                  Thread,
                                  &Thread->Handle,
-                                 NULL);
+                                 &ClientId);
     if (!NT_SUCCESS(Status))
     {
-        RtlFreeHeap(NTCRT_HEAP, 0, Thread);
-        return EAGAIN;
+        goto _Fail;
     }
-    if (!ThreadSetSelf(Thread))
+    Thread->Tid = (DWORD)(ULONG_PTR)ClientId.UniqueThread;
+    if (!ThreadSetSelf(Thread, PtdIndex, Ptd))
     {
         NtTerminateThread(Thread->Handle, STATUS_NO_MEMORY);
         NtClose(Thread->Handle);
-        RtlFreeHeap(NTCRT_HEAP, 0, Thread);
-        return EAGAIN;
+        goto _Fail;
     }
     if (attr != NULL)
     {
@@ -288,6 +339,14 @@ EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)
     *th = (ULONG_PTR)Thread;
     NtResumeThread(Thread->Handle, NULL);
     return 0;
+
+_Fail:
+    /* Both references */
+    _NtCRT_ParkerRelease(Thread->Parker);
+    _NtCRT_ParkerRelease(Thread->Parker);
+    RtlFreeHeap(NTCRT_HEAP, 0, Ptd);
+    RtlFreeHeap(NTCRT_HEAP, 0, Thread);
+    return EAGAIN;
 }
 
 NTCRT_API int pthread_create(pthread_t* th, const pthread_attr_t* attr, void* (*func)(void*), void* arg)
@@ -328,11 +387,56 @@ NTCRT_API int pthread_equal(pthread_t t1, pthread_t t2)
     return t1 == t2;
 }
 
+/*
+ * The event that pthread_cancel sets for a thread that waits for the handle of another in pthread_join: that of its
+ * parker, or one of its own made at its first such wait (NtWaitForAlertByThreadId waits for no handle). NULL if none
+ * can be had.
+ */
+static HANDLE CancelEvent(PNTCRT_PTHREAD Self)
+{
+    HANDLE Event = Self->Parker != NULL ? Self->Parker->Event : NULL;
+
+    if (Self == &g_FallbackThread)
+    {
+        return NULL;
+    }
+    if (Self->CancelEvent == NULL &&
+        (Event != NULL || NT_SUCCESS(NtCreateEvent(&Event, EVENT_ALL_ACCESS, NULL, SynchronizationEvent, FALSE))))
+    {
+        __atomic_store_n(&Self->CancelEvent, Event, __ATOMIC_SEQ_CST);
+    }
+    return Self->CancelEvent;
+}
+
+/*
+ * Wait for the handle of a thread marked ended, until its last TLS callbacks returned, a cancellation point: with
+ * the event, which pthread_cancel sets after the cancellation state, or without 10 ms at a time
+ */
+static NTSTATUS WaitEnded(HANDLE Handle)
+{
+    HANDLE Handles[2] = { Handle, CancelEvent(CurrentThread()) };
+    LARGE_INTEGER Slice;
+    NTSTATUS Status;
+
+    Slice.QuadPart = -100000;
+    do
+    {
+        /* The event was published before the state is read, as pthread_cancel reads it after the state is set */
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        pthread_testcancel();
+        Status = Handles[1] != NULL ? NtWaitForMultipleObjects(2, Handles, WaitAny, FALSE, NULL)
+                                    : NtWaitForSingleObject(Handle, FALSE, &Slice);
+    } while (Status == STATUS_WAIT_1 || Status == STATUS_TIMEOUT);
+    return Status;
+}
+
 /* Wait for the end of a thread, Timeout 0 for _pthread_tryjoin */
 static int ThreadJoin(pthread_t t, void** res, PLARGE_INTEGER Timeout)
 {
     PNTCRT_PTHREAD Thread = (PNTCRT_PTHREAD)t;
+    LARGE_INTEGER Zero;
     NTSTATUS Status;
+    LONG State;
 
     if (Thread == NULL)
     {
@@ -347,17 +451,29 @@ static int ThreadJoin(pthread_t t, void** res, PLARGE_INTEGER Timeout)
         return EINVAL;
     }
     pthread_testcancel();
-    while ((Status = NtWaitForSingleObject(Thread->Handle, TRUE, Timeout)) != STATUS_WAIT_0)
+    /* Until ThreadExit marks the thread ended, a cancellation point */
+    while (((State = __atomic_load_n(&Thread->State, __ATOMIC_ACQUIRE)) & THREAD_EXITED) == 0)
     {
-        if (Status == STATUS_TIMEOUT)
+        if (_NtCRT_Wait(&Thread->State, (ULONG)State, sizeof(State), Timeout, NTCRT_WAIT_CANCEL) == STATUS_TIMEOUT)
         {
             return EBUSY;
         }
-        if (Status != STATUS_ALERTED && Status != STATUS_USER_APC)
-        {
-            return ESRCH;
-        }
         pthread_testcancel();
+    }
+    /* The rest of its TLS callbacks, which have mostly returned: those of the program after that of NtCRT may wait */
+    Zero.QuadPart = 0;
+    Status = NtWaitForSingleObject(Thread->Handle, FALSE, &Zero);
+    if (Status == STATUS_TIMEOUT)
+    {
+        if (Timeout != NULL)
+        {
+            return EBUSY;
+        }
+        Status = WaitEnded(Thread->Handle);
+    }
+    if (Status != STATUS_WAIT_0)
+    {
+        return ESRCH;
     }
     if (res != NULL)
     {
@@ -405,15 +521,22 @@ NTCRT_API int pthread_detach(pthread_t t)
  * Cancellation is deferred: a cancelled thread exits at a cancellation point (pthread_testcancel, pthread_join,
  * pthread_cond_wait, pthread_cond_timedwait, sem_wait, sem_timedwait, nanosleep, clock_nanosleep, sleep, usleep,
  * pthread_delay_np).
- * These wait alertably, the alert of pthread_cancel ends the wait.
+ * pthread_cancel marks the thread, then ends the wait of these (_NtCRT_CancelWait on the address the wait published
+ * before it looks at the mark, never by an alert to a thread that does not wait there) or sets the event of the wait
+ * for the handle in pthread_join. A wait with cancellation disabled takes it as a spurious return and waits again.
  */
 
-static void TestCancel(void (*Pass)(void*), void* Object)
+static bool CancelRequested(void)
 {
     PNTCRT_PTHREAD Thread = ThreadSelf();
 
-    if (Thread != NULL &&
-        (__atomic_load_n(&Thread->Cancel, __ATOMIC_RELAXED) & (CANCEL_PENDING | CANCEL_DISABLED)) == CANCEL_PENDING)
+    return Thread != NULL &&
+           (__atomic_load_n(&Thread->Cancel, __ATOMIC_ACQUIRE) & (CANCEL_PENDING | CANCEL_DISABLED)) == CANCEL_PENDING;
+}
+
+static void TestCancel(void (*Pass)(void*), void* Object)
+{
+    if (CancelRequested())
     {
         if (Pass != NULL)
         {
@@ -431,16 +554,30 @@ NTCRT_API void pthread_testcancel(void)
 NTCRT_API int pthread_cancel(pthread_t t)
 {
     PNTCRT_PTHREAD Thread = (PNTCRT_PTHREAD)t;
+    const volatile void* Address;
+    HANDLE Event;
 
     if (Thread == NULL)
     {
         return ESRCH;
     }
     __atomic_store_n(&_NtCRT_TestCancel, &TestCancel, __ATOMIC_RELEASE);
-    /* A detached thread may end and free its data at the request, before the alert */
+    __atomic_store_n(&_NtCRT_CancelRequested, &CancelRequested, __ATOMIC_RELEASE);
+    /* A detached thread may end and free its data at the request, before the unpark */
     InterlockedIncrement(&Thread->Pins);
     InterlockedOr(&Thread->Cancel, CANCEL_PENDING);
-    NtAlertThread(Thread->Handle);
+    /* Its cancellable wait, which it published before it looks at the cancellation */
+    Address = __atomic_load_n(&Thread->WaitAddress, __ATOMIC_SEQ_CST);
+    if (Address != NULL)
+    {
+        _NtCRT_CancelWait(Thread->Tid, Address);
+    }
+    /* A wait for the handle of another thread in pthread_join */
+    Event = __atomic_load_n(&Thread->CancelEvent, __ATOMIC_SEQ_CST);
+    if (Event != NULL)
+    {
+        NtSetEvent(Event, NULL);
+    }
     ThreadFree(Thread);
     return 0;
 }

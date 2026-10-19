@@ -137,6 +137,7 @@ static int ClockSleep(LONGLONG Units, int Clock)
     LARGE_INTEGER Timeout;
     PLARGE_INTEGER Wait;
     NTSTATUS Status;
+    NTSTATUS (*Delay)(PLARGE_INTEGER);
 
     _NtCRT_CancelPoint(NULL, NULL);
     if (Clock == -1)
@@ -153,13 +154,22 @@ static int ClockSleep(LONGLONG Units, int Clock)
         {
             Timeout.QuadPart = MINLONGLONG;
             Wait = &Timeout;
+        } else if (Wait->QuadPart == 0)
+        {
+            /* The time passed */
+            return 0;
         }
-        Status = NtDelayExecution(TRUE, Wait);
-        if (Status != STATUS_ALERTED && Status != STATUS_USER_APC)
+        /* Not alertable, a program that can cancel threads parks them (pthread_cancel unparks) */
+        Delay = __atomic_load_n(&_NtCRT_DelayHook, __ATOMIC_ACQUIRE);
+        Status = Delay != NULL ? Delay(Wait) : NtDelayExecution(FALSE, Wait);
+        if (Status == STATUS_ALERTED)
+        {
+            _NtCRT_CancelPoint(NULL, NULL);
+        } else if (Clock != CLOCK_MONOTONIC)
         {
             return 0;
         }
-        _NtCRT_CancelPoint(NULL, NULL);
+        /* A relative park may end before its time (with a finer timer resolution): the clock tells */
     }
 }
 

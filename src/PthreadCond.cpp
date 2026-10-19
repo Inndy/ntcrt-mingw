@@ -61,8 +61,8 @@ static int CondWait(pthread_cond_t* c, pthread_mutex_t* m, const struct timespec
     {
         return Error;
     }
-    /* Alertable for pthread_cancel, an APC or an alert is a spurious wakeup */
-    Status = _NtCRT_Wait(c, (ULONG_PTR)Raw, sizeof(*c), Wait, TRUE);
+    /* pthread_cancel unparks the thread, a cancellation ends the wait */
+    Status = _NtCRT_Wait(c, (ULONG_PTR)Raw, sizeof(*c), Wait, NTCRT_WAIT_CANCEL);
     _NtCRT_MutexRelock(m, Count);
     /* A cancelled thread takes no signal from another */
     _NtCRT_CancelPoint(Status == STATUS_SUCCESS ? CondPass : NULL, c);

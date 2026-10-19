@@ -115,7 +115,7 @@ NTCRT_API int pthread_once(pthread_once_t* o, void (*func)(void))
         {
             continue;
         }
-        _NtCRT_Wait(o, ONCE_WAITERS, sizeof(*o), NULL, FALSE);
+        _NtCRT_Wait(o, ONCE_WAITERS, sizeof(*o), NULL, 0);
     }
 }
 

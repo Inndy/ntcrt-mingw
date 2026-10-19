@@ -82,7 +82,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
             Raw |= MUTEX_WAITERS;
         }
         Waiters = MUTEX_WAITERS;
-        if (_NtCRT_Wait(m, (ULONG_PTR)Raw, sizeof(*m), Wait, FALSE) == STATUS_TIMEOUT)
+        if (_NtCRT_Wait(m, (ULONG_PTR)Raw, sizeof(*m), Wait, 0) == STATUS_TIMEOUT)
         {
             return ETIMEDOUT;
         }

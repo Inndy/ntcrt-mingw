@@ -48,7 +48,7 @@ NTCRT_API int pthread_barrier_destroy(pthread_barrier_t* b)
         {
             break;
         }
-        _NtCRT_Wait(b, Raw, sizeof(*b), NULL, FALSE);
+        _NtCRT_Wait(b, Raw, sizeof(*b), NULL, 0);
     }
     *b = NULL;
     return 0;
@@ -78,7 +78,7 @@ NTCRT_API int pthread_barrier_wait(pthread_barrier_t* b)
         } else
         {
             /* The last, until the previous round left */
-            _NtCRT_Wait(b, Raw, sizeof(*b), NULL, FALSE);
+            _NtCRT_Wait(b, Raw, sizeof(*b), NULL, 0);
             Old = __atomic_load_n(b, __ATOMIC_ACQUIRE);
             continue;
         }
@@ -100,7 +100,7 @@ NTCRT_API int pthread_barrier_wait(pthread_barrier_t* b)
         {
             break;
         }
-        _NtCRT_Wait(b, (ULONG_PTR)Old, sizeof(*b), NULL, FALSE);
+        _NtCRT_Wait(b, (ULONG_PTR)Old, sizeof(*b), NULL, 0);
     }
     do
     {
