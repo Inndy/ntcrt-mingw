@@ -7,8 +7,8 @@
 /* errno of a name invalid for Win32 (EINVAL), a missing file or directory (ENOENT) and a file as a directory */
 int main(void)
 {
-    const char* Paths[] = {"a<b.txt", "dir|x/f.txt", "a\"b", "missing.txt", "nodir/missing.txt",
-                           "C:/Windows/notepad.exe/x"};
+    const char* Paths[] = {"a<b.txt", "dir|x/f.txt", "a\"b", "a*b", "missing.txt", "nodir/missing.txt",
+                           "C:/Windows/notepad.exe/x", "\\\\?\\C:\\Windows\\win.ini", "\\\\?\\C:\\Windows"};
     struct _stat st;
 
     for (int i = 0; i < (int)(sizeof(Paths) / sizeof(Paths[0])); i++)

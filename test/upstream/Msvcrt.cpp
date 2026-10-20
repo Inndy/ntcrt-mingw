@@ -272,6 +272,61 @@ static void TestStatNull(void)
     CHECK(_fstat32(0, NULL) == -1 && errno == EINVAL);
 }
 
+/* A name invalid for Win32 is EINVAL, a missing file ENOENT; a "\\?\" path names the file */
+static void TestPathNames(void)
+{
+    static const char* const Invalid[] = {"a<b.tmp", "dir|x\\f.tmp", "a*b.tmp", "a?b.tmp"};
+    static const char Name[] = "ntcrt_path.tmp";
+    struct _stat64 St;
+    char Full[MAX_PATH], Long[MAX_PATH + 4];
+    FILE* File;
+    int fd;
+
+    for (const char* Path : Invalid)
+    {
+        errno = 0;
+        Check(_open(Path, _O_RDONLY) == -1 && errno == EINVAL, Path);
+        errno = 0;
+        Check(_stat64(Path, &St) == -1 && errno == EINVAL, Path);
+        errno = 0;
+        Check(fopen(Path, "r") == NULL && errno == EINVAL, Path);
+    }
+    errno = 0;
+    CHECK(_open("ntcrt_missing.tmp", _O_RDONLY) == -1 && errno == ENOENT);
+    errno = 0;
+    CHECK(_stat64("ntcrt_missing.tmp", &St) == -1 && errno == ENOENT);
+    errno = 0;
+    CHECK(_stat64("ntcrt_missing\\f.tmp", &St) == -1 && errno == ENOENT);
+
+    File = fopen(Name, "w");
+    CHECK(File != NULL);
+    if (File == NULL)
+    {
+        return;
+    }
+    fputs("abc", File);
+    fclose(File);
+    CHECK(_fullpath(Full, Name, sizeof(Full)) != NULL && Full[1] == ':');
+    strcpy(Long, "\\\\?\\");
+    strcat(Long, Full);
+    CHECK(_stat64(Long, &St) == 0 && St.st_size == 3 && (St.st_mode & _S_IFMT) == _S_IFREG &&
+          St.st_dev == (_dev_t)((Full[0] | 0x20) - 'a'));
+    fd = _open(Long, _O_RDONLY);
+    CHECK(fd != -1);
+    if (fd != -1)
+    {
+        _close(fd);
+    }
+    File = fopen(Long, "r");
+    CHECK(File != NULL);
+    if (File != NULL)
+    {
+        fclose(File);
+    }
+    CHECK(_stat64("\\\\?\\C:\\Windows", &St) == 0 && (St.st_mode & _S_IFMT) == _S_IFDIR && St.st_dev == 2);
+    remove(Name);
+}
+
 static int g_Dup2Fd;
 static volatile LONG g_Dup2Done;
 
@@ -742,6 +797,7 @@ TestMsvcrt(VOID)
     TestCtrlZ();
     TestBinaryNarrow();
     TestStatNull();
+    TestPathNames();
     TestDup2();
     TestUmask();
     TestGetcwd();

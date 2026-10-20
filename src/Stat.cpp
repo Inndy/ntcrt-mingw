@@ -84,12 +84,7 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    /* Wildcards are not allowed */
-    if (wcspbrk(path, L"?*") != NULL)
-    {
-        NTCRT_ERRNO = ENOENT;
-        return -1;
-    }
+    /* A name with wildcards is invalid for NtOpenFile (EINVAL), a "\\?\" prefix is taken */
     Status = RtlDosPathNameToNtPathName_U_WithStatus(path, &NtPath, NULL, NULL);
     if (!NT_SUCCESS(Status))
     {
@@ -121,6 +116,12 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
         return -1;
     }
 
+    /* The drive after a "\\?\" or "\\.\" prefix */
+    if ((path[0] == L'\\' || path[0] == L'/') && (path[1] == L'\\' || path[1] == L'/') &&
+        (path[2] == L'?' || path[2] == L'.') && (path[3] == L'\\' || path[3] == L'/'))
+    {
+        path += 4;
+    }
     if (path[0] != L'\0' && path[1] == L':')
     {
         Drive = (path[0] | 0x20) - L'a';
