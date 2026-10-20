@@ -910,12 +910,63 @@ EXTERN_C int __cdecl _NtCRT__wfindnext32(intptr_t handle, struct _wfinddata32_t*
     return _NtCRT_FindNextW(handle, data);
 }
 
+/* The _findfirsti64 of msvcrt on x86, with a 32-bit time_t and a 64-bit size, x86 only */
+EXTERN_C intptr_t __cdecl _NtCRT__findfirst32i64(const char* pattern, struct _finddata32i64_t* data);
+EXTERN_C int __cdecl _NtCRT__findnext32i64(intptr_t handle, struct _finddata32i64_t* data);
+EXTERN_C intptr_t __cdecl _NtCRT__wfindfirst32i64(const wchar_t* pattern, struct _wfinddata32i64_t* data);
+EXTERN_C int __cdecl _NtCRT__wfindnext32i64(intptr_t handle, struct _wfinddata32i64_t* data);
+
+#ifndef _WIN64
+EXTERN_C intptr_t __cdecl _NtCRT__findfirst32i64(const char* pattern, struct _finddata32i64_t* data)
+{
+    return _NtCRT_FindFirstA(pattern, data);
+}
+
+EXTERN_C int __cdecl _NtCRT__findnext32i64(intptr_t handle, struct _finddata32i64_t* data)
+{
+    return _NtCRT_FindNextA(handle, data);
+}
+
+EXTERN_C intptr_t __cdecl _NtCRT__wfindfirst32i64(const wchar_t* pattern, struct _wfinddata32i64_t* data)
+{
+    return _NtCRT_FindFirstW(pattern, data);
+}
+
+EXTERN_C int __cdecl _NtCRT__wfindnext32i64(intptr_t handle, struct _wfinddata32i64_t* data)
+{
+    return _NtCRT_FindNextW(handle, data);
+}
+#endif
+
 /* Process */
 
 EXTERN_C int __cdecl _NtCRT__getpid(void)
 {
     return (int)(ULONG_PTR)NtCurrentProcessId();
 }
+
+/*
+ * The names of msvcrt without a size: a 32-bit time_t on x86, 64 bits on x64, with a 32-bit size for _finddata_t and
+ * a 64-bit one for _finddatai64_t
+ */
+NTCRT_ARCH_ALIAS(_NtCRT__futime, _NtCRT__futime32, _NtCRT__futime64);
+NTCRT_ARCH_ALIAS(_NtCRT__wutime, _NtCRT__wutime32, _NtCRT__wutime64);
+NTCRT_ARCH_ALIAS(_NtCRT__utime, _NtCRT__utime32, _NtCRT__utime64);
+NTCRT_ARCH_ALIAS(_NtCRT__findfirst, _NtCRT__findfirst32, _NtCRT__findfirst64i32);
+NTCRT_ARCH_ALIAS(_NtCRT__findnext, _NtCRT__findnext32, _NtCRT__findnext64i32);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindfirst, _NtCRT__wfindfirst32, _NtCRT__wfindfirst64i32);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindnext, _NtCRT__wfindnext32, _NtCRT__wfindnext64i32);
+#ifdef _WIN64
+NTCRT_ARCH_ALIAS(_NtCRT__findfirsti64, _NtCRT__findfirst64, _NtCRT__findfirst64);
+NTCRT_ARCH_ALIAS(_NtCRT__findnexti64, _NtCRT__findnext64, _NtCRT__findnext64);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindfirsti64, _NtCRT__wfindfirst64, _NtCRT__wfindfirst64);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindnexti64, _NtCRT__wfindnext64, _NtCRT__wfindnext64);
+#else
+NTCRT_ARCH_ALIAS(_NtCRT__findfirsti64, _NtCRT__findfirst32i64, _NtCRT__findfirst32i64);
+NTCRT_ARCH_ALIAS(_NtCRT__findnexti64, _NtCRT__findnext32i64, _NtCRT__findnext32i64);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindfirsti64, _NtCRT__wfindfirst32i64, _NtCRT__wfindfirst32i64);
+NTCRT_ARCH_ALIAS(_NtCRT__wfindnexti64, _NtCRT__wfindnext32i64, _NtCRT__wfindnext32i64);
+#endif
 
 NTCRT_IMPORT(_mkdir, _NtCRT__mkdir);
 NTCRT_IMPORT(mkdir, _NtCRT__mkdir);
@@ -943,34 +994,38 @@ NTCRT_IMPORT(_umask, _NtCRT__umask);
 NTCRT_IMPORT(_umask_s, _NtCRT__umask_s);
 NTCRT_IMPORT(umask, _NtCRT__umask);
 NTCRT_IMPORT(_futime64, _NtCRT__futime64);
-NTCRT_IMPORT(_futime, _NtCRT__futime64);
+NTCRT_IMPORT(_futime, _NtCRT__futime);
 NTCRT_IMPORT(_wutime64, _NtCRT__wutime64);
-NTCRT_IMPORT(_wutime, _NtCRT__wutime64);
+NTCRT_IMPORT(_wutime, _NtCRT__wutime);
 NTCRT_IMPORT(_utime64, _NtCRT__utime64);
-NTCRT_IMPORT(_utime, _NtCRT__utime64);
-NTCRT_IMPORT(utime, _NtCRT__utime64);
+NTCRT_IMPORT(_utime, _NtCRT__utime);
+NTCRT_IMPORT(utime, _NtCRT__utime);
 NTCRT_IMPORT(_futime32, _NtCRT__futime32);
 NTCRT_IMPORT(_wutime32, _NtCRT__wutime32);
 NTCRT_IMPORT(_utime32, _NtCRT__utime32);
 NTCRT_IMPORT(_findclose, _NtCRT__findclose);
 NTCRT_IMPORT(_findfirst64, _NtCRT__findfirst64);
 NTCRT_IMPORT(_findnext64, _NtCRT__findnext64);
-NTCRT_IMPORT(_findfirsti64, _NtCRT__findfirst64);
-NTCRT_IMPORT(_findnexti64, _NtCRT__findnext64);
+NTCRT_IMPORT(_findfirsti64, _NtCRT__findfirsti64);
+NTCRT_IMPORT(_findnexti64, _NtCRT__findnexti64);
 NTCRT_IMPORT_ONLY(_findfirst64i32, _NtCRT__findfirst64i32);
 NTCRT_IMPORT_ONLY(_findnext64i32, _NtCRT__findnext64i32);
-NTCRT_IMPORT(_findfirst, _NtCRT__findfirst64i32);
-NTCRT_IMPORT(_findnext, _NtCRT__findnext64i32);
+NTCRT_IMPORT(_findfirst, _NtCRT__findfirst);
+NTCRT_IMPORT(_findnext, _NtCRT__findnext);
 NTCRT_IMPORT(_findfirst32, _NtCRT__findfirst32);
 NTCRT_IMPORT(_findnext32, _NtCRT__findnext32);
 NTCRT_IMPORT(_wfindfirst64, _NtCRT__wfindfirst64);
 NTCRT_IMPORT(_wfindnext64, _NtCRT__wfindnext64);
-NTCRT_IMPORT(_wfindfirsti64, _NtCRT__wfindfirst64);
-NTCRT_IMPORT(_wfindnexti64, _NtCRT__wfindnext64);
+NTCRT_IMPORT(_wfindfirsti64, _NtCRT__wfindfirsti64);
+NTCRT_IMPORT(_wfindnexti64, _NtCRT__wfindnexti64);
+NTCRT_IMPORT(_findfirst32i64, _NtCRT__findfirst32i64);
+NTCRT_IMPORT(_findnext32i64, _NtCRT__findnext32i64);
+NTCRT_IMPORT(_wfindfirst32i64, _NtCRT__wfindfirst32i64);
+NTCRT_IMPORT(_wfindnext32i64, _NtCRT__wfindnext32i64);
 NTCRT_IMPORT_ONLY(_wfindfirst64i32, _NtCRT__wfindfirst64i32);
 NTCRT_IMPORT_ONLY(_wfindnext64i32, _NtCRT__wfindnext64i32);
-NTCRT_IMPORT(_wfindfirst, _NtCRT__wfindfirst64i32);
-NTCRT_IMPORT(_wfindnext, _NtCRT__wfindnext64i32);
+NTCRT_IMPORT(_wfindfirst, _NtCRT__wfindfirst);
+NTCRT_IMPORT(_wfindnext, _NtCRT__wfindnext);
 NTCRT_IMPORT(_wfindfirst32, _NtCRT__wfindfirst32);
 NTCRT_IMPORT(_wfindnext32, _NtCRT__wfindnext32);
 NTCRT_IMPORT(_getpid, _NtCRT__getpid);

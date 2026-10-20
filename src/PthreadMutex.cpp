@@ -6,18 +6,78 @@
 
 /*
  * An unlocked mutex is -1 - its type: -1 (PTHREAD_MUTEX_INITIALIZER, also 0), -2 (errorcheck) or -3 (recursive), as
- * the static initializers of winpthreads. A locked one is positive: the type in bits 0-1, bit 2 if threads may wait,
- * the recursion count - 1 in bits 3-30 and the thread id of the owner in bits 31-62.
+ * the static initializers of winpthreads. A locked one has the type in bits 0-1, bit 2 if threads may wait and the
+ * recursion count - 1 above. On x64 the count is in bits 3-30 and the thread id of the owner in bits 31-62. On x86,
+ * where the word has 32 bits, the count is in bits 3-11 and the owner is the address of its TEB, a page: a locked word
+ * may be negative there. The levels beyond the count are kept by the owner (NTCRT_PTD::MutexLevels).
  */
 #define MUTEX_TYPE    ((LONG_PTR)3)
 #define MUTEX_WAITERS ((LONG_PTR)4)
-#define MUTEX_COUNT   ((LONG_PTR)0x7FFFFFF8)
+#define MUTEX_COUNT   ((LONG_PTR)NTCRT_X86_X64(0xFF8, 0x7FFFFFF8))
 #define MUTEX_ONE     ((LONG_PTR)8)
-#define MUTEX_OWNER   (~(LONG_PTR)0x7FFFFFFF)
+#define MUTEX_OWNER   (~(LONG_PTR)NTCRT_X86_X64(0xFFF, 0x7FFFFFFF))
 
 static LONG_PTR MutexSelf(void)
 {
-    return (LONG_PTR)_Inline_GetCurrentThreadId() << 31;
+    return NTCRT_X86_X64((LONG_PTR)NtCurrentTeb(), (LONG_PTR)_Inline_GetCurrentThreadId() << 31);
+}
+
+static bool MutexUnlocked(LONG_PTR Raw)
+{
+    return NTCRT_X86_X64((ULONG_PTR)Raw + 3 <= 3, Raw <= 0);
+}
+
+/* Not a mutex, which x86 cannot tell */
+static bool MutexInvalid([[maybe_unused]] LONG_PTR Raw)
+{
+    return NTCRT_X86_X64(false, Raw < -3);
+}
+
+#ifndef _WIN64
+/* The levels of m beyond its count that the thread holds, NULL if none and !Add or there is no room */
+static ULONG* MutexLevels(pthread_mutex_t* m, bool Add)
+{
+    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
+    ULONG* Free = NULL;
+
+    if (Ptd == &_NtCRT_FallbackPtd)
+    {
+        return NULL;
+    }
+    for (auto& Entry : Ptd->MutexLevels)
+    {
+        if (Entry.Mutex == m && Entry.Levels != 0)
+        {
+            return &Entry.Levels;
+        }
+        if (Entry.Levels == 0 && Free == NULL && Add)
+        {
+            Entry.Mutex = m;
+            Free = &Entry.Levels;
+        }
+    }
+    return Free;
+}
+#endif
+
+/* Lock a recursive mutex the thread holds again */
+static int MutexRecurse(pthread_mutex_t* m, LONG_PTR Raw)
+{
+    if ((Raw & MUTEX_COUNT) == MUTEX_COUNT)
+    {
+#ifndef _WIN64
+        ULONG* Levels = MutexLevels(m, true);
+
+        if (Levels != NULL && *Levels != MAXULONG)
+        {
+            ++*Levels;
+            return 0;
+        }
+#endif
+        return EAGAIN;
+    }
+    __atomic_fetch_add(m, MUTEX_ONE, __ATOMIC_SEQ_CST);
+    return 0;
 }
 
 /* Lock, until Time of CLOCK_REALTIME if not NULL */
@@ -34,14 +94,14 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
     {
         LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
-        if (Raw <= 0)
+        if (MutexInvalid(Raw))
         {
-            if (Raw < -3)
-            {
-                return EINVAL;
-            }
+            return EINVAL;
+        }
+        if (MutexUnlocked(Raw))
+        {
             /* After a wait other threads may still wait */
-            if (InterlockedCompareExchange64(m, Self | Waiters | (Raw == 0 ? 0 : -1 - Raw), Raw) == Raw)
+            if (__sync_val_compare_and_swap(m, Raw, Self | Waiters | (Raw == 0 ? 0 : -1 - Raw)) == Raw)
             {
                 return 0;
             }
@@ -51,12 +111,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
         {
             if ((Raw & MUTEX_TYPE) == PTHREAD_MUTEX_RECURSIVE)
             {
-                if ((Raw & MUTEX_COUNT) == MUTEX_COUNT)
-                {
-                    return EAGAIN;
-                }
-                InterlockedExchangeAdd64(m, MUTEX_ONE);
-                return 0;
+                return MutexRecurse(m, Raw);
             }
             if ((Raw & MUTEX_TYPE) == PTHREAD_MUTEX_ERRORCHECK)
             {
@@ -82,7 +137,7 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
         /* The flag is set before the wait, a waiter that times out leaves it to the next unlock */
         if ((Raw & MUTEX_WAITERS) == 0)
         {
-            if (InterlockedCompareExchange64(m, Raw | MUTEX_WAITERS, Raw) != Raw)
+            if (__sync_val_compare_and_swap(m, Raw, Raw | MUTEX_WAITERS) != Raw)
             {
                 continue;
             }
@@ -96,12 +151,15 @@ static int MutexLock(pthread_mutex_t* m, const struct timespec* Time)
     }
 }
 
-/* Unlock all levels, the count of the levels above one in *Count */
-static int MutexUnlock(pthread_mutex_t* m, LONG_PTR* Count)
+/*
+ * Unlock all levels if Count is not NULL, the count of the levels above one in *Count: that of the word, on x86 with
+ * the levels beyond it in bits 12-43
+ */
+static int MutexUnlock(pthread_mutex_t* m, LONG64* Count)
 {
     LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
-    if (Raw <= 0)
+    if (MutexUnlocked(Raw) || MutexInvalid(Raw))
     {
         return EPERM;
     }
@@ -113,30 +171,55 @@ static int MutexUnlock(pthread_mutex_t* m, LONG_PTR* Count)
     if (Count != NULL)
     {
         *Count = Raw & MUTEX_COUNT;
-    } else if ((Raw & MUTEX_COUNT) != 0)
+    }
+#ifndef _WIN64
+    if ((Raw & MUTEX_COUNT) == MUTEX_COUNT)
     {
-        InterlockedExchangeAdd64(m, -MUTEX_ONE);
+        ULONG* Levels = MutexLevels(m, false);
+
+        if (Levels != NULL && Count == NULL)
+        {
+            --*Levels;
+            return 0;
+        }
+        if (Levels != NULL)
+        {
+            *Count |= (LONG64)*Levels << 12;
+            *Levels = 0;
+        }
+    }
+#endif
+    if (Count == NULL && (Raw & MUTEX_COUNT) != 0)
+    {
+        __atomic_fetch_sub(m, MUTEX_ONE, __ATOMIC_SEQ_CST);
         return 0;
     }
-    if (InterlockedExchange64(m, -1 - (Raw & MUTEX_TYPE)) & MUTEX_WAITERS)
+    if (__atomic_exchange_n(m, -1 - (Raw & MUTEX_TYPE), __ATOMIC_SEQ_CST) & MUTEX_WAITERS)
     {
         _NtCRT_Wake(m, FALSE);
     }
     return 0;
 }
 
-EXTERN_C int _NtCRT_MutexUnlockAll(LONG_PTR* Mutex, LONG_PTR* Count)
+EXTERN_C int _NtCRT_MutexUnlockAll(intptr_t* Mutex, LONG64* Count)
 {
     return MutexUnlock(Mutex, Count);
 }
 
-EXTERN_C void _NtCRT_MutexRelock(LONG_PTR* Mutex, LONG_PTR Count)
+EXTERN_C void _NtCRT_MutexRelock(intptr_t* Mutex, LONG64 Count)
 {
     MutexLock(Mutex, NULL);
-    if (Count != 0)
+    if ((Count & MUTEX_COUNT) != 0)
     {
-        InterlockedExchangeAdd64(Mutex, Count);
+        __atomic_fetch_add(Mutex, (LONG_PTR)(Count & MUTEX_COUNT), __ATOMIC_SEQ_CST);
     }
+#ifndef _WIN64
+    /* The entry that the unlock freed is free */
+    if ((Count >> 12) != 0)
+    {
+        *MutexLevels(Mutex, true) = (ULONG)(Count >> 12);
+    }
+#endif
 }
 
 NTCRT_API int pthread_mutex_init(pthread_mutex_t* m, const pthread_mutexattr_t* a)
@@ -155,11 +238,11 @@ NTCRT_API int pthread_mutex_destroy(pthread_mutex_t* m)
 {
     LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
 
-    if (Raw > 0)
+    if (MutexInvalid(Raw))
     {
-        return EBUSY;
+        return EINVAL;
     }
-    return Raw < -3 ? EINVAL : 0;
+    return MutexUnlocked(Raw) ? 0 : EBUSY;
 }
 
 NTCRT_API int pthread_mutex_lock(pthread_mutex_t* m)
@@ -177,22 +260,17 @@ NTCRT_API int pthread_mutex_trylock(pthread_mutex_t* m)
     LONG_PTR Raw = __atomic_load_n(m, __ATOMIC_RELAXED);
     LONG_PTR Self = MutexSelf();
 
-    if (Raw <= 0)
+    if (MutexInvalid(Raw))
     {
-        if (Raw < -3)
-        {
-            return EINVAL;
-        }
-        return InterlockedCompareExchange64(m, Self | (Raw == 0 ? 0 : -1 - Raw), Raw) == Raw ? 0 : EBUSY;
+        return EINVAL;
+    }
+    if (MutexUnlocked(Raw))
+    {
+        return __sync_val_compare_and_swap(m, Raw, Self | (Raw == 0 ? 0 : -1 - Raw)) == Raw ? 0 : EBUSY;
     }
     if ((Raw & MUTEX_TYPE) == PTHREAD_MUTEX_RECURSIVE && (Raw & MUTEX_OWNER) == Self)
     {
-        if ((Raw & MUTEX_COUNT) == MUTEX_COUNT)
-        {
-            return EAGAIN;
-        }
-        InterlockedExchangeAdd64(m, MUTEX_ONE);
-        return 0;
+        return MutexRecurse(m, Raw);
     }
     return EBUSY;
 }

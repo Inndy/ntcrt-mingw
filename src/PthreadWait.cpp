@@ -318,7 +318,7 @@ EXTERN_C
 NTSTATUS
 _NtCRT_Wait(
     _In_ const volatile void* Address,
-    _In_ ULONG_PTR Value,
+    _In_ ULONG64 Value,
     _In_ ULONG Size,
     _In_opt_ PLARGE_INTEGER Timeout,
     _In_ ULONG Flags)
@@ -334,7 +334,7 @@ _NtCRT_Wait(
     LARGE_INTEGER Left;
     PLARGE_INTEGER Wait = Timeout;
     LONGLONG Deadline = 0;
-    ULONG_PTR Current;
+    ULONG64 Current;
     NTSTATUS Status = STATUS_TIMEOUT;
     LONG State;
 
@@ -362,7 +362,7 @@ _NtCRT_Wait(
     Lock(Bucket);
     /* The lock orders the read of the word, 32 or 64 bits */
     Current = Size == sizeof(LONG) ? (ULONG)__atomic_load_n((const volatile LONG*)Address, __ATOMIC_RELAXED)
-                                   : (ULONG_PTR)__atomic_load_n((const volatile LONG_PTR*)Address, __ATOMIC_RELAXED);
+                                   : (ULONG64)__atomic_load_n((const volatile LONG64*)Address, __ATOMIC_RELAXED);
     if (Current != Value)
     {
         Unlock(Bucket);

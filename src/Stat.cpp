@@ -235,6 +235,12 @@ _Exit:
         (Dst)->st_ctime = (Src).st_ctime; \
     } while (0)
 
+/* The _stati64 of msvcrt on x86, with a 32-bit time_t and a 64-bit size, x86 only */
+EXTERN_C int __cdecl _NtCRT_fstat32i64(int fd, struct _stat32i64* buffer);
+EXTERN_C int __cdecl _NtCRT_stat32i64(const char* path, struct _stat32i64* buffer);
+EXTERN_C int __cdecl _NtCRT_wstat32i64(const wchar_t* path, struct _stat32i64* buffer);
+
+#ifdef _WIN64
 EXTERN_C int __cdecl _NtCRT_fstati64(int fd, struct _stati64* buffer)
 {
     struct _stat64 Stat;
@@ -267,6 +273,44 @@ EXTERN_C int __cdecl _NtCRT_wstati64(const wchar_t* path, struct _stati64* buffe
     }
     return Result;
 }
+#else
+EXTERN_C int __cdecl _NtCRT_fstat32i64(int fd, struct _stat32i64* buffer)
+{
+    struct _stat64 Stat;
+    int Result = _NtCRT_fstat64(fd, buffer != NULL ? &Stat : NULL);
+    if (Result == 0)
+    {
+        NTCRT_STAT_CONVERT(buffer, Stat);
+    }
+    return Result;
+}
+
+EXTERN_C int __cdecl _NtCRT_stat32i64(const char* path, struct _stat32i64* buffer)
+{
+    struct _stat64 Stat;
+    int Result = _NtCRT_stat64(path, buffer != NULL ? &Stat : NULL);
+    if (Result == 0)
+    {
+        NTCRT_STAT_CONVERT(buffer, Stat);
+    }
+    return Result;
+}
+
+EXTERN_C int __cdecl _NtCRT_wstat32i64(const wchar_t* path, struct _stat32i64* buffer)
+{
+    struct _stat64 Stat;
+    int Result = _NtCRT_wstat64(path, buffer != NULL ? &Stat : NULL);
+    if (Result == 0)
+    {
+        NTCRT_STAT_CONVERT(buffer, Stat);
+    }
+    return Result;
+}
+
+EXTERN_C __typeof__(_NtCRT_fstat32i64) _NtCRT_fstati64 __attribute__((nothrow, alias("_NtCRT_fstat32i64")));
+EXTERN_C __typeof__(_NtCRT_stat32i64) _NtCRT_stati64 __attribute__((nothrow, alias("_NtCRT_stat32i64")));
+EXTERN_C __typeof__(_NtCRT_wstat32i64) _NtCRT_wstati64 __attribute__((nothrow, alias("_NtCRT_wstat32i64")));
+#endif
 
 EXTERN_C int __cdecl _NtCRT_fstat32(int fd, struct _stat32* buffer)
 {
@@ -307,6 +351,9 @@ NTCRT_IMPORT(_fstat64, _NtCRT_fstat64);
 NTCRT_IMPORT(_fstati64, _NtCRT_fstati64);
 NTCRT_IMPORT(_stati64, _NtCRT_stati64);
 NTCRT_IMPORT(_wstati64, _NtCRT_wstati64);
+NTCRT_IMPORT(_fstat32i64, _NtCRT_fstat32i64);
+NTCRT_IMPORT(_stat32i64, _NtCRT_stat32i64);
+NTCRT_IMPORT(_wstat32i64, _NtCRT_wstat32i64);
 NTCRT_IMPORT(_fstat32, _NtCRT_fstat32);
 NTCRT_IMPORT(_stat32, _NtCRT_stat32);
 NTCRT_IMPORT(_wstat32, _NtCRT_wstat32);

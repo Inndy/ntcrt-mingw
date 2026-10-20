@@ -1,13 +1,24 @@
-/* POSIX semaphores without a name, in the word of sem_t */
+/* POSIX semaphores without a name, in the word of sem_t on x64, in a block it points to on x86 */
 
 #include "NtCRT.h"
 
 #include <pthread.h>
 #include <semaphore.h>
 
-/* sem_t is a pointer: the value in bits 0-31, the number of waiters in bits 32-63 */
-#define SEM_VALUE  ((ULONG_PTR)0xFFFFFFFF)
-#define SEM_WAITER ((ULONG_PTR)1 << 32)
+/*
+ * sem_t is a pointer: the value in bits 0-31, the number of waiters in bits 32-63. On x86 the pointer has 32 bits: it
+ * points to the state in the heap, as in winpthreads.
+ */
+#define SEM_VALUE  ((ULONG64)0xFFFFFFFF)
+#define SEM_WAITER ((ULONG64)1 << 32)
+
+typedef volatile ULONG64 SEM_STATE;
+
+/* The state, NULL for a semaphore destroyed on x86 */
+static SEM_STATE* SemState(sem_t* sem)
+{
+    return NTCRT_X86_X64((SEM_STATE*)__atomic_load_n(sem, __ATOMIC_ACQUIRE), (SEM_STATE*)sem);
+}
 
 static int SemError(int Error)
 {
@@ -17,25 +28,25 @@ static int SemError(int Error)
 
 /* Add Delta to the word, if Check accepts it */
 template<typename TCheck>
-static bool SemUpdate(sem_t* sem, ULONG_PTR* Raw, LONG_PTR Delta, TCheck Check)
+static bool SemUpdate(SEM_STATE* sem, ULONG64* Raw, LONG64 Delta, TCheck Check)
 {
-    void* Old = __atomic_load_n(sem, __ATOMIC_ACQUIRE);
+    ULONG64 Old = __atomic_load_n(sem, __ATOMIC_ACQUIRE);
 
     do
     {
-        *Raw = (ULONG_PTR)Old;
+        *Raw = Old;
         if (!Check(*Raw))
         {
             return false;
         }
-    } while (!__atomic_compare_exchange_n(sem, &Old, (void*)(*Raw + (ULONG_PTR)Delta), false, __ATOMIC_ACQ_REL,
+    } while (!__atomic_compare_exchange_n(sem, &Old, *Raw + (ULONG64)Delta, false, __ATOMIC_ACQ_REL,
                                           __ATOMIC_ACQUIRE));
     return true;
 }
 
-static bool SemTake(sem_t* sem, ULONG_PTR* Raw)
+static bool SemTake(SEM_STATE* sem, ULONG64* Raw)
 {
-    return SemUpdate(sem, Raw, -1, [](ULONG_PTR Value) { return (Value & SEM_VALUE) != 0; });
+    return SemUpdate(sem, Raw, -1, [](ULONG64 Value) { return (Value & SEM_VALUE) != 0; });
 }
 
 /* A cancelled thread leaves a post to another waiter */
@@ -45,14 +56,19 @@ static void SemPass(void* Object)
 }
 
 /* Wait until Time of CLOCK_REALTIME if not NULL, a cancellation point */
-static int SemWait(sem_t* sem, const struct timespec* Time)
+static int SemWait(sem_t* sp, const struct timespec* Time)
 {
+    SEM_STATE* sem = SemState(sp);
     LARGE_INTEGER Timeout;
     PLARGE_INTEGER Wait = NULL;
-    ULONG_PTR Raw;
+    ULONG64 Raw;
     NTSTATUS Status;
 
     _NtCRT_CancelPoint(NULL, NULL);
+    if (sem == NULL)
+    {
+        return SemError(EINVAL);
+    }
     for (int Spins = _NtCRT_Spins();; Spins--)
     {
         if (SemTake(sem, &Raw))
@@ -76,7 +92,7 @@ static int SemWait(sem_t* sem, const struct timespec* Time)
     for (;;)
     {
         /* Count the waiter while the value is 0, or take it */
-        if (!SemUpdate(sem, &Raw, SEM_WAITER, [](ULONG_PTR Value) { return (Value & SEM_VALUE) == 0; }))
+        if (!SemUpdate(sem, &Raw, SEM_WAITER, [](ULONG64 Value) { return (Value & SEM_VALUE) == 0; }))
         {
             if (SemTake(sem, &Raw))
             {
@@ -85,8 +101,8 @@ static int SemWait(sem_t* sem, const struct timespec* Time)
             continue;
         }
         Status = _NtCRT_Wait(sem, Raw + SEM_WAITER, sizeof(*sem), Wait, NTCRT_WAIT_CANCEL);
-        SemUpdate(sem, &Raw, -(LONG_PTR)SEM_WAITER, [](ULONG_PTR) { return true; });
-        _NtCRT_CancelPoint(SemPass, sem);
+        SemUpdate(sem, &Raw, -(LONG64)SEM_WAITER, [](ULONG64) { return true; });
+        _NtCRT_CancelPoint(SemPass, (void*)sem);
         if (SemTake(sem, &Raw))
         {
             return 0;
@@ -108,23 +124,47 @@ NTCRT_API int sem_init(sem_t* sem, int pshared, unsigned int value)
     {
         return SemError(ENOSYS);
     }
+#ifdef _WIN64
     *sem = (void*)(ULONG_PTR)value;
+#else
+    *sem = RtlAllocateHeap(NTCRT_HEAP, 0, sizeof(ULONG64));
+    if (*sem == NULL)
+    {
+        return SemError(ENOSPC);
+    }
+    *(ULONG64*)*sem = value;
+#endif
     return 0;
 }
 
-NTCRT_API int sem_destroy(sem_t* sem)
+NTCRT_API int sem_destroy(sem_t* sp)
 {
-    if (((ULONG_PTR)__atomic_load_n(sem, __ATOMIC_ACQUIRE) & ~SEM_VALUE) != 0)
+    SEM_STATE* sem = SemState(sp);
+
+    if (sem == NULL)
+    {
+        return SemError(EINVAL);
+    }
+    if ((__atomic_load_n(sem, __ATOMIC_ACQUIRE) & ~SEM_VALUE) != 0)
     {
         return SemError(EBUSY);
     }
+#ifndef _WIN64
+    RtlFreeHeap(NTCRT_HEAP, 0, (void*)sem);
+    *sp = NULL;
+#endif
     return 0;
 }
 
-NTCRT_API int sem_trywait(sem_t* sem)
+NTCRT_API int sem_trywait(sem_t* sp)
 {
-    ULONG_PTR Raw;
+    SEM_STATE* sem = SemState(sp);
+    ULONG64 Raw;
 
+    if (sem == NULL)
+    {
+        return SemError(EINVAL);
+    }
     return SemTake(sem, &Raw) ? 0 : SemError(EAGAIN);
 }
 
@@ -138,16 +178,17 @@ NTCRT_API int _NtCRT_sem_timedwait(sem_t* sem, const struct timespec* t)
     return SemWait(sem, t);
 }
 
-NTCRT_API int sem_post_multiple(sem_t* sem, int count)
+NTCRT_API int sem_post_multiple(sem_t* sp, int count)
 {
-    ULONG_PTR Raw;
+    SEM_STATE* sem = SemState(sp);
+    ULONG64 Raw;
 
-    if (count <= 0)
+    if (sem == NULL || count <= 0)
     {
         return SemError(EINVAL);
     }
-    if (!SemUpdate(sem, &Raw, count, [count](ULONG_PTR Value) {
-            return (Value & SEM_VALUE) <= (ULONG_PTR)(SEM_VALUE_MAX - count);
+    if (!SemUpdate(sem, &Raw, count, [count](ULONG64 Value) {
+            return (Value & SEM_VALUE) <= (ULONG64)(SEM_VALUE_MAX - count);
         }))
     {
         return SemError(EOVERFLOW);
@@ -164,9 +205,15 @@ NTCRT_API int sem_post(sem_t* sem)
     return sem_post_multiple(sem, 1);
 }
 
-NTCRT_API int sem_getvalue(sem_t* sem, int* sval)
+NTCRT_API int sem_getvalue(sem_t* sp, int* sval)
 {
-    *sval = (int)((ULONG_PTR)__atomic_load_n(sem, __ATOMIC_ACQUIRE) & SEM_VALUE);
+    SEM_STATE* sem = SemState(sp);
+
+    if (sem == NULL)
+    {
+        return SemError(EINVAL);
+    }
+    *sval = (int)(__atomic_load_n(sem, __ATOMIC_ACQUIRE) & SEM_VALUE);
     return 0;
 }
 

@@ -94,7 +94,7 @@ static ULONG PipeData(int Fd)
     return Info.ReadDataAvailable;
 }
 
-/* A destructor of libmingw32 (__mingwthr_key_dtor), which runs at DLL_PROCESS_DETACH after the atexit functions */
+/* A destructor of libmingw32 (__mingwthr_key_dtor), which x64 runs at DLL_PROCESS_DETACH after the atexit functions */
 int __mingwthr_key_dtor(DWORD Key, void (*Destructor)(void*));
 static FILE* g_DestructorFile;
 

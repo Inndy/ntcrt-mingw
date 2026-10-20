@@ -464,7 +464,7 @@ static void TestCond(void)
         Start = NowMs();
         CHECK(pthread_cond_timedwait_relative_np(&g_NotEmpty, &g_Mutex, &Time) == ETIMEDOUT);
         CHECK(NowMs() - Start >= 50);
-        /* The longest relative time short of none (29000 years) waits for the signal */
+        /* The longest relative time short of none (29000 years, 68 with a 32-bit time_t) waits for the signal */
         {
             pthread_t Signaler;
 
@@ -473,7 +473,7 @@ static void TestCond(void)
             CHECK(pthread_create(&Signaler, NULL, FarSignal, NULL) == 0);
             while (!g_FarSignaled)
             {
-                Time.tv_sec = 922337203683;
+                Time.tv_sec = sizeof(time_t) == 8 ? (time_t)922337203683LL : (time_t)0x7FFFFFFF;
                 Time.tv_nsec = 999999999;
                 CHECK(pthread_cond_timedwait_relative_np(&g_NotEmpty, &g_Mutex, &Time) == 0);
             }
@@ -1477,7 +1477,11 @@ static bool InMultipleWait(pthread_t Thread)
     {
         return false;
     }
+#ifdef _WIN64
     In = GetThreadContext(Handle, &Context) && Context.Rip - Stub < 32;
+#else
+    In = GetThreadContext(Handle, &Context) && Context.Eip - Stub < 32;
+#endif
     ResumeThread(Handle);
     return In;
 }
@@ -1603,9 +1607,16 @@ static void TestThreads(void)
         {
             CHECK(pthread_create(&Hammers[i], NULL, HeapHammer, NULL) == 0);
         }
+        /* The stacks of the threads not yet ended fill the address space of x86: EAGAIN until some end */
         for (int i = 0; i < 3000; i++)
         {
-            CHECK(pthread_create(&Thread, &Detached, CancelHeap, NULL) == 0);
+            int Error;
+
+            while ((Error = pthread_create(&Thread, &Detached, CancelHeap, NULL)) == EAGAIN)
+            {
+                SleepMs(1);
+            }
+            CHECK(Error == 0);
             CHECK(pthread_cancel(Thread) == 0);
         }
         while (g_HeapEnded != 3000 && NowMs() - Start < 30000)
@@ -1732,12 +1743,15 @@ static void TestClocks(void)
     CHECK(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &Time) == 0);
     CHECK(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &Time) == 0);
     CHECK(clock_gettime(99, &Time) == -1 && errno == EINVAL);
-    /* Past the NT time and before 1601, rejected before NtSetSystemTime */
-    Time.tv_sec = 922337203685LL;
-    Time.tv_nsec = 0;
-    CHECK(clock_settime(CLOCK_REALTIME, &Time) == -1 && errno == EINVAL);
-    Time.tv_sec = -20000000000LL;
-    CHECK(clock_settime(CLOCK_REALTIME, &Time) == -1 && errno == EINVAL);
+    /* Past the NT time and before 1601, rejected before NtSetSystemTime (a 32-bit time_t holds neither) */
+    if (sizeof(time_t) == 8)
+    {
+        Time.tv_sec = (time_t)922337203685LL;
+        Time.tv_nsec = 0;
+        CHECK(clock_settime(CLOCK_REALTIME, &Time) == -1 && errno == EINVAL);
+        Time.tv_sec = (time_t)-20000000000LL;
+        CHECK(clock_settime(CLOCK_REALTIME, &Time) == -1 && errno == EINVAL);
+    }
 
     Start = NowMs();
     Time.tv_sec = 0;

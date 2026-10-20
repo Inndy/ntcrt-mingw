@@ -17,10 +17,20 @@ extern "C" {
 #define thread_local _Thread_local
 #endif
 
+/*
+ * The functions that take a timespec have the names that end in 32 with the 32-bit time_t of the headers of msvcrt
+ * on x86 (_USE_32BIT_TIME_T), as those of winpthreads
+ */
+#ifdef _USE_32BIT_TIME_T
+#define _NTCRT_TIME32(Name) __MINGW_ASM_CALL(Name)
+#else
+#define _NTCRT_TIME32(Name)
+#endif
+
 /* timespec_get of C11, which the <time.h> of MinGW-w64 declares for UCRT only */
 #ifndef TIME_UTC
 #define TIME_UTC 1
-int timespec_get(struct timespec* ts, int base);
+int timespec_get(struct timespec* ts, int base) _NTCRT_TIME32(_timespec32_get);
 #endif
 
 #define ONCE_FLAG_INIT 0
@@ -56,13 +66,14 @@ int cnd_broadcast(cnd_t* cond);
 void cnd_destroy(cnd_t* cond);
 int cnd_init(cnd_t* cond);
 int cnd_signal(cnd_t* cond);
-int cnd_timedwait(cnd_t* __restrict cond, mtx_t* __restrict mtx, const struct timespec* __restrict ts);
+int cnd_timedwait(cnd_t* __restrict cond, mtx_t* __restrict mtx, const struct timespec* __restrict ts)
+    _NTCRT_TIME32(cnd_timedwait32);
 int cnd_wait(cnd_t* cond, mtx_t* mtx);
 
 void mtx_destroy(mtx_t* mtx);
 int mtx_init(mtx_t* mtx, int type);
 int mtx_lock(mtx_t* mtx);
-int mtx_timedlock(mtx_t* __restrict mtx, const struct timespec* __restrict ts);
+int mtx_timedlock(mtx_t* __restrict mtx, const struct timespec* __restrict ts) _NTCRT_TIME32(mtx_timedlock32);
 int mtx_trylock(mtx_t* mtx);
 int mtx_unlock(mtx_t* mtx);
 
@@ -72,7 +83,7 @@ int thrd_detach(thrd_t thr);
 int thrd_equal(thrd_t thr0, thrd_t thr1);
 __attribute__((__noreturn__)) void thrd_exit(int res);
 int thrd_join(thrd_t thr, int* res);
-int thrd_sleep(const struct timespec* duration, struct timespec* remaining);
+int thrd_sleep(const struct timespec* duration, struct timespec* remaining) _NTCRT_TIME32(thrd_sleep32);
 void thrd_yield(void);
 
 int tss_create(tss_t* key, tss_dtor_t dtor);

@@ -89,3 +89,20 @@ NTCRT_API int cnd_timedwait(cnd_t* __restrict cond, mtx_t* __restrict mtx, const
 {
     return MtxResult(pthread_cond_timedwait(cond, mtx, ts));
 }
+
+#ifndef _WIN64
+/* With the 32-bit time_t of the headers of msvcrt on x86, <threads.h> calls these, as winpthreads its functions */
+EXTERN_C int _NtCRT_pthread_mutex_timedlock32(pthread_mutex_t* m, const struct _timespec32* ts);
+EXTERN_C int _NtCRT_pthread_cond_timedwait32(pthread_cond_t* cv, pthread_mutex_t* external_mutex,
+                                              const struct _timespec32* t);
+
+NTCRT_API int mtx_timedlock32(mtx_t* __restrict mtx, const struct _timespec32* __restrict ts)
+{
+    return MtxResult(_NtCRT_pthread_mutex_timedlock32(mtx, ts));
+}
+
+NTCRT_API int cnd_timedwait32(cnd_t* __restrict cond, mtx_t* __restrict mtx, const struct _timespec32* __restrict ts)
+{
+    return MtxResult(_NtCRT_pthread_cond_timedwait32(cond, mtx, ts));
+}
+#endif

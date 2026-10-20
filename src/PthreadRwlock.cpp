@@ -5,18 +5,31 @@
 #include <pthread.h>
 
 /*
- * Unlocked is -1 (PTHREAD_RWLOCK_INITIALIZER) or 0. Locked is positive, bit 1 if threads may wait: by a writer bit 0
- * and its thread id in bits 31-62, by readers their count in bits 2-62. Readers are preferred, a reader takes the
- * lock whenever no writer holds it, so a thread may take a read lock again while a writer waits.
+ * Unlocked is -1 (PTHREAD_RWLOCK_INITIALIZER) or 0. Locked, bit 1 if threads may wait: by a writer bit 0 and its thread
+ * id in bits 31-62, by readers their count in bits 2-62. On x86, where the word has 32 bits, the writer is the
+ * address of its TEB (a page) and the readers count in bits 2-31: a locked word may be negative there. Readers are
+ * preferred, a reader takes the lock whenever no writer holds it, so a thread may take a read lock again while a
+ * writer waits.
  */
 #define RW_WRITER  ((LONG_PTR)1)
 #define RW_WAITERS ((LONG_PTR)2)
 #define RW_READER  ((LONG_PTR)4)
-#define RW_OWNER   (~(LONG_PTR)0x7FFFFFFF)
+#define RW_OWNER   (~(LONG_PTR)NTCRT_X86_X64(0xFFF, 0x7FFFFFFF))
 
 static LONG_PTR RwSelf(void)
 {
-    return (LONG_PTR)_Inline_GetCurrentThreadId() << 31;
+    return NTCRT_X86_X64((LONG_PTR)NtCurrentTeb(), (LONG_PTR)_Inline_GetCurrentThreadId() << 31);
+}
+
+static bool RwUnlocked(LONG_PTR Raw)
+{
+    return NTCRT_X86_X64(Raw == 0 || Raw == -1, Raw <= 0);
+}
+
+/* Not a lock, which x86 cannot tell */
+static bool RwInvalid([[maybe_unused]] LONG_PTR Raw)
+{
+    return NTCRT_X86_X64(false, Raw < -1);
 }
 
 /* Take the lock to read or write, until Time of CLOCK_REALTIME if not NULL, once if Try */
@@ -33,12 +46,12 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
         LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
         LONG_PTR Next;
 
-        if (Raw <= 0)
+        if (RwInvalid(Raw))
         {
-            if (Raw < -1)
-            {
-                return EINVAL;
-            }
+            return EINVAL;
+        }
+        if (RwUnlocked(Raw))
+        {
             Next = Write ? Self | RW_WRITER : RW_READER;
         } else if ((Raw & RW_WRITER) == 0 && !Write)
         {
@@ -70,7 +83,7 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
             }
             if ((Raw & RW_WAITERS) == 0)
             {
-                if (InterlockedCompareExchange64(l, Raw | RW_WAITERS, Raw) != Raw)
+                if (__sync_val_compare_and_swap(l, Raw, Raw | RW_WAITERS) != Raw)
                 {
                     continue;
                 }
@@ -82,7 +95,7 @@ static int RwLock(pthread_rwlock_t* l, bool Write, const struct timespec* Time, 
             }
             continue;
         }
-        if (InterlockedCompareExchange64(l, Next, Raw) == Raw)
+        if (__sync_val_compare_and_swap(l, Raw, Next) == Raw)
         {
             return 0;
         }
@@ -100,11 +113,11 @@ NTCRT_API int pthread_rwlock_destroy(pthread_rwlock_t* l)
 {
     LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
 
-    if (Raw > 0)
+    if (RwInvalid(Raw))
     {
-        return EBUSY;
+        return EINVAL;
     }
-    return Raw < -1 ? EINVAL : 0;
+    return RwUnlocked(Raw) ? 0 : EBUSY;
 }
 
 NTCRT_API int pthread_rwlock_rdlock(pthread_rwlock_t* l)
@@ -142,7 +155,7 @@ NTCRT_API int pthread_rwlock_unlock(pthread_rwlock_t* l)
     LONG_PTR Raw = __atomic_load_n(l, __ATOMIC_RELAXED);
     LONG_PTR Old;
 
-    if (Raw <= 0)
+    if (RwUnlocked(Raw) || RwInvalid(Raw))
     {
         return EPERM;
     }
@@ -152,15 +165,16 @@ NTCRT_API int pthread_rwlock_unlock(pthread_rwlock_t* l)
         {
             return EPERM;
         }
-        Raw = InterlockedExchange64(l, 0);
+        Raw = __atomic_exchange_n(l, 0, __ATOMIC_SEQ_CST);
     } else
     {
         /* The last reader leaves it unlocked */
-        while ((Old = InterlockedCompareExchange64(l, Raw >= 2 * RW_READER ? Raw - RW_READER : 0, Raw)) != Raw)
+        while ((Old = __sync_val_compare_and_swap(l, Raw, (ULONG_PTR)Raw >= 2 * RW_READER ? Raw - RW_READER : 0)) !=
+               Raw)
         {
             Raw = Old;
         }
-        if (Raw >= 2 * RW_READER)
+        if ((ULONG_PTR)Raw >= 2 * RW_READER)
         {
             return 0;
         }

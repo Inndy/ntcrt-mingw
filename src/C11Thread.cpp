@@ -58,6 +58,16 @@ NTCRT_API int thrd_sleep(const struct timespec* duration, struct timespec* remai
     return _NtCRT_nanosleep(duration, remaining) == 0 ? 0 : -2;
 }
 
+#ifndef _WIN64
+/* With the 32-bit time_t of the headers of msvcrt on x86, see <threads.h> */
+EXTERN_C int __cdecl _NtCRT_nanosleep32(const struct _timespec32* request, struct _timespec32* remain);
+
+NTCRT_API int thrd_sleep32(const struct _timespec32* duration, struct _timespec32* remaining)
+{
+    return _NtCRT_nanosleep32(duration, remaining) == 0 ? 0 : -2;
+}
+#endif
+
 NTCRT_API void thrd_yield(void)
 {
     sched_yield();

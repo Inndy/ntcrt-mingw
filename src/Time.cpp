@@ -1425,6 +1425,18 @@ EXTERN_C size_t __cdecl _NtCRT__wcsftime_l(
 
 #pragma endregion
 
+/* The names of msvcrt without a size: a 32-bit time_t on x86, 64 bits on x64 */
+NTCRT_ARCH_ALIAS(_NtCRT_time, _NtCRT__time32, _NtCRT__time64);
+NTCRT_ARCH_ALIAS(_NtCRT__ftime, _NtCRT__ftime32, _NtCRT__ftime64);
+NTCRT_ARCH_ALIAS(_NtCRT__ftime_s, _NtCRT__ftime32_s, _NtCRT__ftime64_s);
+NTCRT_ARCH_ALIAS(_NtCRT_difftime, _NtCRT__difftime32, _NtCRT__difftime64);
+NTCRT_ARCH_ALIAS(_NtCRT_gmtime, _NtCRT__gmtime32, _NtCRT__gmtime64);
+NTCRT_ARCH_ALIAS(_NtCRT_localtime, _NtCRT__localtime32, _NtCRT__localtime64);
+NTCRT_ARCH_ALIAS(_NtCRT_mktime, _NtCRT__mktime32, _NtCRT__mktime64);
+NTCRT_ARCH_ALIAS(_NtCRT__mkgmtime, _NtCRT__mkgmtime32, _NtCRT__mkgmtime64);
+NTCRT_ARCH_ALIAS(_NtCRT_ctime, _NtCRT__ctime32, _NtCRT__ctime64);
+NTCRT_ARCH_ALIAS(_NtCRT__wctime, _NtCRT__wctime32, _NtCRT__wctime64);
+
 NTCRT_IMPORT(_tzset, _NtCRT__tzset);
 NTCRT_IMPORT(tzset, _NtCRT__tzset);
 NTCRT_IMPORT_DATA(_timezone, _NtCRT_timezone);
@@ -1443,28 +1455,28 @@ NTCRT_IMPORT(_get_daylight, _NtCRT__get_daylight);
 NTCRT_IMPORT(_get_dstbias, _NtCRT__get_dstbias);
 NTCRT_IMPORT(_get_tzname, _NtCRT__get_tzname);
 NTCRT_IMPORT(_time64, _NtCRT__time64);
-NTCRT_IMPORT(time, _NtCRT__time64);
+NTCRT_IMPORT(time, _NtCRT_time);
 NTCRT_IMPORT(_time32, _NtCRT__time32);
 NTCRT_IMPORT(_ftime64, _NtCRT__ftime64);
-NTCRT_IMPORT(_ftime, _NtCRT__ftime64);
+NTCRT_IMPORT(_ftime, _NtCRT__ftime);
 NTCRT_IMPORT(_ftime64_s, _NtCRT__ftime64_s);
-NTCRT_IMPORT(_ftime_s, _NtCRT__ftime64_s);
+NTCRT_IMPORT(_ftime_s, _NtCRT__ftime_s);
 NTCRT_IMPORT(_ftime32, _NtCRT__ftime32);
 NTCRT_IMPORT(_ftime32_s, _NtCRT__ftime32_s);
 NTCRT_IMPORT(clock, _NtCRT_clock);
 NTCRT_IMPORT(_difftime64, _NtCRT__difftime64);
-NTCRT_IMPORT(difftime, _NtCRT__difftime64);
+NTCRT_IMPORT(difftime, _NtCRT_difftime);
 NTCRT_IMPORT(_difftime32, _NtCRT__difftime32);
 NTCRT_IMPORT(_gmtime64, _NtCRT__gmtime64);
-NTCRT_IMPORT(gmtime, _NtCRT__gmtime64);
+NTCRT_IMPORT(gmtime, _NtCRT_gmtime);
 NTCRT_IMPORT(_gmtime64_s, _NtCRT__gmtime64_s);
 NTCRT_IMPORT(_localtime64, _NtCRT__localtime64);
-NTCRT_IMPORT(localtime, _NtCRT__localtime64);
+NTCRT_IMPORT(localtime, _NtCRT_localtime);
 NTCRT_IMPORT(_localtime64_s, _NtCRT__localtime64_s);
 NTCRT_IMPORT(_mktime64, _NtCRT__mktime64);
-NTCRT_IMPORT(mktime, _NtCRT__mktime64);
+NTCRT_IMPORT(mktime, _NtCRT_mktime);
 NTCRT_IMPORT(_mkgmtime64, _NtCRT__mkgmtime64);
-NTCRT_IMPORT(_mkgmtime, _NtCRT__mkgmtime64);
+NTCRT_IMPORT(_mkgmtime, _NtCRT__mkgmtime);
 NTCRT_IMPORT(_mktime32, _NtCRT__mktime32);
 NTCRT_IMPORT(_mkgmtime32, _NtCRT__mkgmtime32);
 NTCRT_IMPORT(_gmtime32, _NtCRT__gmtime32);
@@ -1475,10 +1487,10 @@ NTCRT_IMPORT(asctime, _NtCRT_asctime);
 NTCRT_IMPORT(asctime_s, _NtCRT_asctime_s);
 NTCRT_IMPORT(_wasctime, _NtCRT__wasctime);
 NTCRT_IMPORT(_ctime64, _NtCRT__ctime64);
-NTCRT_IMPORT(ctime, _NtCRT__ctime64);
+NTCRT_IMPORT(ctime, _NtCRT_ctime);
 NTCRT_IMPORT(_ctime32, _NtCRT__ctime32);
 NTCRT_IMPORT(_wctime64, _NtCRT__wctime64);
-NTCRT_IMPORT(_wctime, _NtCRT__wctime64);
+NTCRT_IMPORT(_wctime, _NtCRT__wctime);
 NTCRT_IMPORT(_wctime32, _NtCRT__wctime32);
 NTCRT_IMPORT(strftime, _NtCRT_strftime);
 NTCRT_IMPORT(wcsftime, _NtCRT_wcsftime);

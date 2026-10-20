@@ -7,8 +7,12 @@
 
 typedef PVOID(NTAPI* ALLOC)(PVOID, ULONG, SIZE_T);
 
-/* The slot of RtlAllocateHeap in the import table */
+/* The slot of RtlAllocateHeap in the import table, of a stdcall function on x86 */
+#ifdef _WIN64
 extern ALLOC __imp_RtlAllocateHeap;
+#else
+extern ALLOC __imp_RtlAllocateHeap __asm__("__imp__RtlAllocateHeap@12");
+#endif
 
 static ALLOC g_Alloc;
 static volatile LONG g_NoSlots;

@@ -1,4 +1,4 @@
-/* pthread barriers and spin locks, in the word of pthread_barrier_t and pthread_spinlock_t */
+/* pthread barriers and spin locks, in the word of pthread_barrier_t (or a block it points to) and pthread_spinlock_t */
 
 #include "NtCRT.h"
 
@@ -8,14 +8,23 @@
  * A barrier (a pointer) holds the count to wait for in bits 0-20, the threads arrived in bits 21-41, the threads
  * released that have not left in bits 42-62 and the generation in bit 63, which the last thread flips. The last
  * thread of a round waits until those of the previous round left, so a released thread sees the generation flipped
- * however long it waits to read the word.
+ * however long it waits to read the word. On x86 the word has 32 bits: it points to the state in the heap,
+ * as in winpthreads.
  */
-#define BARRIER_COUNT      ((ULONG_PTR)0x1FFFFF)
+#define BARRIER_COUNT      ((ULONG64)0x1FFFFF)
 #define BARRIER_ARRIVED    (BARRIER_COUNT << 21)
-#define BARRIER_ONE        ((ULONG_PTR)1 << 21)
+#define BARRIER_ONE        ((ULONG64)1 << 21)
 #define BARRIER_RELEASED   (BARRIER_COUNT << 42)
-#define BARRIER_LEFT       ((ULONG_PTR)1 << 42)
-#define BARRIER_GENERATION ((ULONG_PTR)1 << 63)
+#define BARRIER_LEFT       ((ULONG64)1 << 42)
+#define BARRIER_GENERATION ((ULONG64)1 << 63)
+
+typedef volatile ULONG64 BARRIER_STATE;
+
+/* The state, NULL for a barrier destroyed (or on x64 never initialized) */
+static BARRIER_STATE* BarrierState(pthread_barrier_t* b)
+{
+    return NTCRT_X86_X64((BARRIER_STATE*)__atomic_load_n(b, __ATOMIC_ACQUIRE), (BARRIER_STATE*)b);
+}
 
 NTCRT_API int pthread_barrier_init(pthread_barrier_t* b, const void* attr, unsigned int count)
 {
@@ -24,18 +33,28 @@ NTCRT_API int pthread_barrier_init(pthread_barrier_t* b, const void* attr, unsig
     {
         return EINVAL;
     }
+#ifdef _WIN64
     *b = (void*)(ULONG_PTR)count;
+#else
+    *b = RtlAllocateHeap(NTCRT_HEAP, 0, sizeof(ULONG64));
+    if (*b == NULL)
+    {
+        return ENOMEM;
+    }
+    *(ULONG64*)*b = count;
+#endif
     return 0;
 }
 
 /* A destroyed barrier is NULL, invalid as one never initialized (count 0). The released threads leave first. */
-NTCRT_API int pthread_barrier_destroy(pthread_barrier_t* b)
+NTCRT_API int pthread_barrier_destroy(pthread_barrier_t* bp)
 {
-    ULONG_PTR Raw;
+    BARRIER_STATE* b = BarrierState(bp);
+    ULONG64 Raw;
 
     for (;;)
     {
-        Raw = (ULONG_PTR)__atomic_load_n(b, __ATOMIC_ACQUIRE);
+        Raw = b != NULL ? __atomic_load_n(b, __ATOMIC_ACQUIRE) : 0;
         if ((Raw & BARRIER_COUNT) == 0)
         {
             return EINVAL;
@@ -50,20 +69,24 @@ NTCRT_API int pthread_barrier_destroy(pthread_barrier_t* b)
         }
         _NtCRT_Wait(b, Raw, sizeof(*b), NULL, 0);
     }
-    *b = NULL;
+#ifndef _WIN64
+    RtlFreeHeap(NTCRT_HEAP, 0, (void*)b);
+#endif
+    *bp = NULL;
     return 0;
 }
 
-NTCRT_API int pthread_barrier_wait(pthread_barrier_t* b)
+NTCRT_API int pthread_barrier_wait(pthread_barrier_t* bp)
 {
-    void* Old = __atomic_load_n(b, __ATOMIC_ACQUIRE);
-    ULONG_PTR Raw;
-    ULONG_PTR Next;
-    ULONG_PTR Count;
+    BARRIER_STATE* b = BarrierState(bp);
+    ULONG64 Old = b != NULL ? __atomic_load_n(b, __ATOMIC_ACQUIRE) : 0;
+    ULONG64 Raw;
+    ULONG64 Next;
+    ULONG64 Count;
 
     for (;;)
     {
-        Raw = (ULONG_PTR)Old;
+        Raw = Old;
         Count = Raw & BARRIER_COUNT;
         if (Count == 0)
         {
@@ -82,7 +105,7 @@ NTCRT_API int pthread_barrier_wait(pthread_barrier_t* b)
             Old = __atomic_load_n(b, __ATOMIC_ACQUIRE);
             continue;
         }
-        if (__atomic_compare_exchange_n(b, &Old, (void*)Next, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        if (__atomic_compare_exchange_n(b, &Old, Next, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
         {
             break;
         }
@@ -96,16 +119,16 @@ NTCRT_API int pthread_barrier_wait(pthread_barrier_t* b)
     for (;;)
     {
         Old = __atomic_load_n(b, __ATOMIC_ACQUIRE);
-        if ((((ULONG_PTR)Old ^ Raw) & BARRIER_GENERATION) != 0)
+        if (((Old ^ Raw) & BARRIER_GENERATION) != 0)
         {
             break;
         }
-        _NtCRT_Wait(b, (ULONG_PTR)Old, sizeof(*b), NULL, 0);
+        _NtCRT_Wait(b, Old, sizeof(*b), NULL, 0);
     }
     do
     {
-        Next = (ULONG_PTR)Old - BARRIER_LEFT;
-    } while (!__atomic_compare_exchange_n(b, &Old, (void*)Next, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+        Next = Old - BARRIER_LEFT;
+    } while (!__atomic_compare_exchange_n(b, &Old, Next, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
     /* The last to leave wakes the last of the next round or pthread_barrier_destroy */
     if ((Next & BARRIER_RELEASED) == 0)
     {
@@ -161,7 +184,7 @@ NTCRT_API int pthread_spin_lock(pthread_spinlock_t* l)
 {
     ULONG Spins = 0;
 
-    while (InterlockedExchange64(l, 1) == 1)
+    while (__atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE) == 1)
     {
         while (__atomic_load_n(l, __ATOMIC_RELAXED) == 1)
         {
@@ -179,7 +202,7 @@ NTCRT_API int pthread_spin_lock(pthread_spinlock_t* l)
 
 NTCRT_API int pthread_spin_trylock(pthread_spinlock_t* l)
 {
-    return InterlockedExchange64(l, 1) == 1 ? EBUSY : 0;
+    return __atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE) == 1 ? EBUSY : 0;
 }
 
 NTCRT_API int pthread_spin_unlock(pthread_spinlock_t* l)
@@ -188,7 +211,7 @@ NTCRT_API int pthread_spin_unlock(pthread_spinlock_t* l)
     {
         return EPERM;
     }
-    InterlockedExchange64(l, -1);
+    __atomic_store_n(l, -1, __ATOMIC_RELEASE);
     return 0;
 }
 

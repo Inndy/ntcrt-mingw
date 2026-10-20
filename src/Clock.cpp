@@ -73,6 +73,24 @@ NTCRT_API int _NtCRT_timespec_get(struct timespec* ts, int base)
     return base;
 }
 
+/* timespec_get with a 32-bit time_t on x86 (_timespec32_get of UCRT, see <threads.h>), x86 only */
+EXTERN_C int _NtCRT__timespec32_get(struct _timespec32* ts, int base);
+
+#ifndef _WIN64
+NTCRT_API int _NtCRT__timespec32_get(struct _timespec32* ts, int base)
+{
+    struct timespec Time;
+
+    if (_NtCRT_timespec_get(&Time, base) == 0 || Time.tv_sec != (__time32_t)Time.tv_sec)
+    {
+        return 0;
+    }
+    ts->tv_sec = (__time32_t)Time.tv_sec;
+    ts->tv_nsec = Time.tv_nsec;
+    return base;
+}
+#endif
+
 NTCRT_API int __cdecl _NtCRT_clock_getres(clockid_t clock_id, struct timespec* res)
 {
     ULONG Maximum, Minimum, Current;
@@ -243,6 +261,8 @@ NTCRT_IMPORT(sleep, __wrap_sleep);
 NTCRT_IMPORT(usleep, __wrap_usleep);
 NTCRT_IMPORT(nanosleep, _NtCRT_nanosleep);
 NTCRT_IMPORT(timespec_get, _NtCRT_timespec_get);
+NTCRT_IMPORT(_timespec64_get, _NtCRT_timespec_get);
+NTCRT_IMPORT(_timespec32_get, _NtCRT__timespec32_get);
 NTCRT_IMPORT(clock_gettime, _NtCRT_clock_gettime);
 NTCRT_IMPORT(clock_getres, _NtCRT_clock_getres);
 NTCRT_IMPORT(clock_settime, _NtCRT_clock_settime);

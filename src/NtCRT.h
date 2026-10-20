@@ -38,6 +38,14 @@
 #define NTCRT_ASM_PTR ".long "
 #endif
 
+/*
+ * Name, an alias of X86 or X64 (defined in the same file) by the architecture: the function of a name of msvcrt whose
+ * time_t or file size depends on it, time is _time32 on x86 and _time64 on x64. NTCRT_IMPORT takes Name.
+ */
+#define NTCRT_ARCH_ALIAS(Name, X86, X64)              \
+    EXTERN_C __typeof__(NTCRT_X86_X64(X86, X64)) Name \
+        __attribute__((nothrow, alias(NTCRT_STRINGIZE(NTCRT_X86_X64(X86, X64)))))
+
 /* A variable cannot be forwarded by a jump, "Name" and "__imp_Name" are defined in the object of "Impl" */
 #define NTCRT_IMPORT_DATA(Name, Impl) \
     __asm__(".globl " NTCRT_ASM_PREFIX #Name "\n\t" \
@@ -75,6 +83,13 @@ typedef struct _NTCRT_PTD
     char StrerrorBuffer[128];
     struct _NTCRT_PARKER* Parker; /* The event of the waits (PthreadWait.cpp), a reference */
     HANDLE ThreadHandle;          /* Of a thread of _beginthread, which _endthread closes */
+#ifndef _WIN64
+    struct
+    {
+        void* Mutex;
+        ULONG Levels;
+    } MutexLevels[4]; /* Of recursive mutexes the thread holds beyond the count in their word (PthreadMutex.cpp) */
+#endif
 } NTCRT_PTD, *PNTCRT_PTD;
 
 /* _NtCRT_FallbackPtd is shared by the threads that could not get their own, _NtCRT_PtdSlot is its TLS slot */
@@ -123,7 +138,7 @@ static inline void _NtCRT_CancelPoint(void (*Pass)(void* Object), void* Object)
  * wait is alertable.
  */
 #define NTCRT_WAIT_CANCEL 1
-extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG_PTR Value, ULONG Size, PLARGE_INTEGER Timeout,
+extern "C" NTSTATUS _NtCRT_Wait(const volatile void* Address, ULONG64 Value, ULONG Size, PLARGE_INTEGER Timeout,
                                 ULONG Flags);
 extern "C" void _NtCRT_Wake(const volatile void* Address, BOOL All);
 
@@ -183,8 +198,8 @@ extern "C" int _NtCRT_ThreadCreate(uintptr_t* Thread, const void* Attr, void* (*
                                    void* Arg);
 
 /* The mutex of a condition wait, unlocked whatever its recursion count, which Relock restores */
-extern "C" int _NtCRT_MutexUnlockAll(LONG_PTR* Mutex, LONG_PTR* Count);
-extern "C" void _NtCRT_MutexRelock(LONG_PTR* Mutex, LONG_PTR Count);
+extern "C" int _NtCRT_MutexUnlockAll(intptr_t* Mutex, LONG64* Count);
+extern "C" void _NtCRT_MutexRelock(intptr_t* Mutex, LONG64 Count);
 
 /* errno helpers */
 extern "C" int* _NtCRT_errno(void);

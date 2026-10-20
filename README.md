@@ -172,9 +172,15 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   which unwinds the SEH frames registered since as msvcrt does (the ntdll of x86 has neither), the DWARF unwinder of
   libgcc (`libgcc_eh`) for C++ exceptions, and the arguments of printf and scanf: by the size of their types, the
   positional ones by the types the whole format gives them (a long double of GCC takes 12 bytes).
-- Not yet: the locks of pthreads, `pthread_once`, semaphores and the synchronization of C11 `<threads.h>`, whose state
-  is in the 64 bits of a word (their sources are left out of the build), the functions of msvcrt with a 32-bit `time_t`
-  (`time`, `_stat`, ...) and the others that only x86 has, the x87 control word, `make test` and clang.
+- Threads (see [Threads](#threads)): a mutex and a read-write lock are in their word of 32 bits, with the address of
+  the TEB of the owner (a page), a condition variable, a barrier and a semaphore point to their state in the heap as in
+  winpthreads. `pthread_once` resets the once for an exception by the personality routine of DWARF and for a `longjmp`
+  by an SEH handler.
+- `time_t`: NtCRT has the 64 bits of x64. The names of msvcrt without a size (`time`, `localtime`, `mktime`, `_stati64`,
+  `_findfirst`, `_utime`, ...) take the 32-bit `time_t` of the x86 msvcrt, which the headers of MinGW-w64 default to
+  (`_USE_32BIT_TIME_T`, unless `_TIME_BITS=64`); the headers call the others by names with 32 or 64 (`_time64`,
+  `_stat32i64`, `_findfirst32i64`, `clock_gettime32`, `cnd_timedwait32`, ...), which libntcrt has.
+- Not yet: the x87 control word, `make test` (`test-thread` and `test-start` pass) and clang.
 
 ## Behavior
 
@@ -333,11 +339,14 @@ three names.
 
 - A mutex, condition variable, read-write lock, spin lock, barrier or semaphore is the word of its type, nothing is
   allocated and no kernel object created: a static initializer or 0 is a valid object and `pthread_*_destroy` only
-  checks. A thread waits by address (`src/PthreadWait.cpp`) with its node in a table of buckets, as `RtlWaitOnAddress`
-  of Windows 8, and parks: the waker takes the node out under the lock of the bucket, unparks the thread and marks the
-  node done, it never blocks; the waiter leaves once its node is done. The parker is chosen at the first wait by the
-  exports of ntdll, not by the version: `NtWaitForAlertByThreadId` and `NtAlertThreadByThreadId` (Windows 8 and later,
-  found by `LdrGetProcedureAddress`, not imported), else an auto-reset event per thread (`NtWaitForSingleObject` and
+  checks. On x86, whose word has 32 bits, a condition variable, a barrier and a semaphore point to 8 bytes in the heap
+  as in winpthreads (`ENOMEM`, `ENOSPC` for `sem_init`), allocated by `pthread_cond_init` of `CLOCK_MONOTONIC` or the
+  first wait, `pthread_barrier_init` and `sem_init`, freed by their destroy. A thread waits by address
+  (`src/PthreadWait.cpp`) with its node in a table of buckets, as `RtlWaitOnAddress` of Windows 8, and parks: the waker
+  takes the node out under the lock of the bucket, unparks the thread and marks the node done, it never blocks; the
+  waiter leaves once its node is done. The parker is chosen at the first wait by the exports of ntdll, not by the
+  version: `NtWaitForAlertByThreadId` and `NtAlertThreadByThreadId` (Windows 8 and later, found by
+  `LdrGetProcedureAddress`, not imported), else an auto-reset event per thread (`NtWaitForSingleObject` and
   `NtSetEvent`), created by `pthread_create` and `thrd_create` (`EAGAIN` if it cannot be), for other threads at their
   first wait, closed when the thread ends. A thread that cannot get one (out of memory or handles) looks at its node
   after each sleep of 1 ms, which lasts a clock tick (15.6 ms by default). The waits of ntdll (critical sections, SRW
@@ -355,7 +364,8 @@ three names.
   lock in a loop with nothing between goes from thread to thread rather than staying with one: 8 threads take 73 ns
   a lock in place of 55 (winpthreads 30, an SRW lock 43).
 - Mutexes are normal (`PTHREAD_MUTEX_DEFAULT`, a normal mutex locked again by its owner deadlocks, any thread may
-  unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels),
+  unlock it), errorcheck (`EDEADLK`, `EPERM`) or recursive (`EPERM` for another thread, `EAGAIN` past 2^28 levels;
+  on x86 512 in the word, beyond that 2^32 for 4 mutexes a thread),
   timed by `pthread_mutex_timedlock`. A condition wait unlocks a recursive mutex whatever its count and restores it.
 - Condition variables wait by `CLOCK_REALTIME` or `CLOCK_MONOTONIC` (`pthread_condattr_setclock`), or a relative
   time (`pthread_cond_timedwait_relative_np`). An absolute `CLOCK_REALTIME` time follows changes of the clock. A
@@ -367,7 +377,8 @@ three names.
   (`EINVAL` beyond). The last thread of a round waits until the threads released from the previous one left the
   barrier, `pthread_barrier_destroy` until those released left; a destroyed barrier is invalid (`EINVAL`).
 - `pthread_once` (and `call_once`, `std::call_once`) is reset when the routine exits by an exception (an unwind
-  handler of x64 SEH on the frame that calls it) or is cancelled, another call runs the routine again (with
+  handler of x64 SEH on the frame that calls it; on x86 a personality routine of DWARF there, and an SEH handler for
+  `longjmp`) or is cancelled, another call runs the routine again (with
   winpthreads `std::call_once` deadlocks after an exception).
 - Keys are TLS slots (`TlsAlloc`, 1088 for all users). `pthread_exit`, `thrd_exit` and a return from the start
   routine of `pthread_create` or `thrd_create` run the destructors after the cleanup handlers, with cancellation

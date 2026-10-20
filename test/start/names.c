@@ -6,7 +6,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+/* The headers of MinGW-w64 13 and later have clock_gettime inline, a program with other headers defines its own */
+#define clock_gettime clock_gettime_of_headers
 #include <time.h>
+#undef clock_gettime
 #include <unistd.h>
 #include <wchar.h>
 

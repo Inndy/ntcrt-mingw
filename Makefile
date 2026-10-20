@@ -19,6 +19,10 @@ CXXFLAGS += -Iinclude -ffunction-sections -fno-exceptions -fno-rtti
 TARGET   := $(shell $(CXX) -dumpmachine)
 ifneq ($(filter i686-% i386-%,$(TARGET)),)
 X86      := 1
+# NtCRT itself has the 64-bit time_t of x64, the headers of msvcrt on x86 default to 32 bits for programs: the names
+# of msvcrt without a size (time, _stati64, ...) are the 32-bit ones there (NTCRT_ARCH_ALIAS), src/Time32.cpp has
+# the functions that take a 32-bit time
+CXXFLAGS += -D_TIME_BITS=64
 endif
 
 ifdef LLVM
@@ -30,11 +34,6 @@ else
 BUILD    ?= build$(if $(X86),-i686)
 endif
 SRCS     := $(wildcard src/*.cpp)
-ifdef X86
-# Not ported yet: the locks keep their state in the 64 bits of a word, pthread_once unwinds by the SEH of x64
-SRCS     := $(filter-out $(patsubst %,src/%.cpp,PthreadBarrier PthreadCond PthreadMutex PthreadRwlock PthreadSem \
-                                                PthreadOnce C11Sync),$(SRCS))
-endif
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 and libgcc members, linked before them
 START_SRCS := $(wildcard src/start/*.cpp)
@@ -353,12 +352,13 @@ $(THREAD)/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
 	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< $(PARKER_OBJ) -Wl,-Map=$(THREAD)/cxx.map
 
-# exit.exe: the end of the process without exit (the last thread, ExitProcess), its status and output (a pipe)
+# exit.exe: the end of the process without exit (the last thread, ExitProcess), its status and output (a pipe). The
+# libmingw32 of x86 (MinGW-w64 15) runs no key destructor of __mingwthr_key_dtor at DLL_PROCESS_DETACH, x64 does
 test-thread: $(THREAD_TESTS)
 	if grep -i winpthread $(THREAD)/cxx.map; then echo "winpthreads is linked"; exit 1; fi
 	if grep 'libgcc\.a(emutls\.o)' $(THREAD)/cxx.map; then echo "emutls of libgcc is linked"; exit 1; fi
 	for t in $(THREAD_TESTS); do \
-	    if objdump -p $$t | grep 'DLL Name' | grep -v -q ntdll.dll; then echo "$$t imports more than ntdll.dll"; exit 1; fi; \
+	    if objdump -p $$t | grep 'DLL Name' | grep -v -i -q ntdll.dll; then echo "$$t imports more than ntdll.dll"; exit 1; fi; \
 	done
 	for t in $(filter-out %/exit.exe,$(THREAD_TESTS)); do ./$$t || exit 1; done
 	t=$(THREAD)/exit.exe; \
@@ -373,7 +373,7 @@ test-thread: $(THREAD_TESTS)
 	check "lockedfd $(THREAD)/exit.txt" 8 "lockedfd dup2:-1,1 atexit" && \
 	test "$$(cat $(THREAD)/exit.txt)" = lockedfd && \
 	check "mingwthr $(THREAD)/exit.txt" 4 "mingwthr atexit" && \
-	test "$$(cat $(THREAD)/exit.txt)" = mingwthr && \
+	test "$$(cat $(THREAD)/exit.txt)" = "$(if $(X86),,mingwthr)" && \
 	out=$$($(THREAD)/cxx.exe last) && test "$$out" = "AB"
 	@echo "end of the process: ok"
 
@@ -398,6 +398,11 @@ $(BUILD)/start/names.exe: test/start/names.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
 
+# The time_t of the names of msvcrt without a size, 32 bits on x86
+$(BUILD)/start/time32.exe: test/start/time32.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
 # Without -ntcrt-strict, the functions it imports from kernel32
 $(BUILD)/start/kernel32.exe: test/start/kernel32.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
@@ -409,12 +414,14 @@ $(BUILD)/start/pebteb.exe: test/start/pebteb.c $(LIBS) $(DRIVER)
 	$(KERNEL32_CC) -O2 -static -o $@ $<
 
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
-            $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe
+            $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe \
+            $(BUILD)/start/time32.exe
 	cd $(BUILD)/start && ./reloc.exe
 	$(BUILD)/start/argv.exe
 	$(BUILD)/start/names.exe | grep -q '^names: ok$$'
 	$(BUILD)/start/kernel32.exe | grep -q '^kernel32: ok$$'
 	$(BUILD)/start/pebteb.exe | grep -q '^pebteb: ok$$'
+	cd $(BUILD)/start && ./time32.exe
 	test "$$(objdump -p $(BUILD)/start/kernel32.exe | awk '/DLL Name/ { k = tolower($$3) == "kernel32.dll"; next } k && /<none>/ { print $$NF }')" = GetSystemPowerStatus
 	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
@@ -544,7 +551,7 @@ test-install: $(INSTALL_DEPS)
 	    -DTEXT='"c++"' -o "$(INSTALL_TEST)/hello++.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello++.exe" | tr -d '\r' | grep -q -x -F 'c++'
 	for t in hello hello++; do \
-	    if objdump -p "$(INSTALL_TEST)/$$t.exe" | grep 'DLL Name' | grep -v -q ntdll.dll; then \
+	    if objdump -p "$(INSTALL_TEST)/$$t.exe" | grep 'DLL Name' | grep -v -i -q ntdll.dll; then \
 	        echo "$$t.exe imports more than ntdll.dll"; exit 1; fi; \
 	done
 	@echo "install: ok"
