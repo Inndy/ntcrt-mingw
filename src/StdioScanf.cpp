@@ -72,16 +72,31 @@ NTCRT_WRAP_VARIADIC(_NtCRT_fscanf_s,
                     (stream, format, ap))
 NTCRT_WRAP_VARIADIC(_NtCRT_scanf_s, _NtCRT_vscanf_s, (const char* format, ...), format, (format, ap))
 
-EXTERN_C int __cdecl __wrap___mingw_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
-EXTERN_C int __cdecl __wrap___mingw_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
-EXTERN_C int __cdecl __wrap___mingw_fscanf(FILE*, const char*, ...) __attribute__((alias("_NtCRT_fscanf")));
-EXTERN_C int __cdecl __wrap___mingw_scanf(const char*, ...) __attribute__((alias("_NtCRT_scanf")));
+/* Those of mingw-w64 take the long double of GCC for %Lf */
+EXTERN_C int __cdecl __wrap___mingw_vfscanf(FILE* stream, const char* format, va_list ap)
+{
+    return _NtCRT_ScanStream(stream, format, ap, NTCRT_SCANF_LONG_DOUBLE);
+}
+
+EXTERN_C int __cdecl __wrap___mingw_vscanf(const char* format, va_list ap)
+{
+    return _NtCRT_ScanStream(&_NtCRT_iob[0], format, ap, NTCRT_SCANF_LONG_DOUBLE);
+}
+
+NTCRT_WRAP_VARIADIC(__wrap___mingw_fscanf,
+                    __wrap___mingw_vfscanf,
+                    (FILE * stream, const char* format, ...),
+                    format,
+                    (stream, format, ap))
+NTCRT_WRAP_VARIADIC(__wrap___mingw_scanf, __wrap___mingw_vscanf, (const char* format, ...), format, (format, ap))
+
+
 EXTERN_C int __cdecl __wrap___ms_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
 EXTERN_C int __cdecl __wrap___ms_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
-EXTERN_C int __cdecl __mingw_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
-EXTERN_C int __cdecl __mingw_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
-EXTERN_C int __cdecl __mingw_fscanf(FILE*, const char*, ...) __attribute__((alias("_NtCRT_fscanf")));
-EXTERN_C int __cdecl __mingw_scanf(const char*, ...) __attribute__((alias("_NtCRT_scanf")));
+EXTERN_C int __cdecl __mingw_vfscanf(FILE*, const char*, va_list) __attribute__((alias("__wrap___mingw_vfscanf")));
+EXTERN_C int __cdecl __mingw_vscanf(const char*, va_list) __attribute__((alias("__wrap___mingw_vscanf")));
+EXTERN_C int __cdecl __mingw_fscanf(FILE*, const char*, ...) __attribute__((alias("__wrap___mingw_fscanf")));
+EXTERN_C int __cdecl __mingw_scanf(const char*, ...) __attribute__((alias("__wrap___mingw_scanf")));
 EXTERN_C int __cdecl __ms_vfscanf(FILE*, const char*, va_list) __attribute__((alias("_NtCRT_vfscanf")));
 EXTERN_C int __cdecl __ms_vscanf(const char*, va_list) __attribute__((alias("_NtCRT_vscanf")));
 

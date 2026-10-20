@@ -323,6 +323,7 @@ extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _I
  * INT_MAX (EOVERFLOW).
  */
 #define NTCRT_PRINTF_LEGACY_WIDE 0x1 /* %s and %c of a wide format are wide, %S and %C narrow (msvcrt) */
+#define NTCRT_PRINTF_LONG_DOUBLE 0x2 /* %Lf is the 80-bit long double of GCC (__mingw_*), else a double (MSVC) */
 extern "C" int _NtCRT_FormatString(char* Buffer, size_t Count, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStringW(wchar_t* Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatLegacy(char* Buffer, size_t Count, const char* Format, va_list ap, ULONG Options);
@@ -351,6 +352,7 @@ extern "C" wint_t __cdecl _NtCRT__ungetwc_nolock(wint_t ch, FILE* stream);
  */
 #define NTCRT_SCANF_LEGACY_WIDE 0x1 /* %s, %c and %[ of a wide format are wide, %S and %C narrow (msvcrt) */
 #define NTCRT_SCANF_SECURE      0x2 /* The size of the array follows the argument of %c, %s and %[ (_s) */
+#define NTCRT_SCANF_LONG_DOUBLE 0x4 /* %Lf, %llf store the 80-bit long double of GCC (__mingw_*), else a double */
 template<typename TChar>
 struct NTCRT_SCANF_INPUT
 {

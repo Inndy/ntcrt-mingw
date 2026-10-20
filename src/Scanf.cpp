@@ -61,12 +61,21 @@ NTCRT_WRAP_VARIADIC(_NtCRT__snscanf_s,
                     format,
                     (input, length, format, ap, NTCRT_SCANF_SECURE))
 
-/* The narrow functions of msvcrt and C99 are the same */
-EXTERN_C int __cdecl __wrap___mingw_vsscanf(const char*, const char*, va_list) __attribute__((alias("_NtCRT_vsscanf")));
-EXTERN_C int __cdecl __wrap___mingw_sscanf(const char*, const char*, ...) __attribute__((alias("_NtCRT_sscanf")));
+/* The narrow functions of msvcrt and C99 differ in the long double of %Lf only */
+EXTERN_C int __cdecl __wrap___mingw_vsscanf(const char* str, const char* format, va_list ap)
+{
+    return _NtCRT_ScanString(str, SIZE_MAX, format, ap, NTCRT_SCANF_LONG_DOUBLE);
+}
+
+NTCRT_WRAP_VARIADIC(__wrap___mingw_sscanf,
+                    __wrap___mingw_vsscanf,
+                    (const char* str, const char* format, ...),
+                    format,
+                    (str, format, ap))
+
 EXTERN_C int __cdecl __wrap___ms_vsscanf(const char*, const char*, va_list) __attribute__((alias("_NtCRT_vsscanf")));
-EXTERN_C int __cdecl __mingw_vsscanf(const char*, const char*, va_list) __attribute__((alias("_NtCRT_vsscanf")));
-EXTERN_C int __cdecl __mingw_sscanf(const char*, const char*, ...) __attribute__((alias("_NtCRT_sscanf")));
+EXTERN_C int __cdecl __mingw_vsscanf(const char*, const char*, va_list) __attribute__((alias("__wrap___mingw_vsscanf")));
+EXTERN_C int __cdecl __mingw_sscanf(const char*, const char*, ...) __attribute__((alias("__wrap___mingw_sscanf")));
 EXTERN_C int __cdecl __ms_vsscanf(const char*, const char*, va_list) __attribute__((alias("_NtCRT_vsscanf")));
 
 NTCRT_IMPORT_ONLY(vsscanf, _NtCRT_vsscanf);

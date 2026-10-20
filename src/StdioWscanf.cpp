@@ -63,12 +63,12 @@ EXTERN_C int __cdecl _NtCRT_vwscanf_s(const wchar_t* format, va_list ap)
 
 EXTERN_C int __cdecl __wrap___mingw_vfwscanf(FILE* stream, const wchar_t* format, va_list ap)
 {
-    return _NtCRT_ScanStreamW(stream, format, ap, 0);
+    return _NtCRT_ScanStreamW(stream, format, ap, NTCRT_SCANF_LONG_DOUBLE);
 }
 
 EXTERN_C int __cdecl __wrap___mingw_vwscanf(const wchar_t* format, va_list ap)
 {
-    return _NtCRT_ScanStreamW(&_NtCRT_iob[0], format, ap, 0);
+    return _NtCRT_ScanStreamW(&_NtCRT_iob[0], format, ap, NTCRT_SCANF_LONG_DOUBLE);
 }
 
 NTCRT_WRAP_VARIADIC(_NtCRT_fwscanf,

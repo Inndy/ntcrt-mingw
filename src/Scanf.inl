@@ -801,8 +801,10 @@ _NtCRT_ScanFormat(
             Ok = _NtCRT_ScanFloat(In, Width != 0 ? Width : SIZE_MAX, &t);
             if (Ok && !Suppress)
             {
+                /* A long double is a double for the functions of msvcrt, as for MSVC */
+                int Long = Options & NTCRT_SCANF_LONG_DOUBLE ? 2 : 1;
                 int Kind = Length == NtCRTScanLong                                   ? 1
-                           : Length == NtCRTScanLongLong || Length == NtCRTScanDouble ? 2
+                           : Length == NtCRTScanLongLong || Length == NtCRTScanDouble ? Long
                                                                                       : 0;
 
                 if (_NtCRT_ScanFloatText(t.Buffer, Kind, Target))

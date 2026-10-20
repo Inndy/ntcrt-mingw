@@ -201,9 +201,14 @@ specs, defined by libntcrt for lld). The printf of libmingwex (`pformat`, `gdtoa
 takes the conventions of msvcrt beside:
 
 - C: the flags, width and precision (also `*` and `*m$`), positional arguments (`%n$`, POSIX), `hh`, `h`, `l`,
-  `ll`, `j`, `z`, `t` and `L` (an 80-bit long double), `%a`, `%n`. Floating point numbers are exact and round ties
+  `ll`, `j`, `z`, `t` and `L`, `%a`, `%n`. Floating point numbers are exact and round ties
   to even, by the digits of `src/FloatFormat.cpp` (the ftoa of Go 1.27: unrounded scaling for up to 18 digits, the
   multiprecision decimal for more and for long double). A length beyond `INT_MAX` fails with `EOVERFLOW`.
+- The long double of `%Lf` is that of the caller, as in mingw-w64: a `double` for the functions of msvcrt (the
+  `long double` of MSVC and of the Windows ABI, also what tcc passes), the 80-bit long double of GCC and clang for
+  `__mingw_*printf` and `__mingw_*scanf`, which `<stdio.h>` calls with `__USE_MINGW_ANSI_STDIO` (C99 and C++ with
+  msvcrt). scanf stores a `double` for `%Lf` and `%llf` of the functions of msvcrt. A program built with
+  `__USE_MINGW_ANSI_STDIO=0` that passes a GCC long double to `printf` prints 0, as with msvcrt and UCRT.
 - msvcrt: the length modifiers `I`, `I32`, `I64` and `w`, `%S`/`%C` (the other width than the function), `%Z`
   (`ANSI_STRING`, `%wZ` `UNICODE_STRING`), `%p` as 16 uppercase digits, and in the wide functions of msvcrt
   (`swprintf`, `_snwprintf`, `fwprintf`, ...) `%s`/`%c` wide and `%S`/`%C` narrow, where the C99 ones of MinGW-w64
@@ -232,7 +237,7 @@ of pushback at most, the console functions (`_cscanf`, ...) read a line and scan
 - Integers are the result of `strtoll` (`%d`, `%i`) or `strtoull` (`%u`, `%o`, `%x`, `%p`, which take a sign too),
   base prefixes for `%i`, stored in the size of the type: the low bits of a number out of its range, `ERANGE` and
   the limit beyond 64 bits, as UCRT. Floating point numbers are converted by `src/FloatParse.cpp` (below) at the
-  precision of their type, `float`, `double` or the 80-bit long double of `%Lf`, with `inf`, `infinity`, `nan`,
+  precision of their type, `float`, `double` or the long double of `%Lf` (above), with `inf`, `infinity`, `nan`,
   `nan(n-char-sequence)` and hex numbers, `ERANGE` as `strtod`.
 - msvcrt: the length modifiers `I`, `I32`, `I64` (also after a width, `%4I64d`) and `w`, `%S`/`%C` (the other width
   than the function), `%P` as `%p`, the width, `*` and the length modifiers in any order (`%h02d`), an unknown
@@ -540,7 +545,7 @@ Beside the table above:
 - `_set_output_format` only records its argument, the exponent of printf has two digits or more
 - scanf follows C beside the conventions of msvcrt (see "printf and scanf" and the table above): an item that is a
   prefix of a number only is a matching failure, numbers are correctly rounded (msvcrt rounds `%lf` twice) and take
-  `inf`, `nan` and hex digits, `%Lf` stores an 80-bit long double, the wide functions return EOF at the end of the
+  `inf`, `nan` and hex digits, the wide functions return EOF at the end of the
   input as the narrow ones (msvcrt `swscanf` returns 0), `%p` takes `0x`, and a reversed range of a scan
   set is its characters
 - The wide integer conversions (`wcstol`, `wcstoul`, `_wtoi`, ...) read ASCII digits only, msvcrt also takes the

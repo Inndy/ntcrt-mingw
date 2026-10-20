@@ -59,7 +59,7 @@ NTCRT_WRAP_VARIADIC(_NtCRT__snwscanf_s,
 
 EXTERN_C int __cdecl __wrap___mingw_vswscanf(const wchar_t* str, const wchar_t* format, va_list ap)
 {
-    return _NtCRT_ScanStringW(str, SIZE_MAX, format, ap, 0);
+    return _NtCRT_ScanStringW(str, SIZE_MAX, format, ap, NTCRT_SCANF_LONG_DOUBLE);
 }
 
 NTCRT_WRAP_VARIADIC(__wrap___mingw_swscanf,

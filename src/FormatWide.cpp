@@ -10,23 +10,23 @@
 
 NTCRT_API int __cdecl __wrap___mingw_vfwprintf(FILE* stream, const wchar_t* format, va_list ap)
 {
-    return _NtCRT_FormatStreamW(stream, format, ap, 0);
+    return _NtCRT_FormatStreamW(stream, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vwprintf(const wchar_t* format, va_list ap)
 {
-    return _NtCRT_FormatStreamW(&_NtCRT_iob[1], format, ap, 0);
+    return _NtCRT_FormatStreamW(&_NtCRT_iob[1], format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
 /* swprintf of mingw-w64 without a size */
 NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, const wchar_t* format, va_list ap)
 {
-    return _NtCRT_FormatStringW(buffer, SIZE_MAX, format, ap, 0);
+    return _NtCRT_FormatStringW(buffer, SIZE_MAX, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
 NTCRT_API int __cdecl __wrap___mingw_vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
 {
-    return _NtCRT_FormatStringW(buffer, count, format, ap, 0);
+    return _NtCRT_FormatStringW(buffer, count, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
 NTCRT_WRAP_VARIADIC(__wrap___mingw_fwprintf,

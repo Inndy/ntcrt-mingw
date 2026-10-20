@@ -676,11 +676,61 @@ static void TestProcessNames(void)
     }
 }
 
+/* The functions of msvcrt as MSVC calls them, past the redirection of <stdio.h> to __mingw_* */
+extern "C" int(__cdecl* __imp__snprintf)(char*, size_t, const char*, ...);
+extern "C" int(__cdecl* __imp__snwprintf)(wchar_t*, size_t, const wchar_t*, ...);
+extern "C" int(__cdecl* __imp_sscanf)(const char*, const char*, ...);
+extern "C" int(__cdecl* __imp_swscanf)(const wchar_t*, const wchar_t*, ...);
+extern "C" int(__cdecl* __imp_fscanf)(FILE*, const char*, ...);
+extern "C" int __cdecl __mingw_snprintf(char*, size_t, const char*, ...);
+extern "C" int __cdecl __mingw_sscanf(const char*, const char*, ...);
+extern "C" int __cdecl __mingw_swscanf(const wchar_t*, const wchar_t*, ...);
+
+/* %Lf is a double for the functions of msvcrt (the long double of MSVC), the 80-bit long double for __mingw_* */
+static void TestLongDouble(void)
+{
+    static const char Name[] = "ntcrt_longdouble.tmp";
+    struct
+    {
+        double Value[2];
+        unsigned char Guard[8];
+    } d;
+    long double ld = 0;
+    char Text[64];
+    wchar_t WideText[64];
+    FILE* File;
+
+    CHECK(__imp__snprintf(Text, sizeof(Text), "%Lf %.1Le %Lg %La", 42.5, 1.5, 0.25, 1.0) > 0 &&
+          strcmp(Text, "42.500000 1.5e+00 0.25 0x1p+0") == 0);
+    CHECK(__imp__snwprintf(WideText, 64, L"%Lf", 42.5) > 0 && wcscmp(WideText, L"42.500000") == 0);
+    memset(&d, 0xAA, sizeof(d));
+    CHECK(__imp_sscanf("1.5 2.5", "%Lf %llf", &d.Value[0], &d.Value[1]) == 2 && d.Value[0] == 1.5 &&
+          d.Value[1] == 2.5 && d.Guard[0] == 0xAA && d.Guard[1] == 0xAA);
+    memset(&d, 0xAA, sizeof(d));
+    CHECK(__imp_swscanf(L"0.25", L"%Lf", &d.Value[1]) == 1 && d.Value[1] == 0.25 && d.Guard[0] == 0xAA);
+    File = fopen(Name, "w+");
+    CHECK(File != NULL);
+    if (File != NULL)
+    {
+        memset(&d, 0xAA, sizeof(d));
+        CHECK(fputs("3.5", File) >= 0 && fseek(File, 0, SEEK_SET) == 0);
+        CHECK(__imp_fscanf(File, "%Lf", &d.Value[1]) == 1 && d.Value[1] == 3.5 && d.Guard[0] == 0xAA);
+        fclose(File);
+        remove(Name);
+    }
+
+    CHECK(__mingw_snprintf(Text, sizeof(Text), "%Lf", 42.5L) > 0 && strcmp(Text, "42.500000") == 0);
+    CHECK(__mingw_sscanf("1.5", "%Lf", &ld) == 1 && ld == 1.5L);
+    ld = 0;
+    CHECK(__mingw_swscanf(L"0.75", L"%Lf", &ld) == 1 && ld == 0.75L);
+}
+
 extern "C"
 BOOL
 TestMsvcrt(VOID)
 {
     g_Ok = TRUE;
+    TestLongDouble();
     TestNullArguments();
     TestConversions();
     TestMultibyte();

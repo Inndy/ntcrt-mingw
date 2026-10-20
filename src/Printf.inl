@@ -8,6 +8,9 @@
  * %C (the other width than the format), %Z (ANSI_STRING, %wZ UNICODE_STRING) and, with
  * NTCRT_PRINTF_LEGACY_WIDE, the %s and %c of the wide functions of msvcrt, which are wide (%hs/%hc narrow).
  *
+ * The long double of %Lf is that of the caller: a double for the functions of msvcrt (MSVC, Windows), the 80-bit
+ * long double of GCC and clang for __mingw_*printf (NTCRT_PRINTF_LONG_DOUBLE), as mingw-w64 does.
+ *
  * An argument takes a slot of 8 bytes in the va_list of x64 (a long double is passed by address), which makes the
  * positional arguments an index. A conversion the engine does not know is copied to the output as it is.
  *
@@ -1079,6 +1082,11 @@ _NtCRT_Format(
         case 'G':
         case 'a':
         case 'A':
+            /* The long double of %Lf is a double for the functions of msvcrt, as for MSVC */
+            if (Spec.Length == NtCRTLengthDouble && (Options & NTCRT_PRINTF_LONG_DOUBLE) == 0)
+            {
+                Spec.Length = NtCRTLengthNone;
+            }
             _NtCRT_FormatFloat(o, &Spec, Conv, Arg(Position));
             break;
         case 'p':
