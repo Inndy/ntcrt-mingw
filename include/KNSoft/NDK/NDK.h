@@ -11,8 +11,8 @@
 #error This header is for MinGW-w64 only, use KNSoft.NDK with MSVC.
 #endif
 
-#if !defined(_WIN64)
-#error Only x64 is supported now.
+#if !defined(__x86_64__) && !defined(__i386__)
+#error Only x64 and x86 are supported now.
 #endif
 
 #define WIN32_NO_STATUS
@@ -317,6 +317,17 @@ typedef struct _RTL_PERTHREAD_CURDIR
     PVOID Environment;
 } RTL_PERTHREAD_CURDIR, *PRTL_PERTHREAD_CURDIR;
 
+/* A size or an offset that differs between x86 and x64 */
+#ifdef _WIN64
+#define NTCRT_X86_X64(X86, X64) X64
+#else
+#define NTCRT_X86_X64(X86, X64) X86
+#endif
+
+#define GDI_HANDLE_BUFFER_SIZE32 34
+#define GDI_HANDLE_BUFFER_SIZE64 60
+#define GDI_HANDLE_BUFFER_SIZE NTCRT_X86_X64(GDI_HANDLE_BUFFER_SIZE32, GDI_HANDLE_BUFFER_SIZE64)
+
 /* Truncated after the fields we use, offsets are verified below */
 typedef struct _PEB
 {
@@ -370,7 +381,7 @@ typedef struct _PEB
     ULONG ImageSubsystemMajorVersion;
     ULONG ImageSubsystemMinorVersion;
     KAFFINITY ActiveProcessAffinityMask;
-    ULONG GdiHandleBuffer[60];
+    ULONG GdiHandleBuffer[GDI_HANDLE_BUFFER_SIZE];
     PVOID PostProcessInitRoutine;
     PRTL_BITMAP TlsExpansionBitmap;
     ULONG TlsExpansionBitmapBits[32];
@@ -414,7 +425,7 @@ typedef struct _TEB
     PVOID WOW32Reserved;
     LCID CurrentLocale;
     ULONG FpSoftwareStatusRegister;
-    UCHAR Reserved0[0x1140];
+    UCHAR Reserved0[NTCRT_X86_X64(0xB28, 0x1140)];
     NTSTATUS LastStatusValue;
     UNICODE_STRING StaticUnicodeString;
     WCHAR StaticUnicodeBuffer[261];
@@ -425,13 +436,13 @@ typedef struct _TEB
     PVOID ReservedForNtRpc;
     PVOID DbgSsReserved[2];
     ULONG HardErrorMode;
-    UCHAR Reserved1[0x94];
+    UCHAR Reserved1[NTCRT_X86_X64(0x4C, 0x94)];
     ULONG GuaranteedStackBytes;
-    UCHAR Reserved2[0x34];
+    UCHAR Reserved2[NTCRT_X86_X64(0x18, 0x34)];
     PVOID* TlsExpansionSlots;
-    UCHAR Reserved3[0x40];
+    UCHAR Reserved3[NTCRT_X86_X64(0x1C, 0x40)];
     PVOID FlsData;
-    UCHAR Reserved4[0x1E];
+    UCHAR Reserved4[NTCRT_X86_X64(0x12, 0x1E)];
     union
     {
         USHORT SameTebFlags;
@@ -455,64 +466,73 @@ typedef struct _TEB
             USHORT SkipFileAPIBrokering : 1;
         };
     };
-    UCHAR Reserved5[0x1C];
+    UCHAR Reserved5[NTCRT_X86_X64(0x10, 0x1C)];
     LONG WowTebOffset;
 } TEB, *PTEB;
 
+/* The offset on both, or that on x86 then that on x64 */
 #ifdef __cplusplus
-#define NTCRT_CHECK_OFFSET(Type, Field, Offset) \
+#define NTCRT_CHECK_OFFSET_(Type, Field, Offset) \
     static_assert(offsetof(Type, Field) == (Offset), #Type "." #Field " offset mismatch")
 #else
-#define NTCRT_CHECK_OFFSET(Type, Field, Offset) \
+#define NTCRT_CHECK_OFFSET_(Type, Field, Offset) \
     _Static_assert(offsetof(Type, Field) == (Offset), #Type "." #Field " offset mismatch")
 #endif
+#define NTCRT_CHECK_OFFSET_ARCH(Type, Field, X86, X64) NTCRT_CHECK_OFFSET_(Type, Field, NTCRT_X86_X64(X86, X64))
+#define NTCRT_CHECK_OFFSET_PICK(_1, _2, Macro, ...) Macro
+#define NTCRT_CHECK_OFFSET(Type, Field, ...) \
+    NTCRT_CHECK_OFFSET_PICK(__VA_ARGS__, NTCRT_CHECK_OFFSET_ARCH, NTCRT_CHECK_OFFSET_, )(Type, Field, __VA_ARGS__)
 
 NTCRT_CHECK_OFFSET(PEB, BeingDebugged, 0x002);
-NTCRT_CHECK_OFFSET(PEB, ImageBaseAddress, 0x010);
-NTCRT_CHECK_OFFSET(PEB, Ldr, 0x018);
-NTCRT_CHECK_OFFSET(PEB, ProcessParameters, 0x020);
-NTCRT_CHECK_OFFSET(PEB, ProcessHeap, 0x030);
-NTCRT_CHECK_OFFSET(PEB, FastPebLock, 0x038);
-NTCRT_CHECK_OFFSET(PEB, CrossProcessFlags, 0x050);
-NTCRT_CHECK_OFFSET(PEB, TlsExpansionCounter, 0x070);
-NTCRT_CHECK_OFFSET(PEB, TlsBitmap, 0x078);
-NTCRT_CHECK_OFFSET(PEB, TlsBitmapBits, 0x080);
-NTCRT_CHECK_OFFSET(PEB, AnsiCodePageData, 0x0A0);
-NTCRT_CHECK_OFFSET(PEB, OemCodePageData, 0x0A8);
-NTCRT_CHECK_OFFSET(PEB, NumberOfProcessors, 0x0B8);
-NTCRT_CHECK_OFFSET(PEB, LoaderLock, 0x110);
-NTCRT_CHECK_OFFSET(PEB, OSMajorVersion, 0x118);
-NTCRT_CHECK_OFFSET(PEB, OSMinorVersion, 0x11C);
-NTCRT_CHECK_OFFSET(PEB, OSBuildNumber, 0x120);
-NTCRT_CHECK_OFFSET(PEB, ImageSubsystem, 0x128);
-NTCRT_CHECK_OFFSET(PEB, TlsExpansionBitmap, 0x238);
-NTCRT_CHECK_OFFSET(PEB, TlsExpansionBitmapBits, 0x240);
-NTCRT_CHECK_OFFSET(PEB, SessionId, 0x2C0);
-NTCRT_CHECK_OFFSET(PEB, ActiveCodePage, 0x34C);
-NTCRT_CHECK_OFFSET(PEB, OemCodePage, 0x34E);
+NTCRT_CHECK_OFFSET(PEB, ImageBaseAddress, 0x008, 0x010);
+NTCRT_CHECK_OFFSET(PEB, Ldr, 0x00C, 0x018);
+NTCRT_CHECK_OFFSET(PEB, ProcessParameters, 0x010, 0x020);
+NTCRT_CHECK_OFFSET(PEB, ProcessHeap, 0x018, 0x030);
+NTCRT_CHECK_OFFSET(PEB, FastPebLock, 0x01C, 0x038);
+NTCRT_CHECK_OFFSET(PEB, CrossProcessFlags, 0x028, 0x050);
+NTCRT_CHECK_OFFSET(PEB, TlsExpansionCounter, 0x03C, 0x070);
+NTCRT_CHECK_OFFSET(PEB, TlsBitmap, 0x040, 0x078);
+NTCRT_CHECK_OFFSET(PEB, TlsBitmapBits, 0x044, 0x080);
+NTCRT_CHECK_OFFSET(PEB, AnsiCodePageData, 0x058, 0x0A0);
+NTCRT_CHECK_OFFSET(PEB, OemCodePageData, 0x05C, 0x0A8);
+NTCRT_CHECK_OFFSET(PEB, NumberOfProcessors, 0x064, 0x0B8);
+NTCRT_CHECK_OFFSET(PEB, LoaderLock, 0x0A0, 0x110);
+NTCRT_CHECK_OFFSET(PEB, OSMajorVersion, 0x0A4, 0x118);
+NTCRT_CHECK_OFFSET(PEB, OSMinorVersion, 0x0A8, 0x11C);
+NTCRT_CHECK_OFFSET(PEB, OSBuildNumber, 0x0AC, 0x120);
+NTCRT_CHECK_OFFSET(PEB, ImageSubsystem, 0x0B4, 0x128);
+NTCRT_CHECK_OFFSET(PEB, TlsExpansionBitmap, 0x150, 0x238);
+NTCRT_CHECK_OFFSET(PEB, TlsExpansionBitmapBits, 0x154, 0x240);
+NTCRT_CHECK_OFFSET(PEB, SessionId, 0x1D4, 0x2C0);
+NTCRT_CHECK_OFFSET(PEB, ActiveCodePage, 0x228, 0x34C);
+NTCRT_CHECK_OFFSET(PEB, OemCodePage, 0x22A, 0x34E);
 
-NTCRT_CHECK_OFFSET(TEB, ThreadLocalStoragePointer, 0x0058);
-NTCRT_CHECK_OFFSET(TEB, LastErrorValue, 0x0068);
-NTCRT_CHECK_OFFSET(TEB, CurrentLocale, 0x0108);
-NTCRT_CHECK_OFFSET(TEB, LastStatusValue, 0x1250);
-NTCRT_CHECK_OFFSET(TEB, DeallocationStack, 0x1478);
-NTCRT_CHECK_OFFSET(TEB, TlsSlots, 0x1480);
-NTCRT_CHECK_OFFSET(TEB, TlsLinks, 0x1680);
-NTCRT_CHECK_OFFSET(TEB, HardErrorMode, 0x16B0);
-NTCRT_CHECK_OFFSET(TEB, GuaranteedStackBytes, 0x1748);
-NTCRT_CHECK_OFFSET(TEB, TlsExpansionSlots, 0x1780);
-NTCRT_CHECK_OFFSET(TEB, FlsData, 0x17C8);
-NTCRT_CHECK_OFFSET(TEB, SameTebFlags, 0x17EE);
-NTCRT_CHECK_OFFSET(TEB, WowTebOffset, 0x180C);
+NTCRT_CHECK_OFFSET(TEB, ThreadLocalStoragePointer, 0x002C, 0x0058);
+NTCRT_CHECK_OFFSET(TEB, LastErrorValue, 0x0034, 0x0068);
+NTCRT_CHECK_OFFSET(TEB, CurrentLocale, 0x00C4, 0x0108);
+NTCRT_CHECK_OFFSET(TEB, LastStatusValue, 0x0BF4, 0x1250);
+NTCRT_CHECK_OFFSET(TEB, DeallocationStack, 0x0E0C, 0x1478);
+NTCRT_CHECK_OFFSET(TEB, TlsSlots, 0x0E10, 0x1480);
+NTCRT_CHECK_OFFSET(TEB, TlsLinks, 0x0F10, 0x1680);
+NTCRT_CHECK_OFFSET(TEB, HardErrorMode, 0x0F28, 0x16B0);
+NTCRT_CHECK_OFFSET(TEB, GuaranteedStackBytes, 0x0F78, 0x1748);
+NTCRT_CHECK_OFFSET(TEB, TlsExpansionSlots, 0x0F94, 0x1780);
+NTCRT_CHECK_OFFSET(TEB, FlsData, 0x0FB4, 0x17C8);
+NTCRT_CHECK_OFFSET(TEB, SameTebFlags, 0x0FCA, 0x17EE);
+NTCRT_CHECK_OFFSET(TEB, WowTebOffset, 0x0FDC, 0x180C);
 
 /*
  * MinGW-w64's NtCurrentTeb reads TIB.Self through __readgsqword, whose "m" operand trips -Warray-bounds,
- * read it from the segment register directly instead.
+ * read it from the segment register directly instead: gs on x64, fs on x86.
  */
 static __inline__ __attribute__((__always_inline__)) PTEB _NtCRT_CurrentTeb(void)
 {
     PTEB Teb;
+#ifdef _WIN64
     __asm__("mov{q %%gs:%c1, %0| %0, gs:%c1}" : "=r"(Teb) : "i"(offsetof(NT_TIB, Self)));
+#else
+    __asm__("mov{l %%fs:%c1, %0| %0, fs:%c1}" : "=r"(Teb) : "i"(offsetof(NT_TIB, Self)));
+#endif
     return Teb;
 }
 #define NtCurrentTeb _NtCRT_CurrentTeb
