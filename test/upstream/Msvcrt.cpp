@@ -31,6 +31,11 @@ typedef int(__cdecl* NEW_HANDLER)(size_t);
 extern "C" NEW_HANDLER __cdecl _set_new_handler(NEW_HANDLER Handler);
 extern "C" int __cdecl _set_new_mode(int Mode);
 
+#if __MSVCRT_VERSION__ < 0x0800
+/* MinGW-w64 13 and later declare them for msvcr80 and later only */
+extern "C" size_t __cdecl _mbstrnlen(const char* Str, size_t MaxCount);
+#endif
+
 static BOOL g_Ok;
 
 static void Check(bool Ok, const char* What)
@@ -595,7 +600,8 @@ static void TestMisc(void)
     char* Digits;
 
     /* The table is set before any call of __sys_errlist */
-    CHECK(_sys_errlist[EINVAL] != NULL && strcmp(_sys_errlist[EINVAL], "Invalid argument") == 0);
+    char** Errlist = _sys_errlist; /* declared char *[1] */
+    CHECK(Errlist[EINVAL] != NULL && strcmp(Errlist[EINVAL], "Invalid argument") == 0);
 
     /* A tab is blank and a control character, not printing as UCRT (msvcrt says printing) */
     CHECK(!iswprint(L'\t') && iswprint(L' ') && iswblank(L'\t'));
@@ -634,9 +640,9 @@ static void TestMisc(void)
     /* volatile: GCC takes an allocation that is only compared with NULL as successful */
     void* volatile Result;
     g_NewHandlerCalls = 0;
-    Result = calloc(1, (size_t)1 << 48);
+    Result = calloc(1, SIZE_MAX / 2);
     CHECK(Result == NULL && g_NewHandlerCalls == 1);
-    Result = realloc(Block, (size_t)1 << 48);
+    Result = realloc(Block, SIZE_MAX / 2);
     CHECK(Result == NULL && g_NewHandlerCalls == 2);
     free(Block);
     _set_new_mode(OldMode);
@@ -700,8 +706,13 @@ static void TestDllOnExit(void)
     free(Begin);
 }
 
-/* The slot of RtlSetEnvironmentVar in the import table */
+/* The slot of RtlSetEnvironmentVar in the import table, of a stdcall function on x86 */
+#ifdef _WIN64
 extern "C" NTSTATUS(NTAPI* __imp_RtlSetEnvironmentVar)(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T);
+#else
+extern "C" NTSTATUS(NTAPI* __imp_RtlSetEnvironmentVar)(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T) __asm__(
+    "__imp__RtlSetEnvironmentVar@20");
+#endif
 
 static NTSTATUS NTAPI SetEnvironmentNoMemory(PVOID*, PCWSTR, SIZE_T, PCWSTR, SIZE_T)
 {
@@ -749,11 +760,16 @@ static void TestProcessNames(void)
 }
 
 /* The functions of msvcrt as MSVC calls them, past the redirection of <stdio.h> to __mingw_* */
-extern "C" int(__cdecl* __imp__snprintf)(char*, size_t, const char*, ...);
-extern "C" int(__cdecl* __imp__snwprintf)(wchar_t*, size_t, const wchar_t*, ...);
-extern "C" int(__cdecl* __imp_sscanf)(const char*, const char*, ...);
-extern "C" int(__cdecl* __imp_swscanf)(const wchar_t*, const wchar_t*, ...);
-extern "C" int(__cdecl* __imp_fscanf)(FILE*, const char*, ...);
+#ifdef _WIN64
+#define IMPORT_SLOT(Name)
+#else
+#define IMPORT_SLOT(Name) __asm__("__imp__" #Name)
+#endif
+extern "C" int(__cdecl* __imp__snprintf)(char*, size_t, const char*, ...) IMPORT_SLOT(_snprintf);
+extern "C" int(__cdecl* __imp__snwprintf)(wchar_t*, size_t, const wchar_t*, ...) IMPORT_SLOT(_snwprintf);
+extern "C" int(__cdecl* __imp_sscanf)(const char*, const char*, ...) IMPORT_SLOT(sscanf);
+extern "C" int(__cdecl* __imp_swscanf)(const wchar_t*, const wchar_t*, ...) IMPORT_SLOT(swscanf);
+extern "C" int(__cdecl* __imp_fscanf)(FILE*, const char*, ...) IMPORT_SLOT(fscanf);
 extern "C" int __cdecl __mingw_snprintf(char*, size_t, const char*, ...);
 extern "C" int __cdecl __mingw_sscanf(const char*, const char*, ...);
 extern "C" int __cdecl __mingw_swscanf(const wchar_t*, const wchar_t*, ...);
