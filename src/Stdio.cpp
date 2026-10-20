@@ -382,8 +382,9 @@ _NtCRT_ForEachStream(
 
 /*
  * Context: 1 for flush returning error count (fflush(NULL), output streams only), 0 for flush returning stream count
- * (_flushall, input buffers are discarded), and 2 when the process ends without exit: a lock that a terminated thread
- * held is never released and entering its critical section would end the process, that stream is left
+ * (_flushall, input buffers are discarded), and 2 while the process shuts down (it ends without exit): a lock that a
+ * terminated thread held is never released and entering its critical section would end the process, that stream is
+ * left
  */
 static
 int
@@ -419,9 +420,11 @@ _NtCRT_FlushCallback(
     return Ret;
 }
 
+/* The atexit function of the crt2.o of MinGW-w64 15 (safe_flush) calls fflush(NULL), when the process shuts down too */
 EXTERN_C int __cdecl _NtCRT_flushall_impl(BOOL FlushOnly)
 {
-    int Ret = _NtCRT_ForEachStream(_NtCRT_FlushCallback, FlushOnly);
+    int Shutdown = NtCurrentPeb()->Ldr->ShutdownInProgress ? 2 : 0;
+    int Ret = _NtCRT_ForEachStream(_NtCRT_FlushCallback, FlushOnly | Shutdown);
     return FlushOnly ? (Ret != 0 ? EOF : 0) : Ret;
 }
 

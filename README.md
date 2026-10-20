@@ -405,8 +405,9 @@ three names.
   flushes the streams again after the key destructors of libmingw32 (`__mingwthr_key_dtor`).
   `_exit`, `abort` and a fatal error skip that work, `TerminateProcess` too. The other threads were ended at any point
   by then: a stream whose lock, or the lock of whose fd, one of them held is not flushed (other I/O on that fd fails
-  with `EBUSY`), and an `atexit` function that takes the lock of such a stream, or waits for another thread, ends the
-  process there or hangs. NtCRT in a DLL does that work at the `DLL_PROCESS_DETACH` of the DLL, before its entry
+  with `EBUSY`), also by `fflush(NULL)` and `_flushall` (the crt2.o of MinGW-w64 15 calls `fflush(NULL)` in an
+  `atexit` function), and an `atexit` function that takes the lock of such a stream, or waits for another thread, ends
+  the process there or hangs. NtCRT in a DLL does that work at the `DLL_PROCESS_DETACH` of the DLL, before its entry
   point calls its `DllMain` and runs its `atexit` functions (a table of the DLL startup code of MinGW-w64): what they
   write is not flushed.
 - Cancellation is deferred, at `pthread_testcancel`, `pthread_join`, `pthread_cond_wait`, `pthread_cond_timedwait`,
