@@ -20,8 +20,8 @@ TARGET   := $(shell $(CXX) -dumpmachine)
 ifneq ($(filter i686-% i386-%,$(TARGET)),)
 X86      := 1
 # NtCRT itself has the 64-bit time_t of x64, the headers of msvcrt on x86 default to 32 bits for programs: the names
-# of msvcrt without a size (time, _stati64, ...) are the 32-bit ones there (NTCRT_ARCH_ALIAS), src/Time32.cpp has
-# the functions that take a 32-bit time
+# of msvcrt without a size (time, _stati64, ...) are the 32-bit ones there (NTCRT_ARCH_ALIAS), src/Time32.cpp and
+# src/PthreadTime32.cpp have the functions that take a 32-bit time
 CXXFLAGS += -D_TIME_BITS=64
 endif
 
