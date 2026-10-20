@@ -133,7 +133,7 @@ NTCRT_API int sem_wait(sem_t* sem)
     return SemWait(sem, NULL);
 }
 
-NTCRT_API int sem_timedwait(sem_t* sem, const struct timespec* t)
+NTCRT_API int _NtCRT_sem_timedwait(sem_t* sem, const struct timespec* t)
 {
     return SemWait(sem, t);
 }
@@ -199,7 +199,8 @@ NTCRT_IMPORT_ONLY(sem_init, sem_init);
 NTCRT_IMPORT_ONLY(sem_destroy, sem_destroy);
 NTCRT_IMPORT_ONLY(sem_trywait, sem_trywait);
 NTCRT_IMPORT_ONLY(sem_wait, sem_wait);
-NTCRT_IMPORT_ONLY(sem_timedwait, sem_timedwait);
+NTCRT_IMPORT(sem_timedwait, _NtCRT_sem_timedwait);
+NTCRT_IMPORT(sem_timedwait64, _NtCRT_sem_timedwait);
 NTCRT_IMPORT_ONLY(sem_post_multiple, sem_post_multiple);
 NTCRT_IMPORT_ONLY(sem_post, sem_post);
 NTCRT_IMPORT_ONLY(sem_getvalue, sem_getvalue);

@@ -214,7 +214,7 @@ NTCRT_API int __pthread_clock_nanosleep(clockid_t clock_id, int flags, const str
     return _NtCRT_clock_nanosleep(clock_id, flags, rqtp, rmtp);
 }
 
-NTCRT_API int pthread_delay_np(const struct timespec* interval)
+NTCRT_API int _NtCRT_pthread_delay_np(const struct timespec* interval)
 {
     return _NtCRT_nanosleep(interval, NULL) == 0 ? 0 : EINVAL;
 }
@@ -248,4 +248,10 @@ NTCRT_IMPORT(clock_getres, _NtCRT_clock_getres);
 NTCRT_IMPORT(clock_settime, _NtCRT_clock_settime);
 NTCRT_IMPORT(clock_nanosleep, _NtCRT_clock_nanosleep);
 NTCRT_IMPORT_ONLY(__pthread_clock_nanosleep, __pthread_clock_nanosleep);
-NTCRT_IMPORT_ONLY(pthread_delay_np, pthread_delay_np);
+NTCRT_IMPORT(pthread_delay_np, _NtCRT_pthread_delay_np);
+NTCRT_IMPORT(nanosleep64, _NtCRT_nanosleep);
+NTCRT_IMPORT(clock_gettime64, _NtCRT_clock_gettime);
+NTCRT_IMPORT(clock_getres64, _NtCRT_clock_getres);
+NTCRT_IMPORT(clock_settime64, _NtCRT_clock_settime);
+NTCRT_IMPORT(clock_nanosleep64, _NtCRT_clock_nanosleep);
+NTCRT_IMPORT(pthread_delay64_np, _NtCRT_pthread_delay_np);

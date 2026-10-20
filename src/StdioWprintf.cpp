@@ -89,6 +89,28 @@ EXTERN_C int __cdecl _NtCRT_swprintf(wchar_t* buffer, const wchar_t* format, ...
     return Ret;
 }
 
+/* swprintf and vswprintf that the headers of mingw-w64 declare, of C or of msvcrt, see NTCRT_SWPRINTF_ISO */
+#if NTCRT_SWPRINTF_ISO
+EXTERN_C int __cdecl _NtCRT_vswprintf_mingw(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
+{
+    return _NtCRT_FormatSwprintf(buffer, count, format, ap, NTCRT_PRINTF_LEGACY_WIDE);
+}
+
+EXTERN_C int __cdecl _NtCRT_swprintf_mingw(wchar_t* buffer, size_t count, const wchar_t* format, ...)
+{
+    va_list ap;
+    int Ret;
+
+    va_start(ap, format);
+    Ret = _NtCRT_vswprintf_mingw(buffer, count, format, ap);
+    va_end(ap);
+    return Ret;
+}
+#else
+EXTERN_C __typeof__(_NtCRT_vswprintf) _NtCRT_vswprintf_mingw __attribute__((alias("_NtCRT_vswprintf")));
+EXTERN_C __typeof__(_NtCRT_swprintf) _NtCRT_swprintf_mingw __attribute__((alias("_NtCRT_swprintf")));
+#endif
+
 EXTERN_C int __cdecl _NtCRT__vscwprintf(const wchar_t* format, va_list ap)
 {
     if (format == NULL)
@@ -174,8 +196,10 @@ NTCRT_IMPORT(_vsnwprintf, _NtCRT__vsnwprintf);
 NTCRT_IMPORT(_snwprintf, _NtCRT__snwprintf);
 NTCRT_IMPORT(snwprintf, _NtCRT__snwprintf);
 NTCRT_IMPORT(vsnwprintf, _NtCRT__vsnwprintf);
-NTCRT_IMPORT(vswprintf, _NtCRT_vswprintf);
-NTCRT_IMPORT(swprintf, _NtCRT_swprintf);
+NTCRT_IMPORT(vswprintf, _NtCRT_vswprintf_mingw);
+NTCRT_IMPORT(swprintf, _NtCRT_swprintf_mingw);
+NTCRT_IMPORT(__ms_vswprintf, _NtCRT_vswprintf_mingw);
+NTCRT_IMPORT(__ms_swprintf, _NtCRT_swprintf_mingw);
 NTCRT_IMPORT(_vswprintf, _NtCRT_vswprintf);
 NTCRT_IMPORT(_swprintf, _NtCRT_swprintf);
 NTCRT_IMPORT(_vscwprintf, _NtCRT__vscwprintf);

@@ -309,7 +309,9 @@ libstdc++ (`std::thread`, `std::mutex`, `std::condition_variable`, `std::shared_
 is not linked: the specs and `ntcrt.cfg` have no `-lpthread`, and the empty `libpthread.a` and `libwinpthread.a` of
 the build directory take its place for `-lpthread` and `-lwinpthread` (`-pthread` adds nothing). The kernel32
 functions winpthreads used (events, semaphores, `WaitForMultipleObjects`, ...) stay in `src/Kernel32.cpp` for other
-code.
+code. The headers of winpthreads of MinGW-w64 13 and later call the functions that take a `timespec` by names that
+end in 64 (`pthread_mutex_timedlock64`, `clock_gettime64`, ...), or in 32 for `_USE_32BIT_TIME_T`: libntcrt has all
+three names.
 
 - A mutex, condition variable, read-write lock, spin lock, barrier or semaphore is the word of its type, nothing is
   allocated and no kernel object created: a static initializer or 0 is a valid object and `pthread_*_destroy` only
@@ -560,6 +562,10 @@ Beside the table above:
 - `getenv_s` with a `NULL` name returns `EINVAL` as UCRT, msvcrt returns 0
 - `_vswprintf_l` takes a count after the buffer as the MinGW-w64 headers declare it, the export of msvcrt.dll has
   none (`buffer, format, locale, args`)
+- `swprintf` and `vswprintf` (and `__ms_swprintf`, `__mingw_swprintf`) are those of the MinGW-w64 headers NtCRT is
+  built with: from MinGW-w64 13 those of C, with the size of the buffer (-1 if the output does not fit), as
+  libmsvcrt.a of MinGW-w64 13 defines them; before 13 those of msvcrt.dll without a size. `_swprintf` and
+  `_vswprintf` are always those of msvcrt.dll.
 - `_strnicmp` takes any count, msvcrt returns `_NLSCMPERROR` for one above `INT_MAX`
 
 ### Differences from UCRT

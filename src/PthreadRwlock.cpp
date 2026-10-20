@@ -112,7 +112,7 @@ NTCRT_API int pthread_rwlock_rdlock(pthread_rwlock_t* l)
     return RwLock(l, false, NULL, false);
 }
 
-NTCRT_API int pthread_rwlock_timedrdlock(pthread_rwlock_t* l, const struct timespec* ts)
+NTCRT_API int _NtCRT_pthread_rwlock_timedrdlock(pthread_rwlock_t* l, const struct timespec* ts)
 {
     return RwLock(l, false, ts, false);
 }
@@ -127,7 +127,7 @@ NTCRT_API int pthread_rwlock_wrlock(pthread_rwlock_t* l)
     return RwLock(l, true, NULL, false);
 }
 
-NTCRT_API int pthread_rwlock_timedwrlock(pthread_rwlock_t* rwlock, const struct timespec* ts)
+NTCRT_API int _NtCRT_pthread_rwlock_timedwrlock(pthread_rwlock_t* rwlock, const struct timespec* ts)
 {
     return RwLock(rwlock, true, ts, false);
 }
@@ -207,10 +207,12 @@ NTCRT_API int pthread_rwlockattr_setpshared(pthread_rwlockattr_t* a, int s)
 NTCRT_IMPORT_ONLY(pthread_rwlock_init, pthread_rwlock_init);
 NTCRT_IMPORT_ONLY(pthread_rwlock_destroy, pthread_rwlock_destroy);
 NTCRT_IMPORT_ONLY(pthread_rwlock_rdlock, pthread_rwlock_rdlock);
-NTCRT_IMPORT_ONLY(pthread_rwlock_timedrdlock, pthread_rwlock_timedrdlock);
+NTCRT_IMPORT(pthread_rwlock_timedrdlock, _NtCRT_pthread_rwlock_timedrdlock);
+NTCRT_IMPORT(pthread_rwlock_timedrdlock64, _NtCRT_pthread_rwlock_timedrdlock);
 NTCRT_IMPORT_ONLY(pthread_rwlock_tryrdlock, pthread_rwlock_tryrdlock);
 NTCRT_IMPORT_ONLY(pthread_rwlock_wrlock, pthread_rwlock_wrlock);
-NTCRT_IMPORT_ONLY(pthread_rwlock_timedwrlock, pthread_rwlock_timedwrlock);
+NTCRT_IMPORT(pthread_rwlock_timedwrlock, _NtCRT_pthread_rwlock_timedwrlock);
+NTCRT_IMPORT(pthread_rwlock_timedwrlock64, _NtCRT_pthread_rwlock_timedwrlock);
 NTCRT_IMPORT_ONLY(pthread_rwlock_trywrlock, pthread_rwlock_trywrlock);
 NTCRT_IMPORT_ONLY(pthread_rwlock_unlock, pthread_rwlock_unlock);
 NTCRT_IMPORT_ONLY(pthread_rwlockattr_init, pthread_rwlockattr_init);

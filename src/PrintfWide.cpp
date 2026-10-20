@@ -13,6 +13,13 @@ EXTERN_C int _NtCRT_FormatLegacyW(wchar_t* Buffer, size_t Count, const wchar_t* 
     return _NtCRT_FormatBuffer(Buffer, Count, Format, ap, Options, TRUE);
 }
 
+EXTERN_C int _NtCRT_FormatSwprintf(wchar_t* Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options)
+{
+    int Ret = _NtCRT_FormatBuffer(Buffer, Count, Format, ap, Options, FALSE);
+
+    return Ret >= 0 && (size_t)Ret >= Count ? -1 : Ret;
+}
+
 /*
  * The whole output, formatted once: in *Buffer of Count characters, or in a buffer of NTCRT_HEAP that replaces *Buffer
  * and the caller frees, also on an error

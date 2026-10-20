@@ -201,6 +201,38 @@ extern "C" UINT _NtCRT_CodePage(void);
  * point, and CP_UTF8 for "C.UTF-8".
  */
 extern "C" UINT _NtCRT_CurrentCodePage(void);
+
+/* The locale information of msvcrt that _locale_t points to, which the headers of mingw-w64 13 no longer define */
+#ifndef _THREADLOCALEINFO
+#define _THREADLOCALEINFO
+typedef struct threadlocaleinfostruct
+{
+    int refcount;
+    unsigned int lc_codepage;
+    unsigned int lc_collate_cp;
+    unsigned long lc_handle[6];
+    LC_ID lc_id[6];
+    struct
+    {
+        char* locale;
+        wchar_t* wlocale;
+        int* refcount;
+        int* wrefcount;
+    } lc_category[6];
+    int lc_clike;
+    int mb_cur_max;
+    int* lconv_intl_refcount;
+    int* lconv_num_refcount;
+    int* lconv_mon_refcount;
+    struct lconv* lconv;
+    int* ctype1_refcount;
+    unsigned short* ctype1;
+    const unsigned short* pctype;
+    const unsigned char* pclmap;
+    const unsigned char* pcumap;
+    struct __lc_time_data* lc_time_curr;
+} threadlocinfo;
+#endif
 extern "C" UINT _NtCRT_LocaleCodePage(_locale_t Locale);
 /* Code page of narrow file names and other strings exchanged with the system: CP_UTF8 or the ANSI code page */
 extern "C" UINT _NtCRT_FileCodePage(void);
@@ -331,6 +363,13 @@ extern "C" int _NtCRT_FormatLegacyW(wchar_t* Buffer, size_t Count, const wchar_t
 extern "C" int _NtCRT_FormatAlloc(char** Result, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStream(FILE* Stream, const char* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatStreamW(FILE* Stream, const wchar_t* Format, va_list ap, ULONG Options);
+
+/*
+ * swprintf and vswprintf of C, which mingw-w64 13 and later declare (the name of msvcrt and those of __ms_ and
+ * __mingw_): the size of the buffer, -1 if the output does not fit. Before 13 they take no size, as msvcrt.
+ */
+#define NTCRT_SWPRINTF_ISO (__MINGW64_VERSION_MAJOR >= 13)
+extern "C" int _NtCRT_FormatSwprintf(wchar_t* Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
 extern "C" int _NtCRT_FormatGrowW(wchar_t** Buffer, size_t Count, const wchar_t* Format, va_list ap, ULONG Options);
 
 /* Streams of Stdio.cpp used by StdioPrintf.cpp, StdioScanf.cpp and StdioWscanf.cpp */

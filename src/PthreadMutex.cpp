@@ -167,7 +167,7 @@ NTCRT_API int pthread_mutex_lock(pthread_mutex_t* m)
     return MutexLock(m, NULL);
 }
 
-NTCRT_API int pthread_mutex_timedlock(pthread_mutex_t* m, const struct timespec* ts)
+NTCRT_API int _NtCRT_pthread_mutex_timedlock(pthread_mutex_t* m, const struct timespec* ts)
 {
     return MutexLock(m, ts);
 }
@@ -289,7 +289,8 @@ NTCRT_API int pthread_mutexattr_setprioceiling(pthread_mutexattr_t* a, int prio)
 NTCRT_IMPORT_ONLY(pthread_mutex_init, pthread_mutex_init);
 NTCRT_IMPORT_ONLY(pthread_mutex_destroy, pthread_mutex_destroy);
 NTCRT_IMPORT_ONLY(pthread_mutex_lock, pthread_mutex_lock);
-NTCRT_IMPORT_ONLY(pthread_mutex_timedlock, pthread_mutex_timedlock);
+NTCRT_IMPORT(pthread_mutex_timedlock, _NtCRT_pthread_mutex_timedlock);
+NTCRT_IMPORT(pthread_mutex_timedlock64, _NtCRT_pthread_mutex_timedlock);
 NTCRT_IMPORT_ONLY(pthread_mutex_trylock, pthread_mutex_trylock);
 NTCRT_IMPORT_ONLY(pthread_mutex_unlock, pthread_mutex_unlock);
 NTCRT_IMPORT_ONLY(pthread_mutexattr_init, pthread_mutexattr_init);

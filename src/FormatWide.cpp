@@ -18,11 +18,18 @@ NTCRT_API int __cdecl __wrap___mingw_vwprintf(const wchar_t* format, va_list ap)
     return _NtCRT_FormatStreamW(&_NtCRT_iob[1], format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
+#if NTCRT_SWPRINTF_ISO
+NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
+{
+    return _NtCRT_FormatSwprintf(buffer, count, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
+}
+#else
 /* swprintf of mingw-w64 without a size */
 NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, const wchar_t* format, va_list ap)
 {
     return _NtCRT_FormatStringW(buffer, SIZE_MAX, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
+#endif
 
 NTCRT_API int __cdecl __wrap___mingw_vsnwprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
 {
@@ -35,11 +42,19 @@ NTCRT_WRAP_VARIADIC(__wrap___mingw_fwprintf,
                     format,
                     (stream, format, ap))
 NTCRT_WRAP_VARIADIC(__wrap___mingw_wprintf, __wrap___mingw_vwprintf, (const wchar_t* format, ...), format, (format, ap))
+#if NTCRT_SWPRINTF_ISO
+NTCRT_WRAP_VARIADIC(__wrap___mingw_swprintf,
+                    __wrap___mingw_vswprintf,
+                    (wchar_t* buffer, size_t count, const wchar_t* format, ...),
+                    format,
+                    (buffer, count, format, ap))
+#else
 NTCRT_WRAP_VARIADIC(__wrap___mingw_swprintf,
                     __wrap___mingw_vswprintf,
                     (wchar_t* buffer, const wchar_t* format, ...),
                     format,
                     (buffer, format, ap))
+#endif
 NTCRT_WRAP_VARIADIC(__wrap___mingw_snwprintf,
                     __wrap___mingw_vsnwprintf,
                     (wchar_t* buffer, size_t count, const wchar_t* format, ...),
@@ -52,10 +67,10 @@ NTCRT_WRAP_VARIADIC(__wrap___mingw_snwprintf,
  */
 EXTERN_C int __cdecl __mingw_vfwprintf(FILE*, const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vfwprintf")));
 EXTERN_C int __cdecl __mingw_vwprintf(const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vwprintf")));
-EXTERN_C int __cdecl __mingw_vswprintf(wchar_t*, const wchar_t*, va_list) __attribute__((alias("__wrap___mingw_vswprintf")));
+EXTERN_C __typeof__(__wrap___mingw_vswprintf) __mingw_vswprintf __attribute__((alias("__wrap___mingw_vswprintf")));
 EXTERN_C int __cdecl __mingw_vsnwprintf(wchar_t*, size_t, const wchar_t*, va_list)
     __attribute__((alias("__wrap___mingw_vsnwprintf")));
 EXTERN_C int __cdecl __mingw_fwprintf(FILE*, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_fwprintf")));
 EXTERN_C int __cdecl __mingw_wprintf(const wchar_t*, ...) __attribute__((alias("__wrap___mingw_wprintf")));
-EXTERN_C int __cdecl __mingw_swprintf(wchar_t*, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_swprintf")));
+EXTERN_C __typeof__(__wrap___mingw_swprintf) __mingw_swprintf __attribute__((alias("__wrap___mingw_swprintf")));
 EXTERN_C int __cdecl __mingw_snwprintf(wchar_t*, size_t, const wchar_t*, ...) __attribute__((alias("__wrap___mingw_snwprintf")));

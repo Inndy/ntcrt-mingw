@@ -351,6 +351,8 @@ EXTERN_C char*** __cdecl _NtCRT___p___argv(void) { return &_NtCRT_argv; }
 EXTERN_C wchar_t*** __cdecl _NtCRT___p___wargv(void) { return &_NtCRT_wargv; }
 EXTERN_C char*** __cdecl _NtCRT___p__environ(void) { return &_NtCRT_environ; }
 EXTERN_C wchar_t*** __cdecl _NtCRT___p__wenviron(void) { return &_NtCRT_wenviron; }
+EXTERN_C char*** __cdecl _NtCRT___p___initenv(void) { return &_NtCRT_initenv; }
+EXTERN_C wchar_t*** __cdecl _NtCRT___p___winitenv(void) { return &_NtCRT_winitenv; }
 EXTERN_C char** __cdecl _NtCRT___p__acmdln(void) { return &_NtCRT_acmdln; }
 EXTERN_C wchar_t** __cdecl _NtCRT___p__wcmdln(void) { return &_NtCRT_wcmdln; }
 EXTERN_C char** __cdecl _NtCRT___p__pgmptr(void) { return &_NtCRT_pgmptr; }
@@ -589,6 +591,7 @@ _Exit:
     return Result;
 }
 
+/* atexit, and _crt_atexit of the startup code of mingw-w64 13 and later */
 EXTERN_C int __cdecl _NtCRT_atexit(_PVFV func)
 {
     return _NtCRT__onexit((_onexit_t)func) == NULL ? -1 : 0;
@@ -924,6 +927,8 @@ NTCRT_IMPORT(__p___argv, _NtCRT___p___argv);
 NTCRT_IMPORT(__p___wargv, _NtCRT___p___wargv);
 NTCRT_IMPORT(__p__environ, _NtCRT___p__environ);
 NTCRT_IMPORT(__p__wenviron, _NtCRT___p__wenviron);
+NTCRT_IMPORT(__p___initenv, _NtCRT___p___initenv);
+NTCRT_IMPORT(__p___winitenv, _NtCRT___p___winitenv);
 NTCRT_IMPORT(__p__acmdln, _NtCRT___p__acmdln);
 NTCRT_IMPORT(__p__wcmdln, _NtCRT___p__wcmdln);
 NTCRT_IMPORT(__p__pgmptr, _NtCRT___p__pgmptr);
@@ -936,6 +941,7 @@ NTCRT_IMPORT(_initterm, _NtCRT__initterm);
 NTCRT_IMPORT(_initterm_e, _NtCRT__initterm_e);
 NTCRT_IMPORT(_onexit, _NtCRT__onexit);
 NTCRT_IMPORT_ONLY(atexit, _NtCRT_atexit);
+NTCRT_IMPORT(_crt_atexit, _NtCRT_atexit);
 NTCRT_IMPORT(exit, _NtCRT_exit);
 NTCRT_IMPORT(_exit, _NtCRT__exit);
 NTCRT_IMPORT_ONLY(_Exit, _NtCRT__exit);

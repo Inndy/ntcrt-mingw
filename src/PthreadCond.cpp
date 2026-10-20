@@ -155,13 +155,14 @@ NTCRT_API int pthread_cond_wait(pthread_cond_t* cv, pthread_mutex_t* external_mu
     return CondWait(cv, external_mutex, NULL, false);
 }
 
-NTCRT_API int pthread_cond_timedwait(pthread_cond_t* cv, pthread_mutex_t* external_mutex, const struct timespec* t)
+NTCRT_API int _NtCRT_pthread_cond_timedwait(pthread_cond_t* cv, pthread_mutex_t* external_mutex,
+                                            const struct timespec* t)
 {
     return CondWait(cv, external_mutex, t, false);
 }
 
-NTCRT_API int pthread_cond_timedwait_relative_np(pthread_cond_t* cv, pthread_mutex_t* external_mutex,
-                                                 const struct timespec* t)
+NTCRT_API int _NtCRT_pthread_cond_timedwait_relative_np(pthread_cond_t* cv, pthread_mutex_t* external_mutex,
+                                                        const struct timespec* t)
 {
     return CondWait(cv, external_mutex, t, true);
 }
@@ -219,8 +220,10 @@ NTCRT_IMPORT_ONLY(pthread_cond_destroy, pthread_cond_destroy);
 NTCRT_IMPORT_ONLY(pthread_cond_signal, pthread_cond_signal);
 NTCRT_IMPORT_ONLY(pthread_cond_broadcast, pthread_cond_broadcast);
 NTCRT_IMPORT_ONLY(pthread_cond_wait, pthread_cond_wait);
-NTCRT_IMPORT_ONLY(pthread_cond_timedwait, pthread_cond_timedwait);
-NTCRT_IMPORT_ONLY(pthread_cond_timedwait_relative_np, pthread_cond_timedwait_relative_np);
+NTCRT_IMPORT(pthread_cond_timedwait, _NtCRT_pthread_cond_timedwait);
+NTCRT_IMPORT(pthread_cond_timedwait64, _NtCRT_pthread_cond_timedwait);
+NTCRT_IMPORT(pthread_cond_timedwait_relative_np, _NtCRT_pthread_cond_timedwait_relative_np);
+NTCRT_IMPORT(pthread_cond_timedwait64_relative_np, _NtCRT_pthread_cond_timedwait_relative_np);
 NTCRT_IMPORT_ONLY(pthread_condattr_init, pthread_condattr_init);
 NTCRT_IMPORT_ONLY(pthread_condattr_destroy, pthread_condattr_destroy);
 NTCRT_IMPORT_ONLY(pthread_condattr_getpshared, pthread_condattr_getpshared);
