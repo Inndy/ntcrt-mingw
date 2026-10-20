@@ -9,7 +9,7 @@ UINT
 WINAPI
 _CRT_GetACP(void)
 {
-    return NtCurrentPeb()->ActiveCodePage;
+    return _Inline_GetACP();
 }
 
 FORCEINLINE
@@ -17,7 +17,7 @@ UINT
 WINAPI
 _CRT_GetOEMCP(void)
 {
-    return NtCurrentPeb()->OemCodePage;
+    return _Inline_GetOEMCP();
 }
 
 FORCEINLINE
@@ -92,16 +92,17 @@ _CRT_GetCodePageTable(
         return ERROR_NOT_SUPPORTED;
     }
 
+    /* The .nls data that the process has mapped (Windows 7, not Windows 11 24H2) */
     Peb = NtCurrentPeb();
-    if (CodePage == Peb->ActiveCodePage && Peb->AnsiCodePageData != NULL)
+    if (Peb->AnsiCodePageData != NULL && CodePage == _CRT_GetACP())
     {
-        *CodePageTable = *Peb->AnsiCodePageData;
+        RtlInitCodePageTable((PUSHORT)Peb->AnsiCodePageData, CodePageTable);
         return ERROR_SUCCESS;
     }
 
-    if (CodePage == Peb->OemCodePage && Peb->OemCodePageData != NULL)
+    if (Peb->OemCodePageData != NULL && CodePage == _CRT_GetOEMCP())
     {
-        *CodePageTable = *Peb->OemCodePageData;
+        RtlInitCodePageTable((PUSHORT)Peb->OemCodePageData, CodePageTable);
         return ERROR_SUCCESS;
     }
 
@@ -127,10 +128,10 @@ _CRT_ResolveCodePage(
 
     if (CodePage == CP_ACP)
     {
-        *ResolvedCodePage = NtCurrentPeb()->ActiveCodePage;
+        *ResolvedCodePage = _CRT_GetACP();
     } else if (CodePage == CP_OEMCP)
     {
-        *ResolvedCodePage = NtCurrentPeb()->OemCodePage;
+        *ResolvedCodePage = _CRT_GetOEMCP();
     } else if (CodePage == CP_MACCP)
     {
         *ResolvedCodePage = (_CRT_GetLocaleDefaultCodePage(LOCALE_NEUTRAL, NULL, &LocaleCodePage) == ERROR_SUCCESS &&
@@ -756,8 +757,8 @@ _CRT_IsValidCodePage(
         return FALSE;
     }
 
-    if (ResolvedCodePage == NtCurrentPeb()->ActiveCodePage ||
-        ResolvedCodePage == NtCurrentPeb()->OemCodePage ||
+    if (ResolvedCodePage == _CRT_GetACP() ||
+        ResolvedCodePage == _CRT_GetOEMCP() ||
         ResolvedCodePage == CP_UTF7 ||
         ResolvedCodePage == CP_UTF8)
     {

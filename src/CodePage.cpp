@@ -11,7 +11,7 @@ static volatile LONG g_LocaleScopes;
 
 EXTERN_C UINT _NtCRT_CodePage(void)
 {
-    return NtCurrentPeb()->ActiveCodePage;
+    return _Inline_GetACP();
 }
 
 EXTERN_C UINT _NtCRT_CurrentCodePage(void)

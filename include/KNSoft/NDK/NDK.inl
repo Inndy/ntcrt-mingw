@@ -1393,6 +1393,30 @@ _Inline_SetLastError(
     _Inline_RtlSetLastWin32Error(dwErrCode);
 }
 
+/*
+ * The code pages of the process: that of the header of its .nls data (PEB::AnsiCodePageData, OemCodePageData), else
+ * PEB::ActiveCodePage, OemCodePage, which Windows 10 added (Windows 11 24H2 maps no .nls data for them)
+ */
+_NDK_INLINE
+UINT
+WINAPI
+_Inline_GetACP(VOID)
+{
+    PPEB Peb = NtCurrentPeb();
+
+    return Peb->AnsiCodePageData != NULL ? ((const USHORT*)Peb->AnsiCodePageData)[1] : Peb->ActiveCodePage;
+}
+
+_NDK_INLINE
+UINT
+WINAPI
+_Inline_GetOEMCP(VOID)
+{
+    PPEB Peb = NtCurrentPeb();
+
+    return Peb->OemCodePageData != NULL ? ((const USHORT*)Peb->OemCodePageData)[1] : Peb->OemCodePage;
+}
+
 _NDK_INLINE
 LCID
 WINAPI

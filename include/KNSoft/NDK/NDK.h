@@ -355,6 +355,10 @@ typedef struct _PEB
     PVOID ReadOnlySharedMemoryBase;
     PVOID SharedData;
     PVOID* ReadOnlyStaticServerData;
+    /*
+     * Not CPTABLEINFO: the data of the .nls file of the code page (its USHORT[1] is the code page), which
+     * RtlInitCodePageTable takes. NULL on Windows 11 24H2.
+     */
     PCPTABLEINFO AnsiCodePageData;
     PCPTABLEINFO OemCodePageData;
     PNLSTABLEINFO UnicodeCaseTableData;
@@ -401,8 +405,8 @@ typedef struct _PEB
     PVOID ChpeV2ProcessInfo;
     ULONG AppModelFeatureState;
     ULONG SpareUlongs[2];
-    USHORT ActiveCodePage;
-    USHORT OemCodePage;
+    USHORT ActiveCodePage; /* Windows 10 and later, another member before (Windows 7 reads 0) */
+    USHORT OemCodePage;    /* Windows 10 and later */
     USHORT UseCaseMapping;
     USHORT UnusedNlsField;
 } PEB, *PPEB;

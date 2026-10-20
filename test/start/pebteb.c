@@ -89,8 +89,14 @@ int main(void)
     CHECK(Peb->OSMajorVersion >= 6 && Peb->OSBuildNumber >= 7600);
     CHECK(Peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI);
     CHECK(ProcessIdToSessionId(GetCurrentProcessId(), &Session) && Peb->SessionId == Session);
-    CHECK(Peb->ActiveCodePage == GetACP());
-    CHECK(Peb->OemCodePage == GetOEMCP());
+    /* The code pages: in the header of the .nls data when there is one, in the PEB since Windows 10 */
+    if (Peb->OSMajorVersion >= 10)
+    {
+        CHECK(Peb->ActiveCodePage == GetACP());
+        CHECK(Peb->OemCodePage == GetOEMCP());
+    }
+    CHECK(Peb->AnsiCodePageData == NULL || ((PUSHORT)Peb->AnsiCodePageData)[1] == GetACP());
+    CHECK(Peb->OemCodePageData == NULL || ((PUSHORT)Peb->OemCodePageData)[1] == GetOEMCP());
 
     if (Failed)
         return 1;
