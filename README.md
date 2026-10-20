@@ -1,7 +1,10 @@
 # ntcrt-mingw
 
 A C runtime for MinGW-w64 (x64, GCC or clang) that imports `ntdll.dll` only. C and C++ programs link the msvcrt
-functions from this library instead of `msvcrt.dll` and `kernel32.dll`.
+functions from this library instead of `msvcrt.dll` and `kernel32.dll`. A program links `kernel32.dll` only for the
+Win32 functions it calls that NtCRT does not have (`objdump -p hello.exe` lists them under `DLL Name: KERNEL32.dll`);
+with `-ntcrt-strict` (GCC) or `--config=build-llvm/ntcrt-strict.cfg` (clang) kernel32 is not linked and such a call
+fails to link.
 
 ```sh
 make            # build/libntcrt.a, the support libraries and build/ntcrt.specs

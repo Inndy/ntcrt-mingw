@@ -43,14 +43,16 @@ LLVM_FLAGS := --target=x86_64-w64-mingw32 --sysroot=$(GCC_ROOT) -stdlib=libstdc+
               -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -femulated-tls
 LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
 LIB_AS   := $(LLVM_PREFIX)clang --target=x86_64-w64-mingw32
-NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt.cfg
-NTCRT_CXX := $(LLVM_PREFIX)clang++ --config=$(BUILD)/ntcrt.cfg
+NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt-strict.cfg
+NTCRT_CXX := $(LLVM_PREFIX)clang++ --config=$(BUILD)/ntcrt-strict.cfg
+KERNEL32_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt.cfg
 DRIVER   := $(BUILD)/ntcrt.cfg
 else
 LIB_CXX  := $(CXX)
 LIB_AS   := $(CXX)
-NTCRT_CC := $(CC) -specs=$(BUILD)/ntcrt.specs
-NTCRT_CXX := $(CXX) -specs=$(BUILD)/ntcrt.specs
+NTCRT_CC := $(CC) -specs=$(BUILD)/ntcrt.specs -ntcrt-strict
+NTCRT_CXX := $(CXX) -specs=$(BUILD)/ntcrt.specs -ntcrt-strict
+KERNEL32_CC := $(CC) -specs=$(BUILD)/ntcrt.specs
 DRIVER   := $(BUILD)/ntcrt.specs
 endif
 
@@ -139,10 +141,12 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and _matherr
 # of libmingw32, which would link the printf family into every program, and emutls of libgcc. libntcrt has the
 # pthread functions, winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
+# kernel32 follows the group: it gives only the functions a program calls that NtCRT does not have, -ntcrt-strict
+# leaves it out.
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
 	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
-	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group\n\n' >> $@
+	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group %s\n\n' '%{!ntcrt-strict:-lkernel32}' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
 # The same for clang, the options prefixed with $ are for linking and follow the inputs. clang splits the file
@@ -151,11 +155,15 @@ $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 # objects built with -ffunction-sections by clang, which makes their .pdata associative. lld resolves a symbol to
 # the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for the functions it
 # replaces, without --wrap (with it lld would load the members of libmingwex and every object of a __wrap_
-# function). The math functions both libmingwex and ntdll define are of libmingwex.
+# function). The math functions both libmingwex and ntdll define are of libmingwex. ntcrt.cfg adds kernel32 after
+# them to ntcrt-strict.cfg.
 NTCRT_LINK := -Wl,--gc-sections \
               $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
-$(BUILD)/ntcrt.cfg: Makefile | $(BUILD)
+$(BUILD)/ntcrt.cfg: $(BUILD)/ntcrt-strict.cfg
+	printf '@ntcrt-strict.cfg\n$$-lkernel32\n' > $@
+
+$(BUILD)/ntcrt-strict.cfg: Makefile | $(BUILD)
 	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs > $@
 	printf '"%s"\n' "-isystem$(CURDIR)/include" >> $@
 	printf '"%s"\n' "-L$(CURDIR)/$(BUILD)" >> $@
@@ -345,10 +353,17 @@ $(BUILD)/start/argv.exe: test/start/argv.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
 
+# Without -ntcrt-strict, the functions it imports from kernel32
+$(BUILD)/start/kernel32.exe: test/start/kernel32.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(KERNEL32_CC) -O2 -static -o $@ $<
+
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
-            $(BUILD)/start/argv.exe
+            $(BUILD)/start/argv.exe $(BUILD)/start/kernel32.exe
 	cd $(BUILD)/start && ./reloc.exe
 	$(BUILD)/start/argv.exe
+	$(BUILD)/start/kernel32.exe | grep -q '^kernel32: ok$$'
+	test "$$(objdump -p $(BUILD)/start/kernel32.exe | awk '/DLL Name/ { k = tolower($$3) == "kernel32.dll"; next } k && /<none>/ { print $$NF }')" = GetSystemPowerStatus
 	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'
 	@echo "start: ok"
