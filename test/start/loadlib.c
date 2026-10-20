@@ -70,7 +70,10 @@ int main(void)
     __imp_LdrLoadDll = LoadDll;
 
     /* The flags of Windows 8 and later */
-    CHECK(LoadLibraryW(L"version.dll") == NULL && g_Flags);
+    if (Major > 6 || (Major == 6 && Minor >= 2))
+    {
+        CHECK(LoadLibraryW(L"version.dll") == NULL && g_Flags);
+    }
 
     Peb->OSMajorVersion = 6;
     Peb->OSMinorVersion = 1;
