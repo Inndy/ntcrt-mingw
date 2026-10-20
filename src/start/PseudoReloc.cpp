@@ -185,15 +185,17 @@ _NtCRT_DoPseudoReloc(
         case 32:
             Data = *(int*)Target;
             break;
+#ifdef _WIN64
         case 64:
             Data = *(ptrdiff_t*)Target;
             break;
+#endif
         default:
             _NtCRT_RelocFail("  Unknown pseudo relocation bit size ", Bits);
         }
         Data -= (ptrdiff_t)(ImageBase + r->Sym);
         Data += Import;
-        if (Bits < 64)
+        if (Bits < 8 * sizeof(ptrdiff_t))
         {
             ptrdiff_t MaxUnsigned = ((ptrdiff_t)1 << Bits) - 1;
             ptrdiff_t MinSigned = (ptrdiff_t)(~(size_t)0 << (Bits - 1));
