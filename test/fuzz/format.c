@@ -142,6 +142,8 @@ typedef struct
 {
     char Format[256];
     uint64_t Slots[16];
+    uint64_t Args[16]; /* the arguments as a call passes them, ArgsSize bytes */
+    int ArgsSize;
     int Count;
     FLOAT_SPEC Floats[4];
     int FloatCount;
@@ -152,9 +154,25 @@ static const char* const g_StringsUtf8[] = { "caf\xc3\xa9", "\xe4\xb8\xad\xe6\x9
 static const wchar_t* const g_Wide[] = { L"", L"w", L"wide str", L"0123456789ABCDEFGHIJ" };
 static const wchar_t* const g_WideUtf8[] = { L"caf\xe9", L"\x4e2d\x6587", L"\xd83d\xde00!", L"\x00a0\x00ff" };
 
-static void add_slot(PRINTF_CASE* c, uint64_t v)
+/* An argument of Size bytes, 8 on x64 whatever its size */
+static void add_slot(PRINTF_CASE* c, uint64_t v, size_t Size)
 {
+#ifdef _WIN64
+    Size = 8;
+#endif
     c->Slots[c->Count++] = v;
+    memcpy((char*)c->Args + c->ArgsSize, &v, Size);
+    c->ArgsSize += (int)Size;
+}
+
+/* The size of an integer argument of Length */
+static size_t int_size(const char* Length)
+{
+    if (strcmp(Length, "ll") == 0 || strcmp(Length, "j") == 0 || strcmp(Length, "I64") == 0)
+        return 8;
+    if (strcmp(Length, "z") == 0 || strcmp(Length, "t") == 0)
+        return sizeof(size_t);
+    return sizeof(int);
 }
 
 static uint64_t gen_int(void)
@@ -295,18 +313,18 @@ static void gen_spec(PRINTF_CASE* c, int Wide)
     sprintf(f, "%%%s%s%s%s%c", Flags, Width, Precision, Length, Conv);
 
     if (strcmp(Width, "*") == 0)
-        add_slot(c, (uint64_t)(int64_t)((int)rnd(61) - 30));
+        add_slot(c, (uint64_t)(int64_t)((int)rnd(61) - 30), sizeof(int));
     if (strcmp(Precision, ".*") == 0)
-        add_slot(c, (uint64_t)(int64_t)((int)rnd(40) - 5));
+        add_slot(c, (uint64_t)(int64_t)((int)rnd(40) - 5), sizeof(int));
     if (Kind <= 3)
     {
-        add_slot(c, gen_int());
+        add_slot(c, gen_int(), int_size(Length));
     } else if (Kind <= 6)
     {
         FLOAT_SPEC* s = &c->Floats[c->FloatCount++];
         uint64_t Bits;
         memcpy(&Bits, &d, 8);
-        add_slot(c, Bits);
+        add_slot(c, Bits, sizeof(double));
         s->Conv = Conv;
         s->Value = d;
         s->Precision = Precision[0] == '\0' ? -1 : Precision[1] == '*' ? (int)c->Slots[c->Count - 2] : atoi(Precision + 1);
@@ -316,18 +334,19 @@ static void gen_spec(PRINTF_CASE* c, int Wide)
         if (Kind == 7)
         {
             if (WideArg)
-                add_slot(c, (uintptr_t)(g_Utf8 && rnd(2) ? g_WideUtf8[rnd(4)] : g_Wide[rnd(4)]));
+                add_slot(c, (uintptr_t)(g_Utf8 && rnd(2) ? g_WideUtf8[rnd(4)] : g_Wide[rnd(4)]), sizeof(void*));
             else
-                add_slot(c, (uintptr_t)(g_Utf8 && rnd(2) ? g_StringsUtf8[rnd(3)] : g_Strings[rnd(6)]));
+                add_slot(c, (uintptr_t)(g_Utf8 && rnd(2) ? g_StringsUtf8[rnd(3)] : g_Strings[rnd(6)]), sizeof(void*));
         } else
         {
             /* A narrow character is an int converted to unsigned char */
             /* A wide printf of mingw-w64 writes nothing for the null character (see README) */
             if (WideArg)
-                add_slot(c, g_Utf8 && rnd(2) ? L"\xe9\x4e2d\x3000"[rnd(3)] : (wchar_t)(0x20 + rnd(0x5F)));
+                add_slot(c, g_Utf8 && rnd(2) ? L"\xe9\x4e2d\x3000"[rnd(3)] : (wchar_t)(0x20 + rnd(0x5F)), sizeof(int));
             else
                 add_slot(c, rnd(8) == 0 ? 0x100 * (1 + rnd(0x40)) + 0x41 * (Wide != 0 || rnd(2))
-                                        : 0x20 + rnd(0x5F));
+                                        : 0x20 + rnd(0x5F),
+                         sizeof(int));
         }
     }
 }
@@ -339,6 +358,7 @@ static void gen_printf(PRINTF_CASE* c, int Wide)
 
     c->Format[0] = '\0';
     c->Count = 0;
+    c->ArgsSize = 0;
     c->FloatCount = 0;
     for (int i = 0; i < n; i++)
     {
@@ -405,9 +425,9 @@ static void check_vsnprintf(const char* What, int (*Fn)(char*, size_t, const cha
     memset(Want, 0xCC, sizeof(Want));
     errno = 0;
     *RefErrno() = 0;
-    g = Fn(Got, Size, c->Format, (va_list)c->Slots);
+    g = Fn(Got, Size, c->Format, (va_list)c->Args);
     ge = errno;
-    w = RefVsprintf(Options, Want, Size, c->Format, NULL, (va_list)c->Slots);
+    w = RefVsprintf(Options, Want, Size, c->Format, NULL, (va_list)c->Args);
     we = *RefErrno();
     g_Checks++;
     if (g < 0 && w < 0)
@@ -449,12 +469,12 @@ static void check_vsnwprintf(const char* What, const PRINTF_CASE* c, int Legacy)
     memset(Want, 0xCC, sizeof(Want));
     errno = 0;
     *RefErrno() = 0;
-    g = Legacy ? _vsnwprintf(Got, Size, Format, (va_list)c->Slots)
-               : __mingw_vsnwprintf(Got, Size, Format, (va_list)c->Slots);
+    g = Legacy ? _vsnwprintf(Got, Size, Format, (va_list)c->Args)
+               : __mingw_vsnwprintf(Got, Size, Format, (va_list)c->Args);
     ge = errno;
     w = RefVswprintf(Legacy ? PRINTF_LEGACY_NULL_TERMINATION | PRINTF_LEGACY_WIDE_SPECIFIERS
                             : PRINTF_STANDARD_SNPRINTF,
-                     Want, Size, Format, NULL, (va_list)c->Slots);
+                     Want, Size, Format, NULL, (va_list)c->Args);
     we = *RefErrno();
     g_Checks++;
     if (g < 0 && w < 0)
@@ -801,7 +821,7 @@ typedef struct
 {
     char Format[1024];
     char Input[1024];
-    uint64_t Slots[16];
+    uintptr_t Slots[16];
     int Size[16]; /* bytes stored through Slots[i], 0 for none */
     int Float[16];
     int WideOut[16]; /* wchar_t of a narrow string conversion */
@@ -1001,7 +1021,11 @@ static void gen_scanf(SCANF_CASE* c, unsigned char (*Store)[64])
 }
 
 /* The vswscanf of msvcrt, %s, %c and %[ are wide */
+#ifdef _WIN64
 extern int(__cdecl* __imp_vswscanf)(const wchar_t*, const wchar_t*, va_list);
+#else
+extern int(__cdecl* __imp_vswscanf)(const wchar_t*, const wchar_t*, va_list) __asm__("__imp__vswscanf");
+#endif
 
 static void compare_scanf(const char* What, const SCANF_CASE* c, int g, int w, unsigned char (*Got)[64],
                           unsigned char (*Want)[64], int Narrow)

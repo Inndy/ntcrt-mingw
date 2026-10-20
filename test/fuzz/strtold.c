@@ -167,11 +167,20 @@ static void gen_input(char* s)
     }
 }
 
+/*
+ * A NaN by its bits: gdtoa of MinGW-w64 15 on x86 clears the integer bit of a NaN with a payload, a pseudo-NaN that
+ * isnan of the x87 does not take
+ */
+static int is_nan(LDBL_BITS b)
+{
+    return (b.SignExp & 0x7FFF) == 0x7FFF && (b.Mant << 1) != 0;
+}
+
 static int same(long double a, long double b)
 {
     LDBL_BITS x = bits_of(a), y = bits_of(b);
 
-    if (isnan(a) && isnan(b))
+    if (is_nan(x) && is_nan(y))
         return 1;
     return x.Mant == y.Mant && x.SignExp == y.SignExp;
 }
