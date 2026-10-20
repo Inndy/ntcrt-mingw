@@ -619,6 +619,8 @@ Where NtCRT differs on purpose (UCRT behavior in parentheses):
   character above U+FFFF)
 - `_pctype` in "C.UTF-8" has the "C" classes and `_LEADBYTE` (UCRT adds `C1_DEFINED` to every class)
 - `_atodbl` returns `_UNDERFLOW` for a denormal as msvcrt (0)
+- A name that is invalid for Win32 (`a<b`, `a|b`) is `EINVAL` for `_stat` too, as for `_open` and `fopen` in
+  both (`ENOENT`, as msvcrt): an invalid name is not a missing file
 
 ## Origin and license
 
