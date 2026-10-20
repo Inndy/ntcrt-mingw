@@ -166,9 +166,17 @@ int wmain(int argc, wchar_t** argv)
 
     if (!CreateProcessW(NULL, Line, NULL, NULL, TRUE, 0, NULL, NULL, &Startup, &Process))
     {
+        DWORD Code = GetLastError();
+        const wchar_t* Dir = Clang ? NTCRT_LLVM_DIR : NTCRT_GCC_DIR;
         wchar_t Error[16];
 
-        _ultow(GetLastError(), Error, 10);
+        /* The libraries were built for the compiler in Dir, another one may not link them */
+        if (*Dir != L'\0' && GetFileAttributesW(Dir) == INVALID_FILE_ATTRIBUTES)
+        {
+            Fail(Dir, L" is gone: install NtCRT again with the compiler that replaced it");
+            return 1;
+        }
+        _ultow(Code, Error, 10);
         Fail(L"cannot run ", Line);
         Fail(L"error ", Error);
         return 1;
