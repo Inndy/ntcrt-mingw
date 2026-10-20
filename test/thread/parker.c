@@ -3,9 +3,10 @@
 
 extern long _NtCRT_ParkerMode;
 
-static void __cdecl ParkerEvent(void)
+static int __cdecl ParkerEvent(void)
 {
     _NtCRT_ParkerMode = 2; /* NTCRT_PARKER_EVENT */
+    return 0;
 }
 
-__attribute__((section(".CRT$XIB"), used)) static void(__cdecl* const ParkerEventPtr)(void) = ParkerEvent;
+__attribute__((section(".CRT$XIB"), used)) static int(__cdecl* const ParkerEventPtr)(void) = ParkerEvent;

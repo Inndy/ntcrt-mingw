@@ -337,11 +337,12 @@ EXTERN_C void _NtCRT_GetMbcInfo(NTCRT_MBCINFO* Info, BOOL Current)
 }
 
 /* msvcrt starts with the ANSI code page */
-static void __cdecl _NtCRT_InitMbcs(void)
+static int __cdecl _NtCRT_InitMbcs(void)
 {
     _NtCRT__setmbcp(_MB_CP_ANSI);
+    return 0;
 }
-extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_InitMbcsPtr)(void) = _NtCRT_InitMbcs;
+extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_InitMbcsPtr)(void) = _NtCRT_InitMbcs;
 
 #pragma endregion
 

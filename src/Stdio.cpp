@@ -439,14 +439,15 @@ EXTERN_C void _NtCRT_FlushAll(bool Terminating)
 }
 
 static
-void
+int
 __cdecl
 _NtCRT_InitFlushAtExit(void)
 {
     _NtCRT_FlushAllAtExit = _NtCRT_FlushAll;
+    return 0;
 }
 
-extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_InitFlushAtExitPtr)(void) =
+extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_InitFlushAtExitPtr)(void) =
     _NtCRT_InitFlushAtExit;
 
 EXTERN_C FILE* __cdecl _NtCRT___iob_func(void)

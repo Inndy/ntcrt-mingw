@@ -130,15 +130,16 @@ static const volatile void* volatile* WaitSlot(void)
  * Exit work of the threads: the keys, then ThreadExit. A thread that has a pthread_t may be cancelled. Set at startup
  * by a program that links this, before any thread can get a pthread_t in the routine of a once.
  */
-static void __cdecl ThreadExitHook(void)
+static int __cdecl ThreadExitHook(void)
 {
     _NtCRT_PthreadExit = ThreadExit;
     _NtCRT_ThreadExit = _NtCRT_KeyExit;
     _NtCRT_CleanupList = CleanupList;
     _NtCRT_DelayHook = _NtCRT_Delay;
     _NtCRT_WaitSlot = WaitSlot;
+    return 0;
 }
-extern "C" __attribute__((section(".CRT$XIC"), used)) void(__cdecl* const _NtCRT_ThreadExitHookPtr)(void) =
+extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_ThreadExitHookPtr)(void) =
     ThreadExitHook;
 
 static PNTCRT_PTHREAD CurrentThread(void)

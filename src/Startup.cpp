@@ -878,12 +878,16 @@ EXTERN_C int __cdecl _NtCRT_InitRuntime(void)
     return 0;
 }
 
-/* Run the initialization early, before C++ constructors of user code can use stdio */
-static void __cdecl _NtCRT_InitRuntimeEntry(void)
+/*
+ * Run the initialization early, before C++ constructors of user code can use stdio. The C initializers (.CRT$XI*)
+ * are run by _initterm_e: they return 0, else the startup fails.
+ */
+static int __cdecl _NtCRT_InitRuntimeEntry(void)
 {
     _NtCRT_InitRuntime();
+    return 0;
 }
-extern "C" __attribute__((section(".CRT$XIB"), used)) void(__cdecl* const _NtCRT_InitRuntimeEntryPtr)(void) =
+extern "C" __attribute__((section(".CRT$XIB"), used)) int(__cdecl* const _NtCRT_InitRuntimeEntryPtr)(void) =
     _NtCRT_InitRuntimeEntry;
 
 NTCRT_IMPORT(_errno, _NtCRT_errno);
