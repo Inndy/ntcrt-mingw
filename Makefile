@@ -142,11 +142,21 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
 # of libmingw32, which would link the printf family into every program, and emutls of libgcc. libntcrt has the
 # pthread functions, winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
 # kernel32 follows the group: it gives only the functions a program calls that NtCRT does not have, -ntcrt-strict
-# leaves it out.
+# leaves it out. -Bstatic links libstdc++ and the others statically without -static. The specs of an installation
+# (install) have no paths, its drivers pass them.
+SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll \
+                --end-group %{!ntcrt-strict:-lkernel32}
+
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
-	printf '*link:\n+ -L%s %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
-	printf '*libgcc:\n--start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group %s\n\n' '%{!ntcrt-strict:-lkernel32}' >> $@
+	printf '*link:\n+ -L%s -Bstatic %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
+	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@
+	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
+
+$(BUILD)/install/ntcrt.specs: Makefile
+	mkdir -p $(@D)
+	printf '*link:\n+ -Bstatic %s\n\n' "$(WRAPS)" > $@
+	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
 # The same for clang, the options prefixed with $ are for linking and follow the inputs. clang splits the file
@@ -156,17 +166,23 @@ $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 # the first library that defines it, wherever the reference is: libntcrt precedes libmingwex for the functions it
 # replaces, without --wrap (with it lld would load the members of libmingwex and every object of a __wrap_
 # function). The math functions both libmingwex and ntdll define are of libmingwex. ntcrt.cfg adds kernel32 after
-# them to ntcrt-strict.cfg.
+# them to ntcrt-strict.cfg. Those of an installation find include/ and the libraries relative to themselves.
 NTCRT_LINK := -Wl,--gc-sections \
               $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
-$(BUILD)/ntcrt.cfg: $(BUILD)/ntcrt-strict.cfg
+$(BUILD)/ntcrt.cfg $(BUILD)/install/ntcrt.cfg: %/ntcrt.cfg: %/ntcrt-strict.cfg
 	printf '@ntcrt-strict.cfg\n$$-lkernel32\n' > $@
 
 $(BUILD)/ntcrt-strict.cfg: Makefile | $(BUILD)
-	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs > $@
+	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs -static > $@
 	printf '"%s"\n' "-isystem$(CURDIR)/include" >> $@
 	printf '"%s"\n' "-L$(CURDIR)/$(BUILD)" >> $@
+	printf '$$%s\n' $(NTCRT_LINK) >> $@
+
+$(BUILD)/install/ntcrt-strict.cfg: Makefile
+	mkdir -p $(@D)
+	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs -static > $@
+	printf '"%s"\n' "-isystem<CFGDIR>/../../include" "-L<CFGDIR>" >> $@
 	printf '$$%s\n' $(NTCRT_LINK) >> $@
 
 TEST_SRCS := $(wildcard test/upstream/*.cpp)
@@ -431,7 +447,7 @@ $(PTHREAD)/src.stamp: test/pthread/fetch.sh
 test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	set -f; NTCRT_CC="$(NTCRT_CC)$(if $(PARKER_OBJ), $(CURDIR)/$(PARKER_OBJ))" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
 
-test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start
+test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start test-install
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -449,8 +465,54 @@ size: $(LIBS) $(DRIVER)
 compare: $(LIBS) $(DRIVER)
 	BUILD=$(BUILD) NTCRT_CC="$(NTCRT_CC)" sh test/compare/run.sh
 
+# make install PREFIX=<dir>: include/ into <dir>/include, the libraries and the specs into <dir>/lib/gcc (with LLVM=
+# the configuration files of clang into <dir>/lib/clang) and the drivers x86_64-w64-ntcrt-mingw32-gcc, g++, cc, c++
+# (clang, clang++) into <dir>/bin, which run the compiler of this build with the files relative to themselves (see
+# tools/driver.c). A GCC and an LLVM build install into the same <dir>.
+ifdef LLVM
+INSTALL_LIB := lib/clang
+INSTALL_FILES := $(BUILD)/install/ntcrt.cfg $(BUILD)/install/ntcrt-strict.cfg
+INSTALL_TOOLS := clang clang++
+DRIVER_DIRS = -DNTCRT_LLVM_DIR='L"$(if $(LLVM_PREFIX),$(shell cygpath -m $(LLVM_PREFIX))/)"'
+else
+INSTALL_LIB := lib/gcc
+INSTALL_FILES := $(BUILD)/install/ntcrt.specs
+INSTALL_TOOLS := gcc g++ cc c++
+DRIVER_DIRS = -DNTCRT_GCC_DIR='L"$(dir $(shell cygpath -m $$($(CC) -print-libgcc-file-name)))../../../../bin/"'
+endif
+
+$(BUILD)/install/driver.exe: tools/driver.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(KERNEL32_CC) -O2 -s -static -municode $(DRIVER_DIRS) -o $@ $<
+
+install: $(LIBS) $(INSTALL_FILES) $(BUILD)/install/driver.exe
+	test -n "$(PREFIX)"
+	mkdir -p "$(PREFIX)/bin" "$(PREFIX)/$(INSTALL_LIB)" "$(PREFIX)/include"
+	cp -r include/. "$(PREFIX)/include"
+	cp $(LIBS) $(INSTALL_FILES) "$(PREFIX)/$(INSTALL_LIB)"
+	for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(PREFIX)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
+
+# An installation in a directory with a space: C and C++ by the drivers without -static, an argument with quotes
+# and spaces, -ntcrt-strict
+INSTALL_TEST := $(BUILD)/install test
+
+test-install:
+	rm -rf "$(INSTALL_TEST)"
+	$(MAKE) install PREFIX="$(INSTALL_TEST)"
+	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(firstword $(INSTALL_TOOLS)).exe" -O2 '-DTEXT="a \"b\" c\\"' \
+	    -o "$(INSTALL_TEST)/hello.exe" test/start/install.c
+	"$(INSTALL_TEST)/hello.exe" | tr -d '\r' | grep -q -x -F 'a "b" c\'
+	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(word 2,$(INSTALL_TOOLS)).exe" -O2 -ntcrt-strict -x c++ \
+	    -DTEXT='"c++"' -o "$(INSTALL_TEST)/hello++.exe" test/start/install.c
+	"$(INSTALL_TEST)/hello++.exe" | tr -d '\r' | grep -q -x -F 'c++'
+	for t in hello hello++; do \
+	    if objdump -p "$(INSTALL_TEST)/$$t.exe" | grep 'DLL Name' | grep -v -q ntdll.dll; then \
+	        echo "$$t.exe imports more than ntdll.dll"; exit 1; fi; \
+	done
+	@echo "install: ok"
+
 clean:
 	rm -rf $(BUILD)
 
 .PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
-        test-start test-wine test-pthread size compare clean
+        test-start test-install test-wine test-pthread size compare install clean

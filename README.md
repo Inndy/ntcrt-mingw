@@ -15,7 +15,18 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 
 make LLVM=1     # the same with clang into build-llvm (LLVM=<dir>/ for clang in <dir>), make LLVM=1 test, ...
 clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
+
+make install PREFIX=C:/ntcrt          # include/, lib/gcc and the drivers in bin/
+make LLVM=1 install PREFIX=C:/ntcrt   # lib/clang and the clang drivers
+x86_64-w64-ntcrt-mingw32-gcc -o hello.exe hello.c    # with C:/ntcrt/bin in PATH
 ```
+
+An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`, `cc`, `c++`, `clang` and `clang++`
+(`tools/driver.c`) run the compiler of the build with `-static` and the specs or configuration file, include
+directory and libraries found relative to themselves, so that `CC=x86_64-w64-ntcrt-mingw32-gcc` is one word for
+configure, make or CMake. They take `-ntcrt-strict` too. The specs and configuration files link statically
+(`-Bstatic`, `-static`) when `-static` is not given, a program does not import `libstdc++-6.dll` or
+`libgcc_s_seh-1.dll`. NtCRT is x64 only.
 
 ## Layout
 
