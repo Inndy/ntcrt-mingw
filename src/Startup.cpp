@@ -231,9 +231,14 @@ _NtCRT_TlsCallback(
     }
 }
 
-/* .CRT$XLF is included in the TLS callback array provided by MinGW-w64's tlssup.o */
+/*
+ * .CRT$XLF is included in the TLS callback array provided by MinGW-w64's tlssup.o. Its _tls_used, the TLS directory,
+ * is referenced here: the crt2.o of x86 has __dyn_tls_init_callback as a common symbol, which links no tlssup.o.
+ */
 extern "C" __attribute__((section(".CRT$XLF"), used)) const PIMAGE_TLS_CALLBACK _NtCRT_TlsCallbackEntry =
     _NtCRT_TlsCallback;
+extern "C" const IMAGE_TLS_DIRECTORY _tls_used;
+static __attribute__((used)) const void* const IncludeTlsUsed = &_tls_used;
 
 EXTERN_C unsigned long* __cdecl _NtCRT___doserrno(void)
 {
