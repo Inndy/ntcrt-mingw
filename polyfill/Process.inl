@@ -29,6 +29,62 @@ _CRT_FreeLibrary(
     return NT_SUCCESS(LdrUnloadDll(hLibModule));
 }
 
+/*
+ * LoadLibraryEx before Windows 8, whose LdrLoadDll takes a search path and no flags: the default path (NULL), or for
+ * LOAD_WITH_ALTERED_SEARCH_PATH and a name with a directory, that directory before the default path of the process
+ */
+static
+__attribute__((noinline))
+HMODULE
+WINAPI
+_CRT_LoadLibraryPath(
+    _In_ PUNICODE_STRING DllName,
+    _In_ DWORD dwFlags)
+{
+    PCUNICODE_STRING DefaultPath = &NtCurrentPeb()->ProcessParameters->DllPath;
+    USHORT Directory = 0;
+    PWSTR Path = NULL;
+    ULONG LoadFlags = 0;
+    PVOID DllBase;
+    NTSTATUS Status;
+
+    if (dwFlags & LOAD_WITH_ALTERED_SEARCH_PATH)
+    {
+        Directory = DllName->Length / sizeof(WCHAR);
+        while (Directory != 0 && DllName->Buffer[Directory - 1] != L'\\' && DllName->Buffer[Directory - 1] != L'/')
+        {
+            Directory--;
+        }
+    }
+    if (Directory != 0)
+    {
+        Path = (PWSTR)RtlAllocateHeap(RtlProcessHeap(),
+                                      0,
+                                      (Directory + 2) * sizeof(WCHAR) + DefaultPath->Length);
+        if (Path == NULL)
+        {
+            _Inline_BaseSetLastNTError(STATUS_NO_MEMORY);
+            return NULL;
+        }
+        RtlCopyMemory(Path, DllName->Buffer, Directory * sizeof(WCHAR));
+        Path[Directory] = L';';
+        RtlCopyMemory(Path + Directory + 1, DefaultPath->Buffer, DefaultPath->Length);
+        Path[Directory + 1 + DefaultPath->Length / sizeof(WCHAR)] = UNICODE_NULL;
+    }
+
+    Status = LdrLoadDll(Path, &LoadFlags, DllName, &DllBase);
+    if (Path != NULL)
+    {
+        RtlFreeHeap(RtlProcessHeap(), 0, Path);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        return (HMODULE)DllBase;
+    }
+    _Inline_BaseSetLastNTError(Status);
+    return NULL;
+}
+
 FORCEINLINE
 HMODULE
 WINAPI
@@ -70,6 +126,17 @@ _CRT_LoadLibraryExW(
     {
         Status = STATUS_INVALID_PARAMETER;
         goto _Fail;
+    }
+
+    if (!IS_NT_VERSION_GE(NT_VERSION_WIN8))
+    {
+        /* LdrLoadDll before Windows 8 takes a search path only, NULL for the default */
+        if ((dwFlags & ~LOAD_WITH_ALTERED_SEARCH_PATH) != 0)
+        {
+            _Inline_SetLastError(ERROR_NOT_SUPPORTED);
+            return NULL;
+        }
+        return _CRT_LoadLibraryPath(&DllName, dwFlags);
     }
 
     /* The supported Win32 flags have identical values to their LDR_PATH_* counterparts. */
