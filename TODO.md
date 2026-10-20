@@ -6,28 +6,24 @@ Work taken up, in order. Proposals not started yet are in `IDEAS.md`.
 
 Phases 1 to 4 are done: the build (`build-i686` by the gcc of MSYS2 mingw32, MinGW-w64 15), the startup, setjmp,
 the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x87 control word.
-`make test-thread` and `make test-start` pass.
+`make test` passes on x86 (MinGW-w64 15 of MSYS2 mingw32).
 
-- [ ] **`make test` on x86.** `test-upstream` passes; `test-fuzz`, `test-printf`, `test-scanf`, `test-console`,
-  `test-cxx` and `test-install` are left.
 - [ ] **clang for x86.** MSYS2 has no clang32: clang64 with `--target=i686-w64-mingw32` on the sysroot of mingw32.
 - [ ] **Size.** Under `--gc-sections` of GNU ld the `.eh_frame` keeps every function alive: hello is 179200 bytes,
   46080 with `-fno-asynchronous-unwind-tables`. Without the tables a C++ exception cannot go through a callback
   called by NtCRT (`qsort`, `bsearch`, `pthread_once`, `call_once`). Measure and choose.
-- [ ] **Split `src/Time32.cpp`.** It holds the `*32` names of the clocks and of pthreads together, so a program
-  that calls `clock_gettime32` links the pthread objects.
 
 ## Windows 7
 
-At 3f871d1 Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach` and the `thread_local`
-destructors (`tl`). The VM is reached over WinRM by the ntcrt-mingw-f2 session. `LoadLibrary` passes a search path
-to `LdrLoadDll` before Windows 8 (`test/start/loadlib.c`), to be run there.
+Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`, the `thread_local` destructors
+(`tl`) and `loadlib`, and tcc-ntdll runs `-run` there. The VM is reached over WinRM by the ntcrt-mingw-f2 session.
+The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7; of
+`libntdll_crt.a` only `atan2` is not, which libmingwex defines before it.
 
+- [ ] **`_open("CONOUT$")` and `"CONIN$"` on Windows 7.** CreateFile of kernel32 opens them by the console
+  server, `NtCreateFile` does not.
 - [ ] **The whole test suite on Windows 7.** Only the programs above ran there. The event parker of
   `PthreadWait.cpp` (no `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
-- [ ] **ntdll imports that Windows 7 does not export.** An import missing from ntdll stops the loader before
-  `main`. Compare the imports of `libntdll_crt.a` with the exports of ntdll of Windows 7 x64 and x86, and look up
-  at run time what is newer (as `PthreadWait.cpp` and `PthreadName.cpp` do).
 
 ## tcc
 
