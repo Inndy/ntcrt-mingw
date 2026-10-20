@@ -75,7 +75,8 @@ _CRT_GetLocaleDefaultCodePage(
     return ERROR_FILE_NOT_FOUND;
 }
 
-FORCEINLINE
+/* Not inline: each conversion function calls it */
+static __attribute__((noinline))
 DWORD
 WINAPI
 _CRT_GetCodePageTable(
@@ -116,7 +117,8 @@ _CRT_GetCodePageTable(
     return ERROR_SUCCESS;
 }
 
-FORCEINLINE
+/* Not inline: each conversion function calls it */
+static __attribute__((noinline))
 DWORD
 WINAPI
 _CRT_ResolveCodePage(
