@@ -485,20 +485,27 @@ $(BUILD)/install/driver.exe: tools/driver.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(KERNEL32_CC) -O2 -s -static -municode $(DRIVER_DIRS) -o $@ $<
 
-install: $(LIBS) $(INSTALL_FILES) $(BUILD)/install/driver.exe
+INSTALL_DEPS := $(LIBS) $(INSTALL_FILES) $(BUILD)/install/driver.exe
+
+# $(call install-to,<dir>), not a recursive make, which would build the libraries beside the make that runs it
+define install-to
+mkdir -p "$(1)/bin" "$(1)/$(INSTALL_LIB)" "$(1)/include"
+cp -r include/. "$(1)/include"
+cp $(LIBS) $(INSTALL_FILES) "$(1)/$(INSTALL_LIB)"
+for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(1)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
+endef
+
+install: $(INSTALL_DEPS)
 	test -n "$(PREFIX)"
-	mkdir -p "$(PREFIX)/bin" "$(PREFIX)/$(INSTALL_LIB)" "$(PREFIX)/include"
-	cp -r include/. "$(PREFIX)/include"
-	cp $(LIBS) $(INSTALL_FILES) "$(PREFIX)/$(INSTALL_LIB)"
-	for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(PREFIX)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
+	$(call install-to,$(PREFIX))
 
 # An installation in a directory with a space: C and C++ by the drivers without -static, an argument with quotes
 # and spaces, -ntcrt-strict
 INSTALL_TEST := $(BUILD)/install test
 
-test-install:
+test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
-	$(MAKE) install PREFIX="$(INSTALL_TEST)"
+	$(call install-to,$(INSTALL_TEST))
 	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(firstword $(INSTALL_TOOLS)).exe" -O2 '-DTEXT="a \"b\" c\\"' \
 	    -o "$(INSTALL_TEST)/hello.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello.exe" | tr -d '\r' | grep -q -x -F 'a "b" c\'
