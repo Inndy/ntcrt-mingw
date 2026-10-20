@@ -4,12 +4,6 @@
 
 #include "Process.inl"
 
-enum
-{
-    _CRT_CONSOLE_API_MESSAGE_BUFFER = 0,
-    _CRT_CONSOLE_API_RESULT_BUFFER = 1,
-};
-
 typedef BOOL(WINAPI* PCRT_GET_CONSOLE_MODE)(
     _In_ HANDLE hConsoleHandle,
     _Out_ LPDWORD lpMode);
@@ -26,16 +20,19 @@ PCRT_GET_CONSOLE_OUTPUT_CP
 __cdecl
 try_get_console_output_cp(VOID) throw();
 
+/*
+ * A request to the console driver: the message, the data if InputCount is 2, and the result (the part of the message
+ * after its header). A WOW64 process sends it in the layout of x64.
+ */
 typedef struct _CRT_CONSOLE_USER_IO
 {
-    CD_USER_DEFINED_IO Header;
-    CD_IO_BUFFER ResultBuffer;
-} _CRT_CONSOLE_USER_IO, *PCRT_CONSOLE_USER_IO;
+    HANDLE Client;
+    ULONG InputCount;
+    ULONG OutputCount;
+    CD_IO_BUFFER Buffers[3];
+} _CRT_CONSOLE_USER_IO;
 
-/*
- * The request of a WOW64 process, in the layout of x64. Not CD_USER_DEFINED_IO64 of NDK.h: its PVOID64 has 32 bits in
- * GCC, which has no __ptr64.
- */
+/* Not CD_USER_DEFINED_IO64 of NDK.h: its PVOID64 has 32 bits in GCC, which has no __ptr64 */
 typedef struct _CRT_CONSOLE_IO_BUFFER64
 {
     ULONG Size;
@@ -47,18 +44,21 @@ typedef struct _CRT_CONSOLE_USER_IO64
     ULONGLONG Client;
     ULONG InputCount;
     ULONG OutputCount;
-    _CRT_CONSOLE_IO_BUFFER64 Buffers[2];
-} _CRT_CONSOLE_USER_IO64, *PCRT_CONSOLE_USER_IO64;
+    _CRT_CONSOLE_IO_BUFFER64 Buffers[3];
+} _CRT_CONSOLE_USER_IO64;
 
-static_assert(sizeof(_CRT_CONSOLE_USER_IO64) == 48, "the request of x64");
+static_assert(sizeof(_CRT_CONSOLE_USER_IO64) == 64, "the request of x64");
 
-FORCEINLINE
+EXTERN_C
 NTSTATUS
 WINAPI
 _CRT_ConsoleApiCall(
-    _In_ ULONG MessageSize,
     _In_ HANDLE ConsoleHandle,
     _Inout_ PCONSOLE_MSG_L1 Message,
+    _In_ ULONG MessageSize,
+    _In_ ULONG InputCount,
+    _In_reads_bytes_opt_(DataSize) const VOID* Data,
+    _In_ ULONG DataSize,
     _In_ ULONG ApiDescriptorSize)
 {
     IO_STATUS_BLOCK IoStatusBlock;
@@ -79,12 +79,14 @@ _CRT_ConsoleApiCall(
         RtlZeroMemory(&Request64, sizeof(Request64));
         /* A handle is sign extended, as WOW64 does */
         Request64.Client = (ULONGLONG)(LONGLONG)(LONG_PTR)ConsoleHandle;
-        Request64.InputCount = 1;
+        Request64.InputCount = InputCount;
         Request64.OutputCount = 1;
-        Request64.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Size = MessageSize;
-        Request64.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Buffer = (ULONG_PTR)Message;
-        Request64.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Size = ApiDescriptorSize;
-        Request64.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Buffer = (ULONG_PTR)&Message->u;
+        Request64.Buffers[0].Size = MessageSize;
+        Request64.Buffers[0].Buffer = (ULONG_PTR)Message;
+        Request64.Buffers[1].Size = DataSize;
+        Request64.Buffers[1].Buffer = (ULONG_PTR)Data;
+        Request64.Buffers[InputCount].Size = ApiDescriptorSize;
+        Request64.Buffers[InputCount].Buffer = (ULONG_PTR)&Message->u;
 
         return NtDeviceIoControlFile(ConsoleServerHandle,
                                      NULL,
@@ -93,20 +95,23 @@ _CRT_ConsoleApiCall(
                                      &IoStatusBlock,
                                      IOCTL_CONDRV_ISSUE_USER_IO,
                                      &Request64,
-                                     sizeof(Request64),
+                                     FIELD_OFFSET(_CRT_CONSOLE_USER_IO64, Buffers) +
+                                         (InputCount + 1) * sizeof(_CRT_CONSOLE_IO_BUFFER64),
                                      NULL,
                                      0);
     }
 #endif
 
     RtlZeroMemory(&Request, sizeof(Request));
-    Request.Header.Client = ConsoleHandle;
-    Request.Header.InputCount = 1;
-    Request.Header.OutputCount = 1;
-    Request.Header.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Size = MessageSize;
-    Request.Header.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Buffer = Message;
-    Request.Header.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Size = ApiDescriptorSize;
-    Request.Header.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Buffer = &Message->u;
+    Request.Client = ConsoleHandle;
+    Request.InputCount = InputCount;
+    Request.OutputCount = 1;
+    Request.Buffers[0].Size = MessageSize;
+    Request.Buffers[0].Buffer = Message;
+    Request.Buffers[1].Size = DataSize;
+    Request.Buffers[1].Buffer = (PVOID)Data;
+    Request.Buffers[InputCount].Size = ApiDescriptorSize;
+    Request.Buffers[InputCount].Buffer = &Message->u;
 
     return NtDeviceIoControlFile(ConsoleServerHandle,
                                  NULL,
@@ -115,7 +120,7 @@ _CRT_ConsoleApiCall(
                                  &IoStatusBlock,
                                  IOCTL_CONDRV_ISSUE_USER_IO,
                                  &Request,
-                                 sizeof(Request),
+                                 FIELD_OFFSET(_CRT_CONSOLE_USER_IO, Buffers) + (InputCount + 1) * sizeof(CD_IO_BUFFER),
                                  NULL,
                                  0);
 }
@@ -146,9 +151,12 @@ _CRT_GetConsoleMode(
     Message.ApiNumber = ConsolepGetMode;
     Message.ApiDescriptorSize = sizeof(Message.u.GetConsoleMode);
 
-    Status = _CRT_ConsoleApiCall(sizeof(CONSOLE_MSG_HEADER) + sizeof(Message.u.GetConsoleMode),
-                                 hConsoleHandle,
+    Status = _CRT_ConsoleApiCall(hConsoleHandle,
                                  &Message,
+                                 sizeof(CONSOLE_MSG_HEADER) + sizeof(Message.u.GetConsoleMode),
+                                 1,
+                                 NULL,
+                                 0,
                                  sizeof(Message.u.GetConsoleMode));
     if (NT_SUCCESS(Status))
     {
@@ -185,9 +193,12 @@ _CRT_GetConsoleOutputCP(VOID)
     Message.ApiDescriptorSize = sizeof(Message.u.GetConsoleCP);
     Message.u.GetConsoleCP.Output = TRUE;
 
-    Status = _CRT_ConsoleApiCall(sizeof(CONSOLE_MSG_HEADER) + sizeof(Message.u.GetConsoleCP),
-                                 NULL,
+    Status = _CRT_ConsoleApiCall(NULL,
                                  &Message,
+                                 sizeof(CONSOLE_MSG_HEADER) + sizeof(Message.u.GetConsoleCP),
+                                 1,
+                                 NULL,
+                                 0,
                                  sizeof(Message.u.GetConsoleCP));
     if (NT_SUCCESS(Status))
     {

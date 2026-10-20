@@ -313,6 +313,13 @@ extern "C" int WINAPI _NtCRT_WideCharToMultiByte(UINT CodePage,
 extern "C" DWORD WINAPI _CRT_GetFileType(HANDLE hFile);
 extern "C" BOOL WINAPI _CRT_GetConsoleMode(HANDLE hConsoleHandle, LPDWORD lpMode);
 extern "C" UINT WINAPI _CRT_GetConsoleOutputCP(VOID);
+extern "C" NTSTATUS WINAPI _CRT_ConsoleApiCall(HANDLE ConsoleHandle,
+                                               PCONSOLE_MSG_L1 Message,
+                                               ULONG MessageSize,
+                                               ULONG InputCount,
+                                               const VOID* Data,
+                                               ULONG DataSize,
+                                               ULONG ApiDescriptorSize);
 extern "C" BOOL WINAPI _NtCRT_WriteConsoleW(HANDLE hConsoleOutput,
                                             const VOID* lpBuffer,
                                             DWORD nNumberOfCharsToWrite,
