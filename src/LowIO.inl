@@ -140,17 +140,7 @@ typedef BOOL(WINAPI* PNTCRT_RW_FILE)(HANDLE, PVOID, DWORD, LPDWORD, LPOVERLAPPED
 /* ReadFile (Write FALSE) or WriteFile of kernel32 */
 extern "C" PNTCRT_RW_FILE _NtCRT_GetLegacyConsoleIo(_In_ BOOL Write);
 
-/*
- * A console handle of Windows 7 and earlier (3 in its low bits), which the kernel would take for the handle of the
- * process without those bits: the console handles go to kernel32, and what a console does not do fails with EBADF
- */
-static inline
-BOOL
-_NtCRT_IsLegacyConsoleHandle(
-    _In_ HANDLE Handle)
-{
-    return ((ULONG_PTR)Handle & 3) == 3 && !IS_NT_VERSION_GE(NT_VERSION_WIN8);
-}
+/* A console handle of Windows 7 (see NtCRT.h) goes to kernel32, what a console does not do fails with EBADF */
 
 /* NtClose, CloseHandle of kernel32 for a console handle of Windows 7 */
 extern "C" NTSTATUS _NtCRT_CloseHandle(_In_ HANDLE Handle);

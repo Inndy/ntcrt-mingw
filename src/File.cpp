@@ -409,6 +409,7 @@ _K32_GetFileInformationByHandle(
         UCHAR Buffer[sizeof(FILE_FS_VOLUME_INFORMATION) + MAX_PATH * sizeof(WCHAR)];
     } Volume;
 
+    NTCRT_LEGACY_CONSOLE_CALL(hFile, FALSE, GetFileInformationByHandle, hFile, lpFileInformation);
     Status = NtQueryVolumeInformationFile(hFile, &IoStatusBlock, &Volume, sizeof(Volume), FileFsVolumeInformation);
     if (!NT_SUCCESS(Status) && Status != STATUS_BUFFER_OVERFLOW)
     {
@@ -461,6 +462,7 @@ _K32_SetEndOfFile(
     FILE_END_OF_FILE_INFORMATION EndOfFile;
     FILE_ALLOCATION_INFORMATION Allocation;
 
+    NTCRT_LEGACY_CONSOLE_CALL(hFile, FALSE, SetEndOfFile, hFile);
     Status = NtQueryInformationFile(hFile, &IoStatusBlock, &Position, sizeof(Position), FilePositionInformation);
     if (NT_SUCCESS(Status))
     {
@@ -495,6 +497,13 @@ _K32_SetFilePointer(
 {
     LARGE_INTEGER Distance, NewPointer;
 
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile),
+                              INVALID_SET_FILE_POINTER,
+                              SetFilePointer,
+                              hFile,
+                              lDistanceToMove,
+                              lpDistanceToMoveHigh,
+                              dwMoveMethod);
     if (lpDistanceToMoveHigh != NULL)
     {
         Distance.LowPart = (ULONG)lDistanceToMove;
@@ -528,11 +537,19 @@ _K32_SetFilePointerEx(
     _Out_opt_ PLARGE_INTEGER lpNewFilePointer,
     _In_ DWORD dwMoveMethod)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile),
+                              FALSE,
+                              SetFilePointerEx,
+                              hFile,
+                              liDistanceToMove,
+                              lpNewFilePointer,
+                              dwMoveMethod);
     return _Inline_SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod);
 }
 
 NTCRT_API BOOL WINAPI _K32_GetFileSizeEx(_In_ HANDLE hFile, _Out_ PLARGE_INTEGER lpFileSize)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile), FALSE, GetFileSizeEx, hFile, lpFileSize);
     return _Inline_GetFileSizeEx(hFile, lpFileSize);
 }
 
@@ -545,6 +562,8 @@ _K32_GetFileSize(
 {
     LARGE_INTEGER Size;
 
+    NTCRT_LEGACY_CONSOLE_CALL(
+        _Inline_BasepMapStdHandle(hFile), INVALID_FILE_SIZE, GetFileSize, hFile, lpFileSizeHigh);
     if (!_Inline_GetFileSizeEx(hFile, &Size))
     {
         return INVALID_FILE_SIZE;
@@ -567,6 +586,14 @@ _K32_ReadFile(
     _Out_opt_ LPDWORD lpNumberOfBytesRead,
     _Inout_opt_ LPOVERLAPPED lpOverlapped)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile),
+                              FALSE,
+                              ReadFile,
+                              hFile,
+                              lpBuffer,
+                              nNumberOfBytesToRead,
+                              lpNumberOfBytesRead,
+                              lpOverlapped);
     return _Inline_ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
 }
 
@@ -580,11 +607,20 @@ _K32_WriteFile(
     _Out_opt_ LPDWORD lpNumberOfBytesWritten,
     _Inout_opt_ LPOVERLAPPED lpOverlapped)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile),
+                              FALSE,
+                              WriteFile,
+                              hFile,
+                              lpBuffer,
+                              nNumberOfBytesToWrite,
+                              lpNumberOfBytesWritten,
+                              lpOverlapped);
     return _Inline_WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped);
 }
 
 NTCRT_API BOOL WINAPI _K32_FlushFileBuffers(_In_ HANDLE hFile)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hFile), FALSE, FlushFileBuffers, hFile);
     return _Inline_FlushFileBuffers(hFile);
 }
 

@@ -272,7 +272,11 @@ _K32_OutputDebugStringW(
 
 /* Handle */
 
-NTCRT_API BOOL WINAPI _K32_CloseHandle(_In_ HANDLE hObject) { return _Inline_CloseHandle(hObject); }
+NTCRT_API BOOL WINAPI _K32_CloseHandle(_In_ HANDLE hObject)
+{
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hObject), FALSE, CloseHandle, hObject);
+    return _Inline_CloseHandle(hObject);
+}
 
 NTCRT_API
 BOOL
@@ -286,6 +290,16 @@ _K32_DuplicateHandle(
     _In_ BOOL bInheritHandle,
     _In_ DWORD dwOptions)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hSourceHandle),
+                              FALSE,
+                              DuplicateHandle,
+                              hSourceProcessHandle,
+                              hSourceHandle,
+                              hTargetProcessHandle,
+                              lpTargetHandle,
+                              dwDesiredAccess,
+                              bInheritHandle,
+                              dwOptions);
     NTSTATUS Status = NtDuplicateObject(hSourceProcessHandle,
                                         _Inline_BasepMapStdHandle(hSourceHandle),
                                         hTargetProcessHandle,
@@ -308,6 +322,7 @@ _K32_GetHandleInformation(
     _In_ HANDLE hObject,
     _Out_ LPDWORD lpdwFlags)
 {
+    NTCRT_LEGACY_CONSOLE_CALL(_Inline_BasepMapStdHandle(hObject), FALSE, GetHandleInformation, hObject, lpdwFlags);
     OBJECT_HANDLE_FLAG_INFORMATION Info;
     NTSTATUS Status = NtQueryObject(_Inline_BasepMapStdHandle(hObject),
                                     ObjectHandleFlagInformation,
@@ -335,6 +350,8 @@ _K32_SetHandleInformation(
     OBJECT_HANDLE_FLAG_INFORMATION Info;
     NTSTATUS Status;
 
+    NTCRT_LEGACY_CONSOLE_CALL(
+        _Inline_BasepMapStdHandle(hObject), FALSE, SetHandleInformation, hObject, dwMask, dwFlags);
     hObject = _Inline_BasepMapStdHandle(hObject);
     Status = NtQueryObject(hObject, ObjectHandleFlagInformation, &Info, sizeof(Info), NULL);
     if (NT_SUCCESS(Status))
@@ -637,6 +654,9 @@ _K32_WaitForSingleObjectEx(
 {
     LARGE_INTEGER Timeout;
 
+    /* A console input handle of Windows 7 waits on its event, which kernel32 knows */
+    NTCRT_LEGACY_CONSOLE_CALL(
+        _Inline_BasepMapStdHandle(hHandle), WAIT_FAILED, WaitForSingleObjectEx, hHandle, dwMilliseconds, bAlertable);
     return _NtCRT_WaitResult(NtWaitForSingleObject(_Inline_BasepMapStdHandle(hHandle),
                                                    (BOOLEAN)bAlertable,
                                                    _Inline_BaseFormatTimeOut(&Timeout, dwMilliseconds)));
@@ -668,6 +688,14 @@ _K32_WaitForMultipleObjectsEx(
     for (DWORD i = 0; i < nCount; i++)
     {
         Handles[i] = _Inline_BasepMapStdHandle(lpHandles[i]);
+        NTCRT_LEGACY_CONSOLE_CALL(Handles[i],
+                                  WAIT_FAILED,
+                                  WaitForMultipleObjectsEx,
+                                  nCount,
+                                  lpHandles,
+                                  bWaitAll,
+                                  dwMilliseconds,
+                                  bAlertable);
     }
     return _NtCRT_WaitResult(NtWaitForMultipleObjects(nCount,
                                                       Handles,

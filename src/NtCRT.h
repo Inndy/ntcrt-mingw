@@ -537,3 +537,28 @@ extern "C" BOOL WINAPI _K32_SetHandleInformation(HANDLE hObject, DWORD dwMask, D
 
 /* Resolve a kernel32 export at runtime, for what ntdll cannot do (console input, process creation) */
 extern "C" PVOID _NtCRT_GetKernel32Function(PCSTR Name);
+
+/*
+ * A console handle of Windows 7 and earlier (3 in its low bits) is a handle of the console server, which the kernel
+ * would take for the handle of the process without those bits: only kernel32 takes it
+ */
+static inline
+BOOL
+_NtCRT_IsLegacyConsoleHandle(
+    _In_ HANDLE Handle)
+{
+    return ((ULONG_PTR)Handle & 3) == 3 && !IS_NT_VERSION_GE(NT_VERSION_WIN8);
+}
+
+/* Return Name of kernel32 with the arguments for a console handle of Windows 7, Failure if kernel32 has none */
+#define NTCRT_LEGACY_CONSOLE_CALL(Handle, Failure, Name, ...)                                 \
+    if (_NtCRT_IsLegacyConsoleHandle(Handle))                                                 \
+    {                                                                                         \
+        auto const Function = (decltype(&_K32_##Name))_NtCRT_GetKernel32Function(#Name);      \
+        if (Function == NULL)                                                                 \
+        {                                                                                     \
+            _Inline_SetLastError(ERROR_INVALID_HANDLE);                                       \
+            return Failure;                                                                   \
+        }                                                                                     \
+        return Function(__VA_ARGS__);                                                         \
+    }
