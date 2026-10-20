@@ -279,6 +279,9 @@ EXTERN_C int __cdecl _NtCRT_fsetpos(FILE* stream, const fpos_t* pos)
 NTCRT_IMPORT(_ftelli64, _NtCRT_ftelli64);
 NTCRT_IMPORT(ftell, _NtCRT_ftell);
 NTCRT_IMPORT(_fseeki64, _NtCRT_fseeki64);
+/* Of libmsvcrt.a in MinGW-w64 13 and later (libstdc++ of x86 imports them), of libmingwex.a before */
+NTCRT_IMPORT_ONLY(fseeko64, _NtCRT_fseeki64);
+NTCRT_IMPORT_ONLY(ftello64, _NtCRT_ftelli64);
 NTCRT_IMPORT(fseek, _NtCRT_fseek);
 NTCRT_IMPORT(rewind, _NtCRT_rewind);
 NTCRT_IMPORT(fgetpos, _NtCRT_fgetpos);

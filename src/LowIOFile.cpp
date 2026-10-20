@@ -256,6 +256,8 @@ EXTERN_C int __cdecl _NtCRT_setmode(int fd, int mode)
 
 NTCRT_IMPORT(_close, _NtCRT_close);
 NTCRT_IMPORT(_lseeki64, _NtCRT_lseeki64);
+/* An alias of _lseeki64 in libmsvcrt.a of MinGW-w64 13 and later, of libmingwex.a before */
+NTCRT_IMPORT(lseek64, _NtCRT_lseeki64);
 NTCRT_IMPORT(_lseek, _NtCRT_lseek);
 NTCRT_IMPORT(_telli64, _NtCRT_telli64);
 NTCRT_IMPORT(_tell, _NtCRT_tell);

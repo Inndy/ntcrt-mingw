@@ -887,6 +887,8 @@ NTCRT_IMPORT(_wcsicmp, _NtCRT__wcsicmp);
 NTCRT_IMPORT(_wcsnicmp, _NtCRT__wcsnicmp);
 NTCRT_IMPORT(towlower, _NtCRT_towlower);
 NTCRT_IMPORT(iswctype, _NtCRT_iswctype);
+/* iswctype of msvcrt, which iswctype of libmingwex calls in MinGW-w64 13 and later */
+NTCRT_IMPORT_ONLY(__msvcrt_iswctype, _NtCRT_iswctype);
 NTCRT_IMPORT(iswalpha, _NtCRT_iswalpha);
 NTCRT_IMPORT(iswalnum, _NtCRT_iswalnum);
 NTCRT_IMPORT(iswdigit, _NtCRT_iswdigit);
