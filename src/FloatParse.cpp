@@ -538,12 +538,54 @@ static const double g_Float64Pow10[] = { 1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6
                                          1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
 static const float g_Float32Pow10[] = { 1e0f, 1e1f, 1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f, 1e9f, 1e10f };
 
+#if __FLT_EVAL_METHOD__ != 0
+/*
+ * The x87 rounds a product or a quotient to its 64 bits, then to double or float: twice. Mantissa * 10**Exp as an
+ * integer below 2**63, exact for the x87, rounds once.
+ */
+static BOOL _NtCRT_AtofInteger(ULONG64 Mantissa, int Exp, LONG64* Integer)
+{
+    if (Exp < 0)
+    {
+        return FALSE;
+    }
+    for (; Exp > 0; Exp--)
+    {
+        if (Mantissa > (ULONG64)MAXLONG64 / 10)
+        {
+            return FALSE;
+        }
+        Mantissa *= 10;
+    }
+    if (Mantissa > (ULONG64)MAXLONG64)
+    {
+        return FALSE;
+    }
+    *Integer = (LONG64)Mantissa;
+    return TRUE;
+}
+#endif
+
 /*
  * Mantissa * 10**Exp by one multiplication or division if all are exact: an exact integer times or divided by an
  * exact power of ten rounds correctly.
  */
 static BOOL _NtCRT_Atof64Exact(ULONG64 Mantissa, int Exp, BOOL Neg, double* f)
 {
+#if __FLT_EVAL_METHOD__ != 0
+    LONG64 Integer;
+
+    if (!_NtCRT_AtofInteger(Mantissa, Exp, &Integer))
+    {
+        return FALSE;
+    }
+    *f = (double)Integer;
+    if (Neg)
+    {
+        *f = -*f;
+    }
+    return TRUE;
+#else
     if (Mantissa >> 52 != 0)
     {
         return FALSE;
@@ -578,10 +620,25 @@ static BOOL _NtCRT_Atof64Exact(ULONG64 Mantissa, int Exp, BOOL Neg, double* f)
         return TRUE;
     }
     return FALSE;
+#endif
 }
 
 static BOOL _NtCRT_Atof32Exact(ULONG64 Mantissa, int Exp, BOOL Neg, float* f)
 {
+#if __FLT_EVAL_METHOD__ != 0
+    LONG64 Integer;
+
+    if (!_NtCRT_AtofInteger(Mantissa, Exp, &Integer))
+    {
+        return FALSE;
+    }
+    *f = (float)Integer;
+    if (Neg)
+    {
+        *f = -*f;
+    }
+    return TRUE;
+#else
     if (Mantissa >> 23 != 0)
     {
         return FALSE;
@@ -615,6 +672,7 @@ static BOOL _NtCRT_Atof32Exact(ULONG64 Mantissa, int Exp, BOOL Neg, float* f)
         return TRUE;
     }
     return FALSE;
+#endif
 }
 
 /* A range error is an overflow to infinity or an underflow to zero or a denormal */
