@@ -353,15 +353,20 @@ $(BUILD)/start/argv.exe: test/start/argv.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
 
+$(BUILD)/start/names.exe: test/start/names.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -static -o $@ $<
+
 # Without -ntcrt-strict, the functions it imports from kernel32
 $(BUILD)/start/kernel32.exe: test/start/kernel32.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(KERNEL32_CC) -O2 -static -o $@ $<
 
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
-            $(BUILD)/start/argv.exe $(BUILD)/start/kernel32.exe
+            $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe
 	cd $(BUILD)/start && ./reloc.exe
 	$(BUILD)/start/argv.exe
+	$(BUILD)/start/names.exe | grep -q '^names: ok$$'
 	$(BUILD)/start/kernel32.exe | grep -q '^kernel32: ok$$'
 	test "$$(objdump -p $(BUILD)/start/kernel32.exe | awk '/DLL Name/ { k = tolower($$3) == "kernel32.dll"; next } k && /<none>/ { print $$NF }')" = GetSystemPowerStatus
 	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'

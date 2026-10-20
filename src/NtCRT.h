@@ -163,6 +163,7 @@ extern "C" NTSTATUS _NtCRT_Delay(PLARGE_INTEGER Timeout);
 #define NTCRT_TIMESPEC_VALID(Time) ((unsigned long)(Time)->tv_nsec < 1000000000UL)
 extern "C" LONGLONG _NtCRT_MonotonicTime(void);
 extern "C" LONGLONG _NtCRT_TimespecUnits(const struct timespec* Time);
+extern "C" int __cdecl _NtCRT_nanosleep(const struct timespec* request, struct timespec* remain);
 extern "C" PLARGE_INTEGER _NtCRT_Timeout(LONGLONG Units, int Clock, PLARGE_INTEGER Timeout);
 
 /* pthread_create with a start function of C11 (thrd_create) if StartC11 */

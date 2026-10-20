@@ -23,7 +23,7 @@ static void UnitsToTimespec(LONGLONG Units, struct timespec* tp)
  * CLOCK_REALTIME and CLOCK_REALTIME_COARSE are the system time (the resolution of the clock tick, as time and
  * GetSystemTimeAsFileTime), CLOCK_MONOTONIC is QueryPerformanceCounter, the CPU time clocks are of NtQuery*Times.
  */
-NTCRT_API int __cdecl clock_gettime(clockid_t clock_id, struct timespec* tp)
+NTCRT_API int __cdecl _NtCRT_clock_gettime(clockid_t clock_id, struct timespec* tp)
 {
     KERNEL_USER_TIMES Times;
     LARGE_INTEGER Time;
@@ -64,16 +64,16 @@ NTCRT_API int __cdecl clock_gettime(clockid_t clock_id, struct timespec* tp)
 }
 
 /* C11, declared by <threads.h> of NtCRT */
-NTCRT_API int timespec_get(struct timespec* ts, int base)
+NTCRT_API int _NtCRT_timespec_get(struct timespec* ts, int base)
 {
-    if (base != 1 /* TIME_UTC */ || clock_gettime(CLOCK_REALTIME, ts) != 0)
+    if (base != 1 /* TIME_UTC */ || _NtCRT_clock_gettime(CLOCK_REALTIME, ts) != 0)
     {
         return 0;
     }
     return base;
 }
 
-NTCRT_API int __cdecl clock_getres(clockid_t clock_id, struct timespec* res)
+NTCRT_API int __cdecl _NtCRT_clock_getres(clockid_t clock_id, struct timespec* res)
 {
     ULONG Maximum, Minimum, Current;
 
@@ -103,7 +103,7 @@ NTCRT_API int __cdecl clock_getres(clockid_t clock_id, struct timespec* res)
     return 0;
 }
 
-NTCRT_API int __cdecl clock_settime(clockid_t clock_id, const struct timespec* tp)
+NTCRT_API int __cdecl _NtCRT_clock_settime(clockid_t clock_id, const struct timespec* tp)
 {
     LARGE_INTEGER Time;
     LONGLONG Units;
@@ -174,7 +174,7 @@ static int ClockSleep(LONGLONG Units, int Clock)
 }
 
 /* The sleep is not interrupted, remain is not written */
-NTCRT_API int __cdecl nanosleep(const struct timespec* request, struct timespec* remain)
+NTCRT_API int __cdecl _NtCRT_nanosleep(const struct timespec* request, struct timespec* remain)
 {
     UNREFERENCED_PARAMETER(remain);
     if (request == NULL || request->tv_sec < 0 || !NTCRT_TIMESPEC_VALID(request))
@@ -184,7 +184,7 @@ NTCRT_API int __cdecl nanosleep(const struct timespec* request, struct timespec*
     return ClockSleep(_NtCRT_TimespecUnits(request), -1);
 }
 
-NTCRT_API int __cdecl clock_nanosleep(clockid_t clock_id, int flags, const struct timespec* request,
+NTCRT_API int __cdecl _NtCRT_clock_nanosleep(clockid_t clock_id, int flags, const struct timespec* request,
                                       struct timespec* remain)
 {
     UNREFERENCED_PARAMETER(remain);
@@ -211,12 +211,12 @@ NTCRT_API int __cdecl clock_nanosleep(clockid_t clock_id, int flags, const struc
 NTCRT_API int __pthread_clock_nanosleep(clockid_t clock_id, int flags, const struct timespec* rqtp,
                                         struct timespec* rmtp)
 {
-    return clock_nanosleep(clock_id, flags, rqtp, rmtp);
+    return _NtCRT_clock_nanosleep(clock_id, flags, rqtp, rmtp);
 }
 
 NTCRT_API int pthread_delay_np(const struct timespec* interval)
 {
-    return nanosleep(interval, NULL) == 0 ? 0 : EINVAL;
+    return _NtCRT_nanosleep(interval, NULL) == 0 ? 0 : EINVAL;
 }
 
 /*
@@ -229,20 +229,23 @@ EXTERN_C unsigned int __cdecl __wrap_sleep(unsigned int seconds)
     return 0;
 }
 
-EXTERN_C unsigned int __cdecl sleep(unsigned int seconds) __attribute__((alias("__wrap_sleep")));
-
 EXTERN_C int __cdecl __wrap_usleep(unsigned int useconds)
 {
     ClockSleep((LONGLONG)useconds * 10, -1);
     return 0;
 }
 
-EXTERN_C int __cdecl usleep(unsigned int useconds) __attribute__((alias("__wrap_usleep")));
-
-/* The pointers that WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers) */
-NTCRT_IMPORT_ONLY(clock_gettime, clock_gettime);
-NTCRT_IMPORT_ONLY(clock_getres, clock_getres);
-NTCRT_IMPORT_ONLY(clock_settime, clock_settime);
-NTCRT_IMPORT_ONLY(clock_nanosleep, clock_nanosleep);
+/*
+ * The names by the stubs of the Makefile, a program may define one of them itself. "__imp_" are the pointers that
+ * WINPTHREADS_USE_DLLIMPORT refers to (__declspec(dllimport) of the winpthreads headers).
+ */
+NTCRT_IMPORT(sleep, __wrap_sleep);
+NTCRT_IMPORT(usleep, __wrap_usleep);
+NTCRT_IMPORT(nanosleep, _NtCRT_nanosleep);
+NTCRT_IMPORT(timespec_get, _NtCRT_timespec_get);
+NTCRT_IMPORT(clock_gettime, _NtCRT_clock_gettime);
+NTCRT_IMPORT(clock_getres, _NtCRT_clock_getres);
+NTCRT_IMPORT(clock_settime, _NtCRT_clock_settime);
+NTCRT_IMPORT(clock_nanosleep, _NtCRT_clock_nanosleep);
 NTCRT_IMPORT_ONLY(__pthread_clock_nanosleep, __pthread_clock_nanosleep);
 NTCRT_IMPORT_ONLY(pthread_delay_np, pthread_delay_np);

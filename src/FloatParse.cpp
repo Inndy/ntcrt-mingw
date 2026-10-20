@@ -1303,7 +1303,8 @@ EXTERN_C long double __cdecl __mingw_strtold(const char*, char**) __attribute__(
 EXTERN_C float __cdecl __mingw_wcstof(const wchar_t*, wchar_t**) __attribute__((alias("__wrap___mingw_wcstof")));
 EXTERN_C double __cdecl __mingw_wcstod(const wchar_t*, wchar_t**) __attribute__((alias("__wrap___mingw_wcstod")));
 EXTERN_C long double __cdecl __mingw_wcstold(const wchar_t*, wchar_t**) __attribute__((alias("__wrap___mingw_wcstold")));
-EXTERN_C long double __cdecl strtold(const char*, char**) __attribute__((alias("__wrap___mingw_strtold")));
-EXTERN_C long double __cdecl wcstold(const wchar_t*, wchar_t**) __attribute__((alias("__wrap___mingw_wcstold")));
+/* By stubs, a program may define one of them itself (tinycc's tcctest.c defines strtold) */
+NTCRT_IMPORT(strtold, __wrap___mingw_strtold);
+NTCRT_IMPORT(wcstold, __wrap___mingw_wcstold);
 
 #pragma endregion

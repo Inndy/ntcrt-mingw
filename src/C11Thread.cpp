@@ -55,7 +55,7 @@ NTCRT_API int thrd_join(thrd_t thr, int* res)
 /* Not interrupted: 0, or -2 for an invalid duration */
 NTCRT_API int thrd_sleep(const struct timespec* duration, struct timespec* remaining)
 {
-    return nanosleep(duration, remaining) == 0 ? 0 : -2;
+    return _NtCRT_nanosleep(duration, remaining) == 0 ? 0 : -2;
 }
 
 NTCRT_API void thrd_yield(void)
