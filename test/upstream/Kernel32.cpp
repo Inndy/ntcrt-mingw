@@ -139,11 +139,35 @@ static void TestSleep(void)
     CloseHandle(Threads[1]);
 }
 
+typedef DWORD(WINAPI* PFN_GET_DWORD)(VOID);
+typedef HANDLE(WINAPI* PFN_GET_HANDLE)(VOID);
+
+/* The functions inlined by include/ (errhandlingapi.h, processthreadsapi.h), by a pointer of NtCRT and of kernel32 */
+static void TestInline(void)
+{
+    PFN_GET_DWORD Error = (PFN_GET_DWORD)GetKernel32Procedure("GetLastError");
+    PFN_GET_DWORD ProcessId = (PFN_GET_DWORD)GetKernel32Procedure("GetCurrentProcessId");
+    PFN_GET_DWORD ThreadId = (PFN_GET_DWORD)GetKernel32Procedure("GetCurrentThreadId");
+    PFN_GET_HANDLE Process = (PFN_GET_HANDLE)GetKernel32Procedure("GetCurrentProcess");
+    PFN_GET_HANDLE Thread = (PFN_GET_HANDLE)GetKernel32Procedure("GetCurrentThread");
+    volatile PFN_GET_DWORD OwnError = GetLastError;
+    volatile PFN_GET_DWORD OwnThreadId = GetCurrentThreadId;
+
+    CHECK(Error != NULL && ProcessId != NULL && ThreadId != NULL && Process != NULL && Thread != NULL);
+    SetLastError(1234);
+    CHECK(GetLastError() == 1234 && Error() == 1234 && OwnError() == 1234);
+    SetLastError(ERROR_SUCCESS);
+    CHECK(GetLastError() == ERROR_SUCCESS && Error() == ERROR_SUCCESS);
+    CHECK(GetCurrentProcessId() == ProcessId() && GetCurrentThreadId() == ThreadId() && OwnThreadId() == ThreadId());
+    CHECK(GetCurrentProcess() == Process() && GetCurrentThread() == Thread());
+}
+
 extern "C"
 BOOL
 TestKernel32(VOID)
 {
     g_Ok = TRUE;
+    TestInline();
     TestGetModuleFileNameA();
     TestGetModuleFileNameW();
     TestFormatMessage();

@@ -35,6 +35,11 @@ configure, make or CMake. They take `-ntcrt-strict` too. The specs and configura
 - `polyfill/` code page and console helpers built on ntdll
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `include/threads.h` C11 threads, the drivers add `include/` to the system include path of programs
+- `include/errhandlingapi.h`, `include/processthreadsapi.h` include those of MinGW-w64 and inline `GetLastError`,
+  `SetLastError` (the TEB), `GetCurrentProcess`, `GetCurrentThread` (the pseudo handles -1 and -2),
+  `GetCurrentProcessId` and `GetCurrentThreadId` (the ClientId of the TEB) as gnu_inline functions, not macros:
+  `::GetLastError()` and a member named `GetLastError` stay valid, `&GetLastError` is the function of NtCRT.
+  `NTCRT_NO_INLINE_WIN32` turns them off
 - `test/upstream/` the KNSoft.NtCRT test suite, and `Msvcrt.cpp` with what the tests of Wine found
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
