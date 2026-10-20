@@ -213,6 +213,7 @@ EXTERN_C void _pei386_runtime_relocator(void)
 {
     static BOOL Done;
 
+    _NtCRT_ProcessAttach();
     if (Done)
     {
         return;

@@ -63,6 +63,9 @@
 /* Thread exit notification, called by the TLS callback with DLL_THREAD_DETACH / DLL_PROCESS_DETACH */
 extern "C" void _NtCRT_ThreadDetach(void);
 
+/* The DLL_PROCESS_ATTACH of the TLS callbacks that Windows 7 may not send, see Startup.cpp */
+extern "C" void _NtCRT_ProcessAttach(void);
+
 /* Per-thread CRT data */
 typedef struct _NTCRT_PTD
 {

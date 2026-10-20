@@ -403,6 +403,11 @@ $(BUILD)/start/nlsdata.exe: test/start/nlsdata.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
 
+# The process attach of the TLS callbacks, which Windows 7 does not send to a program that imports ntdll only
+$(BUILD)/start/tlsattach.exe: test/start/tlsattach.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -static -o $@ $<
+
 # The time_t of the names of msvcrt without a size, 32 bits on x86
 $(BUILD)/start/time32.exe: test/start/time32.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
@@ -420,7 +425,7 @@ $(BUILD)/start/pebteb.exe: test/start/pebteb.c $(LIBS) $(DRIVER)
 
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
             $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe \
-            $(BUILD)/start/time32.exe $(BUILD)/start/nlsdata.exe
+            $(BUILD)/start/time32.exe $(BUILD)/start/nlsdata.exe $(BUILD)/start/tlsattach.exe
 	cd $(BUILD)/start && ./reloc.exe
 	$(BUILD)/start/argv.exe
 	$(BUILD)/start/names.exe | grep -q '^names: ok$$'
@@ -428,6 +433,7 @@ test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/m
 	$(BUILD)/start/pebteb.exe | grep -q '^pebteb: ok$$'
 	cd $(BUILD)/start && ./time32.exe
 	$(BUILD)/start/nlsdata.exe | grep -q '^nlsdata: ok$$'
+	cd $(BUILD)/start && ./tlsattach.exe | grep -q '^tlsattach: ok$$'
 	test "$$(objdump -p $(BUILD)/start/kernel32.exe | awk '/DLL Name/ { k = tolower($$3) == "kernel32.dll"; next } k && /<none>/ { print $$NF }')" = GetSystemPowerStatus
 	$(BUILD)/start/matherr.exe 2>&1 | grep -q '^_matherr(): Argument domain error (DOMAIN) in log()$$'
 	$(BUILD)/start/matherr_custom.exe | grep -q '^custom _matherr type=1 name=log$$'

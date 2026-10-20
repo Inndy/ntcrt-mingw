@@ -238,6 +238,7 @@ _NtCRT_TlsCallback(
 extern "C" __attribute__((section(".CRT$XLF"), used)) const PIMAGE_TLS_CALLBACK _NtCRT_TlsCallbackEntry =
     _NtCRT_TlsCallback;
 extern "C" const IMAGE_TLS_DIRECTORY _tls_used;
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 static __attribute__((used)) const void* const IncludeTlsUsed = &_tls_used;
 
 EXTERN_C unsigned long* __cdecl _NtCRT___doserrno(void)
@@ -656,6 +657,8 @@ _NtCRT_DoExit(
  * only). This one is the first of them: the callback of libmingw32 stops taking thread_local destructors at
  * DLL_PROCESS_DETACH, which the atexit functions may still register.
  */
+static volatile LONG g_ProcessAttached;
+
 static
 VOID
 NTAPI
@@ -666,6 +669,11 @@ _NtCRT_ProcessEnd(
 {
     UNREFERENCED_PARAMETER(DllHandle);
     UNREFERENCED_PARAMETER(Reserved);
+    if (Reason == DLL_PROCESS_ATTACH)
+    {
+        __atomic_store_n(&g_ProcessAttached, 1, __ATOMIC_RELAXED);
+        return;
+    }
     if (Reason != DLL_PROCESS_DETACH || !NtCurrentPeb()->Ldr->ShutdownInProgress ||
         InterlockedCompareExchange(&g_ExitState, EXIT_PROCESS_END, 0) != 0)
     {
@@ -681,6 +689,27 @@ _NtCRT_ProcessEnd(
 /* After the start of the array (.CRT$XLA of tlssup.o), before the callback of libmingw32 (.CRT$XLB) */
 extern "C" __attribute__((section(".CRT$XLAA"), used)) const PIMAGE_TLS_CALLBACK _NtCRT_ProcessEndEntry =
     _NtCRT_ProcessEnd;
+
+/*
+ * Windows 7 sends DLL_PROCESS_ATTACH to the TLS callbacks of a program only when it imports a DLL that has an
+ * initialization (msvcrt, user32), not when it imports ntdll and kernel32 only; their thread attach and detach and the
+ * process detach it sends. MinGW-w64 initializes there what thread_local destructors and __mingwthr_key_dtor take
+ * (tls_atexit.c, tlsthrd.c). Without it (_NtCRT_ProcessEnd, the first callback, did not get it), the callbacks get it
+ * here, from the pseudo relocator, which the startup of MinGW-w64 runs before the constructors and main (and before
+ * the C initializers in MinGW-w64 15), as the loader of Windows 10 and later sends it before the entry point.
+ */
+EXTERN_C void _NtCRT_ProcessAttach(void)
+{
+    if (InterlockedCompareExchange(&g_ProcessAttached, 1, 0) != 0)
+    {
+        return;
+    }
+    for (PIMAGE_TLS_CALLBACK* Callback = (PIMAGE_TLS_CALLBACK*)_tls_used.AddressOfCallBacks; *Callback != NULL;
+         Callback++)
+    {
+        (*Callback)(&__ImageBase, DLL_PROCESS_ATTACH, NULL);
+    }
+}
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code)
 {
