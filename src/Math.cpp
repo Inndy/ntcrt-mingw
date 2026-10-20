@@ -397,7 +397,7 @@ void
 _NtCRT_SetX87Control(
     _In_ unsigned int Control)
 {
-    unsigned short Word = _NtCRT_GetX87Control() & ~0x0F3FU;
+    unsigned short Word = _NtCRT_GetX87Control() & ~0x1F3FU;
 
     if (Control & _EM_INVALID) Word |= 0x01;
     if (Control & _EM_DENORMAL) Word |= 0x02;
@@ -417,21 +417,65 @@ _NtCRT_SetX87Control(
         case _PC_53: Word |= 0x200; break;
         default: Word |= 0x300; break;
     }
+    if (Control & _IC_AFFINE) Word |= 0x1000;
     __asm__ __volatile__("fldcw %0" : : "m"(Word));
 }
 
-/* As the x64 msvcrt, there is no infinity control and the precision is always _PC_64 */
+/*
+ * The control of x86 is that of the x87 or that of SSE, _EM_AMBIGUOUS when the exception masks or the rounding of
+ * the two differ, as the x86 msvcrt. As the x64 msvcrt, x64 has no infinity control and the precision
+ * is always _PC_64.
+ */
+static
+unsigned int
+_NtCRT_GetControl(void)
+{
+    unsigned int Sse = _NtCRT_MxcsrToControl(_NtCRT_GetMxcsr());
+#ifdef _WIN64
+    return Sse;
+#else
+    unsigned short Word = _NtCRT_GetX87Control();
+    unsigned int Control = 0;
+
+    if (Word & 0x01) Control |= _EM_INVALID;
+    if (Word & 0x02) Control |= _EM_DENORMAL;
+    if (Word & 0x04) Control |= _EM_ZERODIVIDE;
+    if (Word & 0x08) Control |= _EM_OVERFLOW;
+    if (Word & 0x10) Control |= _EM_UNDERFLOW;
+    if (Word & 0x20) Control |= _EM_INEXACT;
+    switch (Word & 0xC00)
+    {
+        case 0x400: Control |= _RC_DOWN; break;
+        case 0x800: Control |= _RC_UP; break;
+        case 0xC00: Control |= _RC_CHOP; break;
+    }
+    switch (Word & 0x300)
+    {
+        case 0x000: Control |= _PC_24; break;
+        case 0x200: Control |= _PC_53; break;
+    }
+    if (Word & 0x1000) Control |= _IC_AFFINE;
+    if ((Control ^ Sse) & (_MCW_EM | _MCW_RC))
+    {
+        Control |= _EM_AMBIGUOUS;
+    }
+    return Control | Sse;
+#endif
+}
+
 EXTERN_C unsigned int __cdecl _NtCRT__control87(unsigned int newval, unsigned int mask)
 {
-    unsigned int Mxcsr = _NtCRT_GetMxcsr();
-    unsigned int Control = _NtCRT_MxcsrToControl(Mxcsr);
+    unsigned int Control = _NtCRT_GetControl();
 
+#ifdef _WIN64
     mask &= ~(_MCW_IC | _MCW_PC);
+#endif
     if (mask != 0)
     {
         Control = (Control & ~mask) | (newval & mask);
-        _NtCRT_SetMxcsr(_NtCRT_ControlToMxcsr(Control, Mxcsr));
+        _NtCRT_SetMxcsr(_NtCRT_ControlToMxcsr(Control, _NtCRT_GetMxcsr()));
         _NtCRT_SetX87Control(Control);
+        Control = _NtCRT_GetControl();
     }
     return Control;
 }

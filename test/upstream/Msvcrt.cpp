@@ -609,6 +609,23 @@ static void TestMisc(void)
     _controlfp(0x03000000, _MCW_DN);
     CHECK((__builtin_ia32_stmxcsr() & 0x8040) == 0x8000 && (_controlfp(0, 0) & _MCW_DN) == 0x03000000);
     _controlfp(_DN_SAVE, _MCW_DN);
+#ifndef _WIN64
+    {
+        /* x86: the precision and the infinity control of the x87, the control of both or'ed when they differ */
+        unsigned short Word;
+
+        _controlfp(_PC_53 | _IC_AFFINE, _MCW_PC | _MCW_IC);
+        __asm__ __volatile__("fnstcw %0" : "=m"(Word));
+        CHECK((Word & 0x1300) == 0x1200 && (_controlfp(0, 0) & (_MCW_PC | _MCW_IC)) == (_PC_53 | _IC_AFFINE));
+        _controlfp(_PC_64 | _IC_PROJECTIVE | _RC_UP, _MCW_PC | _MCW_IC | _MCW_RC);
+        Word &= ~0x1F00;
+        Word |= 0x300;
+        __asm__ __volatile__("fldcw %0" : : "m"(Word));
+        CHECK(_controlfp(0, 0) == (_EM_AMBIGUOUS | _MCW_EM | _RC_UP));
+        _controlfp(_RC_NEAR, _MCW_RC);
+        CHECK(_controlfp(0, 0) == _MCW_EM);
+    }
+#endif
 
     /* The new handler is called for calloc and realloc too */
     NEW_HANDLER Old = _set_new_handler(CountNewHandler);

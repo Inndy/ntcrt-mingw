@@ -180,7 +180,9 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   `_findfirst`, `_utime`, ...) take the 32-bit `time_t` of the x86 msvcrt, which the headers of MinGW-w64 default to
   (`_USE_32BIT_TIME_T`, unless `_TIME_BITS=64`); the headers call the others by names with 32 or 64 (`_time64`,
   `_stat32i64`, `_findfirst32i64`, `clock_gettime32`, `cnd_timedwait32`, ...), which libntcrt has.
-- Not yet: the x87 control word, `make test` (`test-thread` and `test-start` pass) and clang.
+- `_control87`, `_controlfp`: the x87 control word with its precision and infinity control, or'ed with the control of
+  SSE and `_EM_AMBIGUOUS` when the two differ, as the x86 msvcrt.
+- Not yet: `make test` (`test-thread` and `test-start` pass) and clang.
 
 ## Behavior
 
