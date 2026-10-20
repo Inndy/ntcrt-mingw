@@ -32,11 +32,25 @@ typedef struct _CRT_CONSOLE_USER_IO
     CD_IO_BUFFER ResultBuffer;
 } _CRT_CONSOLE_USER_IO, *PCRT_CONSOLE_USER_IO;
 
+/*
+ * The request of a WOW64 process, in the layout of x64. Not CD_USER_DEFINED_IO64 of NDK.h: its PVOID64 has 32 bits in
+ * GCC, which has no __ptr64.
+ */
+typedef struct _CRT_CONSOLE_IO_BUFFER64
+{
+    ULONG Size;
+    ULONGLONG Buffer;
+} _CRT_CONSOLE_IO_BUFFER64;
+
 typedef struct _CRT_CONSOLE_USER_IO64
 {
-    CD_USER_DEFINED_IO64 Header;
-    CD_IO_BUFFER64 ResultBuffer;
+    ULONGLONG Client;
+    ULONG InputCount;
+    ULONG OutputCount;
+    _CRT_CONSOLE_IO_BUFFER64 Buffers[2];
 } _CRT_CONSOLE_USER_IO64, *PCRT_CONSOLE_USER_IO64;
+
+static_assert(sizeof(_CRT_CONSOLE_USER_IO64) == 48, "the request of x64");
 
 FORCEINLINE
 NTSTATUS
@@ -63,13 +77,14 @@ _CRT_ConsoleApiCall(
         _CRT_CONSOLE_USER_IO64 Request64;
 
         RtlZeroMemory(&Request64, sizeof(Request64));
-        Request64.Header.Client = (PVOID64)(ULONG_PTR)ConsoleHandle;
-        Request64.Header.InputCount = 1;
-        Request64.Header.OutputCount = 1;
-        Request64.Header.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Size = MessageSize;
-        Request64.Header.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Buffer = (PVOID64)(ULONG_PTR)Message;
-        Request64.Header.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Size = ApiDescriptorSize;
-        Request64.Header.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Buffer = (PVOID64)(ULONG_PTR)&Message->u;
+        /* A handle is sign extended, as WOW64 does */
+        Request64.Client = (ULONGLONG)(LONGLONG)(LONG_PTR)ConsoleHandle;
+        Request64.InputCount = 1;
+        Request64.OutputCount = 1;
+        Request64.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Size = MessageSize;
+        Request64.Buffers[_CRT_CONSOLE_API_MESSAGE_BUFFER].Buffer = (ULONG_PTR)Message;
+        Request64.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Size = ApiDescriptorSize;
+        Request64.Buffers[_CRT_CONSOLE_API_RESULT_BUFFER].Buffer = (ULONG_PTR)&Message->u;
 
         return NtDeviceIoControlFile(ConsoleServerHandle,
                                      NULL,

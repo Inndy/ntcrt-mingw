@@ -1066,6 +1066,7 @@ typedef struct _CD_USER_DEFINED_IO
     CD_IO_BUFFER Buffers[ANYSIZE_ARRAY];
 } CD_USER_DEFINED_IO, *PCD_USER_DEFINED_IO;
 
+/* The layout of x64 with __ptr64 only: GCC has no __ptr64, a PVOID64 of x86 has 32 bits there */
 typedef struct _CD_USER_DEFINED_IO64
 {
     PVOID64 Client;
