@@ -146,6 +146,39 @@ _NtCRT_GetLegacyConsoleIo(
 }
 
 EXTERN_C
+NTSTATUS
+_NtCRT_CloseHandle(
+    _In_ HANDLE Handle)
+{
+    if (_NtCRT_IsLegacyConsoleHandle(Handle))
+    {
+        auto const CloseHandle = (BOOL(WINAPI*)(HANDLE))_NtCRT_GetKernel32Function("CloseHandle");
+        return CloseHandle != NULL && CloseHandle(Handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+    }
+    return NtClose(Handle);
+}
+
+EXTERN_C
+NTSTATUS
+_NtCRT_DuplicateHandle(
+    _In_ HANDLE Handle,
+    _Out_ PHANDLE NewHandle)
+{
+    if (_NtCRT_IsLegacyConsoleHandle(Handle))
+    {
+        typedef BOOL(WINAPI * PNTCRT_DUPLICATE_HANDLE)(HANDLE, HANDLE, HANDLE, LPHANDLE, DWORD, BOOL, DWORD);
+        auto const DuplicateHandle = (PNTCRT_DUPLICATE_HANDLE)_NtCRT_GetKernel32Function("DuplicateHandle");
+        return DuplicateHandle != NULL &&
+                       DuplicateHandle(
+                           NtCurrentProcess(), Handle, NtCurrentProcess(), NewHandle, 0, TRUE, DUPLICATE_SAME_ACCESS)
+                   ? STATUS_SUCCESS
+                   : STATUS_INVALID_HANDLE;
+    }
+    return NtDuplicateObject(
+        NtCurrentProcess(), Handle, NtCurrentProcess(), NewHandle, 0, OBJ_INHERIT, DUPLICATE_SAME_ACCESS);
+}
+
+EXTERN_C
 int
 _NtCRT_RawWrite(
     _In_ HANDLE Handle,

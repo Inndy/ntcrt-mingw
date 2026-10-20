@@ -47,6 +47,11 @@ _NtCRT_SeekHandle(
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
+    if (_NtCRT_IsLegacyConsoleHandle(Handle))
+    {
+        NTCRT_ERRNO = EBADF;
+        return -1;
+    }
     if (!_Inline_SetFilePointerEx(Handle, Distance, &NewPointer, (DWORD)Origin))
     {
         _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
@@ -69,6 +74,10 @@ _NtCRT_IsConsoleFd(
     if (!(Entry->Flags & FDEV))
     {
         return FALSE;
+    }
+    if (_NtCRT_IsLegacyConsoleHandle(Entry->Handle))
+    {
+        return TRUE;
     }
     if (NT_SUCCESS(NtQueryVolumeInformationFile(
             Entry->Handle, &IoStatusBlock, &Info, sizeof(Info), FileFsDeviceInformation)))

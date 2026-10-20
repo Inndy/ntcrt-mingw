@@ -162,13 +162,7 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
     Flags = Entry->Flags & ~FNOINHERIT;
     TextMode = Entry->TextMode;
     WideOnly = Entry->WideOnly;
-    Status = NtDuplicateObject(NtCurrentProcess(),
-                               Entry->Handle,
-                               NtCurrentProcess(),
-                               &NewHandle,
-                               0,
-                               OBJ_INHERIT,
-                               DUPLICATE_SAME_ACCESS);
+    Status = _NtCRT_DuplicateHandle(Entry->Handle, &NewHandle);
     _NtCRT_UnlockFd(Entry);
     if (!NT_SUCCESS(Status))
     {
@@ -185,14 +179,14 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
     Entry = _NtCRT_FdEntry(fd2);
     if (Entry == NULL)
     {
-        NtClose(NewHandle);
+        _NtCRT_CloseHandle(NewHandle);
         NTCRT_ERRNO = ENOMEM;
         return -1;
     }
     /* EBUSY: the process ends and a terminated thread holds the lock of fd2, which stays unusable */
     if (!_NtCRT_EnterFd(Entry))
     {
-        NtClose(NewHandle);
+        _NtCRT_CloseHandle(NewHandle);
         return -1;
     }
     /*
@@ -212,7 +206,7 @@ EXTERN_C int __cdecl _NtCRT_dup2(int fd1, int fd2)
     _NtCRT_UnlockFd(Entry);
     if (OldHandle != NTCRT_NO_CONSOLE_HANDLE && OldHandle != INVALID_HANDLE_VALUE && OldHandle != NULL)
     {
-        NtClose(OldHandle);
+        _NtCRT_CloseHandle(OldHandle);
     }
     return 0;
 }
@@ -234,13 +228,7 @@ EXTERN_C int __cdecl _NtCRT_dup(int fd)
     Flags = Entry->Flags & ~FNOINHERIT;
     TextMode = Entry->TextMode;
     WideOnly = Entry->WideOnly;
-    Status = NtDuplicateObject(NtCurrentProcess(),
-                               Entry->Handle,
-                               NtCurrentProcess(),
-                               &NewHandle,
-                               0,
-                               OBJ_INHERIT,
-                               DUPLICATE_SAME_ACCESS);
+    Status = _NtCRT_DuplicateHandle(Entry->Handle, &NewHandle);
     _NtCRT_UnlockFd(Entry);
     if (!NT_SUCCESS(Status))
     {
@@ -250,7 +238,7 @@ EXTERN_C int __cdecl _NtCRT_dup(int fd)
     NewFd = _NtCRT_AllocFd(0, NewHandle, Flags);
     if (NewFd < 0)
     {
-        NtClose(NewHandle);
+        _NtCRT_CloseHandle(NewHandle);
         return -1;
     }
     _NtCRT_FdEntry(NewFd)->TextMode = TextMode;

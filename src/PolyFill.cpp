@@ -48,6 +48,14 @@ try_get_console_output_cp(VOID) throw()
     return (PCRT_GET_CONSOLE_OUTPUT_CP)_NtCRT_GetKernel32Function("GetConsoleOutputCP");
 }
 
+static
+PCRT_VERIFY_CONSOLE_IO_HANDLE
+__cdecl
+try_get_verify_console_io_handle(VOID) throw()
+{
+    return (PCRT_VERIFY_CONSOLE_IO_HANDLE)_NtCRT_GetKernel32Function("VerifyConsoleIoHandle");
+}
+
 /* Exports */
 
 EXTERN_C

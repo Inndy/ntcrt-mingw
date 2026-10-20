@@ -32,7 +32,7 @@ EXTERN_C int __cdecl _NtCRT_close(int fd)
     _NtCRT_UnlockFd(Entry);
     if (Handle != NTCRT_NO_CONSOLE_HANDLE && Handle != INVALID_HANDLE_VALUE && Handle != NULL)
     {
-        NTSTATUS Status = NtClose(Handle);
+        NTSTATUS Status = _NtCRT_CloseHandle(Handle);
         if (!NT_SUCCESS(Status))
         {
             _NtCRT_SetErrnoFromNtStatus(Status);
@@ -150,11 +150,12 @@ EXTERN_C int __cdecl _NtCRT_chsize_s(int fd, long long size)
         return EBADF;
     }
     EndOfFile.EndOfFile.QuadPart = size;
-    Status = NtSetInformationFile(Entry->Handle,
-                                  &IoStatusBlock,
-                                  &EndOfFile,
-                                  sizeof(EndOfFile),
-                                  FileEndOfFileInformation);
+    Status = _NtCRT_IsLegacyConsoleHandle(Entry->Handle) ? STATUS_INVALID_HANDLE
+                                                          : NtSetInformationFile(Entry->Handle,
+                                                                                 &IoStatusBlock,
+                                                                                 &EndOfFile,
+                                                                                 sizeof(EndOfFile),
+                                                                                 FileEndOfFileInformation);
     _NtCRT_UnlockFd(Entry);
     if (!NT_SUCCESS(Status))
     {
@@ -216,7 +217,11 @@ EXTERN_C int __cdecl _NtCRT_commit(int fd)
     {
         return -1;
     }
-    if (!_Inline_FlushFileBuffers(Entry->Handle))
+    if (_NtCRT_IsLegacyConsoleHandle(Entry->Handle))
+    {
+        NTCRT_ERRNO = EBADF;
+        Result = -1;
+    } else if (!_Inline_FlushFileBuffers(Entry->Handle))
     {
         _NtCRT_SetErrnoFromWin32(_Inline_GetLastError());
         Result = -1;

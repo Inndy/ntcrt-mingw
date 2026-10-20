@@ -6,6 +6,13 @@
 #include "CodePage.inl"
 #include "Console.inl"
 
+typedef BOOL(WINAPI* PCRT_VERIFY_CONSOLE_IO_HANDLE)(_In_ HANDLE hIoHandle);
+
+static
+PCRT_VERIFY_CONSOLE_IO_HANDLE
+__cdecl
+try_get_verify_console_io_handle(VOID) throw();
+
 EXTERN_C
 DWORD
 WINAPI
@@ -37,6 +44,17 @@ _CRT_GetFileType(
 _Invalid_Handle:
         _Inline_BaseSetLastNTError(STATUS_INVALID_HANDLE);
         return FILE_TYPE_UNKNOWN;
+    }
+
+    /* A console handle before Windows 8 is not of a file but of the console server (CSRSS), as GetFileType checks */
+    if (((ULONG_PTR)hFile & 0x10000003) == 3 && !IS_NT_VERSION_GE(NT_VERSION_WIN8))
+    {
+        auto const VerifyConsoleIoHandle = try_get_verify_console_io_handle();
+        if (VerifyConsoleIoHandle != NULL && VerifyConsoleIoHandle(hFile))
+        {
+            return FILE_TYPE_CHAR;
+        }
+        goto _Invalid_Handle;
     }
 
     Status = NtQueryVolumeInformationFile(hFile,
