@@ -1,5 +1,7 @@
 # Input lines "[_ONLY] Name Impl" from NTCRT_IMPORT / NTCRT_IMPORT_ONLY, see NtCRT.h.
 # Keeps one assembly file per name in "dir": a jump "Name" to "Impl" (unless _ONLY) and the pointer "__imp_Name".
+# On x86 ("x86" set) the assembler names have the prefix "_", and those of stdcall functions the suffix "@" and the
+# size of the arguments: "syms" lists the assembler names that nm reads in the objects, a name takes that of Impl.
 # A file is written only when its text changes, the files to assemble (written or without an object) are printed,
 # and the names of all files to keep are written to "keep". The sections are COMDAT, lld drops those of the names a
 # program does not use (--gc-sections).
@@ -27,17 +29,32 @@ function file_name(name,    i, c, r)
     return r
 }
 
+BEGIN \
 {
-    name = $(NF - 1)
-    impl = $NF
-    base = file_name(name)
+    prefix = x86 ? "_" : ""
+    while (x86 && (getline line < syms) > 0)
+    {
+        key = substr(line, 2)
+        if (match(key, /@[0-9]+$/))
+        {
+            Suffix[substr(key, 1, RSTART - 1)] = substr(key, RSTART)
+        }
+    }
+    close(syms)
+}
+
+{
+    section = $(NF - 1)
+    name = prefix section Suffix[$NF]
+    impl = prefix $NF Suffix[$NF]
+    base = file_name(section)
     file = dir "/" base ".s"
     text = ""
     if (NF == 2)
     {
-        text = sprintf("\t.section\t.text$%s,\"xr\"\n\t.linkonce\tdiscard\n\t.globl\t%s\n\t.def\t%s;\t.scl\t2;\t.type\t32;\t.endef\n%s:\n\tjmp\t%s\n", name, name, name, name, impl)
+        text = sprintf("\t.section\t.text$%s,\"xr\"\n\t.linkonce\tdiscard\n\t.globl\t%s\n\t.def\t%s;\t.scl\t2;\t.type\t32;\t.endef\n%s:\n\tjmp\t%s\n", section, name, name, name, impl)
     }
-    text = text sprintf("\t.section\t.rdata$__imp_%s,\"dr\"\n\t.linkonce\tdiscard\n\t.globl\t__imp_%s\n\t.p2align\t3\n__imp_%s:\n\t.quad\t%s\n", name, name, name, impl)
+    text = text sprintf("\t.section\t.rdata$__imp_%s,\"dr\"\n\t.linkonce\tdiscard\n\t.globl\t__imp_%s\n\t.p2align\t%d\n__imp_%s:\n\t%s\t%s\n", section, name, x86 ? 2 : 3, name, x86 ? ".long" : ".quad", impl)
 
     old = ""
     while ((getline line < file) > 0)

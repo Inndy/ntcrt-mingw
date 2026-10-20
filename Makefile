@@ -1,4 +1,4 @@
-# NtCRT for MinGW-w64 (x64): link C/C++ programs that import ntdll.dll only
+# NtCRT for MinGW-w64 (x64, x86 in progress): link C/C++ programs that import ntdll.dll only
 #
 #   make            build build/libntcrt.a, the support libraries and build/ntcrt.specs
 #   make test       build and run the tests
@@ -6,6 +6,8 @@
 #
 #   make LLVM=1     build with clang into build-llvm, programs link by lld (LLVM=<dir>/ for clang in <dir>)
 #   clang++ --config=build-llvm/ntcrt.cfg -static ...
+#
+# The target is that of g++ (-dumpmachine): with an i686 toolchain first in PATH, make builds for x86 into build-i686.
 
 CXX      ?= g++
 ifeq ($(origin CC),default)
@@ -14,15 +16,25 @@ endif
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra
 CXXFLAGS += -Iinclude -ffunction-sections -fno-exceptions -fno-rtti
 
+TARGET   := $(shell $(CXX) -dumpmachine)
+ifneq ($(filter i686-% i386-%,$(TARGET)),)
+X86      := 1
+endif
+
 ifdef LLVM
 # A section for each variable, which lld drops unused. GCC would put the zero data in .data$ sections, which take
 # space in the file unlike .bss, and ld links whole objects anyway.
 CXXFLAGS += -fdata-sections
-BUILD    ?= build-llvm
+BUILD    ?= build-llvm$(if $(X86),-i686)
 else
-BUILD    ?= build
+BUILD    ?= build$(if $(X86),-i686)
 endif
 SRCS     := $(wildcard src/*.cpp)
+ifdef X86
+# Not ported yet: the locks keep their state in the 64 bits of a word, pthread_once unwinds by the SEH of x64
+SRCS     := $(filter-out $(patsubst %,src/%.cpp,PthreadBarrier PthreadCond PthreadMutex PthreadRwlock PthreadSem \
+                                                PthreadOnce C11Sync),$(SRCS))
+endif
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 and libgcc members, linked before them
 START_SRCS := $(wildcard src/start/*.cpp)
@@ -39,10 +51,10 @@ LLVM_PREFIX := $(filter %/,$(LLVM))
 # includes <mm3dnow.h>, which clang deprecates. Thread-local variables are emulated as GCC does, libstdc++ has
 # std::call_once by them (__emutls_get_address on pthread keys).
 GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
-LLVM_FLAGS := --target=x86_64-w64-mingw32 --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
+LLVM_FLAGS := --target=$(TARGET) --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
               -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -femulated-tls
 LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
-LIB_AS   := $(LLVM_PREFIX)clang --target=x86_64-w64-mingw32
+LIB_AS   := $(LLVM_PREFIX)clang --target=$(TARGET)
 NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt-strict.cfg
 NTCRT_CXX := $(LLVM_PREFIX)clang++ --config=$(BUILD)/ntcrt-strict.cfg
 KERNEL32_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt.cfg
@@ -83,10 +95,12 @@ $(BUILD)/exports.txt: FORCE | $(BUILD)
 
 # An object for each name, see NtCRT.h. Only the stubs that Exports.awk writes are assembled, those of names that are
 # gone are removed. The stubs written are removed when they fail to assemble, so that the next make writes them again.
-$(BUILD)/exports.stamp: $(BUILD)/exports.txt src/Exports.awk
+# On x86 the stubs of stdcall functions take the size of the arguments from the names in the objects.
+$(BUILD)/exports.stamp: $(BUILD)/exports.txt src/Exports.awk $(if $(X86),$(BUILD)/objects.syms)
 	rm -f $@
 	mkdir -p $(BUILD)/exports
-	awk -v dir=$(BUILD)/exports -v keep=$(BUILD)/exports.keep -f src/Exports.awk $< > $(BUILD)/exports.new
+	awk -v dir=$(BUILD)/exports -v keep=$(BUILD)/exports.keep -v x86=$(X86) -v syms=$(BUILD)/objects.syms \
+	    -f src/Exports.awk $< > $(BUILD)/exports.new
 	cd $(BUILD)/exports && ls | grep -v -x -F -f ../exports.keep | xargs -r rm -f
 	cd $(BUILD)/exports && xargs -r -P 8 -n 64 $(LIB_AS) -c < ../exports.new || { xargs rm -f < ../exports.new; exit 1; }
 	touch $@
@@ -105,18 +119,27 @@ $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a: | $(BUILD)
 $(BUILD)/ntcrt.syms: $(BUILD)/libntcrt.a
 	nm -g --defined-only $< | awk 'NF == 3 { print $$3 }' | sort -u > $@
 
+$(BUILD)/objects.syms: $(OBJS)
+	nm -g --defined-only $^ | awk 'NF == 3 && $$2 == "T" { print $$3 }' | sort -u > $@.tmp
+	if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
+
 # ntdll exports the classic C runtime, libntdll.a does not import it.
-# Functions implemented by libntcrt.a are left out so they never come from ntdll.
+# Functions implemented by libntcrt.a are left out so they never come from ntdll (the names of x86 without "_"). The
+# ntdll of x86 has neither the SEH of x64 nor setjmp.
+NTDLL_X64 := __C_specific_handler _local_unwind _setjmp _setjmpex longjmp setjmp
+
 $(BUILD)/libntdll_crt.a: src/ntdll_crt.txt $(BUILD)/ntcrt.syms
 	printf 'LIBRARY ntdll.dll\nEXPORTS\n' > $(BUILD)/ntdll_crt.def
-	awk 'NR == FNR { Defined[$$1] = 1; next } !($$1 in Defined)' $(BUILD)/ntcrt.syms src/ntdll_crt.txt >> $(BUILD)/ntdll_crt.def
+	awk -v x86=$(X86) -v x64='$(NTDLL_X64)' 'BEGIN { split(x64, a); for (i in a) X64[a[i]] = 1 } \
+	    NR == FNR { n = $$1; if (x86) sub(/^_/, "", n); Defined[n] = 1; next } \
+	    !($$1 in Defined) && !(x86 && $$1 in X64)' $(BUILD)/ntcrt.syms src/ntdll_crt.txt >> $(BUILD)/ntdll_crt.def
 	dlltool -d $(BUILD)/ntdll_crt.def -l $@
 
 # The static (non-import) members of libmsvcrt.a, minus those defining a symbol of libntcrt.a
 $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 	rm -rf $(BUILD)/msvcrt
 	mkdir -p $(BUILD)/msvcrt
-	cd $(BUILD)/msvcrt && ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib64_libmsvcrt_')
+	cd $(BUILD)/msvcrt && ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib$(if $(X86),32,64)_libmsvcrt_')
 	for o in $(BUILD)/msvcrt/*.o; do \
 	    if nm -g --defined-only $$o | awk 'NF == 3 { print $$3 }' | grep -qxF -f $(BUILD)/ntcrt.syms; then rm $$o; fi; \
 	done
@@ -143,9 +166,11 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
 # pthread functions, winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
 # kernel32 follows the group: it gives only the functions a program calls that NtCRT does not have, -ntcrt-strict
 # leaves it out. -Bstatic links libstdc++ and the others statically without -static. The specs of an installation
-# (install) have no paths, its drivers pass them.
-SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll \
-                --end-group %{!ntcrt-strict:-lkernel32}
+# (install) have no paths, its drivers pass them. A libgcc built for a shared libgcc has the unwinder in libgcc_eh
+# (that of i686 in MSYS2, DWARF).
+GCC_EH := $(if $(wildcard $(shell $(CXX) -print-file-name=libgcc_eh.a)),gcc_eh)
+SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc $(addprefix -l,$(GCC_EH)) -lmingwex -lntcrt -lmsvcrt_static \
+                -lntdll_crt -lntdll --end-group %{!ntcrt-strict:-lkernel32}
 
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
@@ -168,7 +193,7 @@ $(BUILD)/install/ntcrt.specs: Makefile
 # function). The math functions both libmingwex and ntdll define are of libmingwex. ntcrt.cfg adds kernel32 after
 # them to ntcrt-strict.cfg. Those of an installation find include/ and the libraries relative to themselves.
 NTCRT_LINK := -Wl,--gc-sections \
-              $(addprefix -l,ntcrt_start mingw32 stdc++ gcc ntcrt mingwex msvcrt_static ntdll_crt ntdll)
+              $(addprefix -l,ntcrt_start mingw32 stdc++ gcc $(GCC_EH) ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
 $(BUILD)/ntcrt.cfg $(BUILD)/install/ntcrt.cfg: %/ntcrt.cfg: %/ntcrt-strict.cfg
 	printf '@ntcrt-strict.cfg\n$$-lkernel32\n' > $@

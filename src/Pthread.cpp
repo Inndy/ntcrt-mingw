@@ -259,7 +259,7 @@ static NTSTATUS ThreadGetPriority(HANDLE Handle, int* Priority)
     return Status;
 }
 
-EXTERN_C int _NtCRT_ThreadCreate(ULONG_PTR* th, const void* Attr, void* (*Start)(void*), int (*StartC11)(void*),
+EXTERN_C int _NtCRT_ThreadCreate(uintptr_t* th, const void* Attr, void* (*Start)(void*), int (*StartC11)(void*),
                                  void* Arg)
 {
     const pthread_attr_t* attr = (const pthread_attr_t*)Attr;

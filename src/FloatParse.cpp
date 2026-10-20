@@ -753,12 +753,12 @@ static size_t _NtCRT_Atof32(const TChar* s, float* Value, BOOL* Range)
 #define NTCRT_LDBL_MIN_SCALE (-16445)
 
 /* The bits of the nearest long double to m * 2**e, Sticky for nonzero bits below m, TRUE if it overflows */
-static BOOL _NtCRT_HexLongDoubleBits(unsigned __int128 m, int e, BOOL Sticky, ULONG64* Mant, int* BiasedExp)
+static BOOL _NtCRT_HexLongDoubleBits(NTCRT_UINT128 m, int e, BOOL Sticky, ULONG64* Mant, int* BiasedExp)
 {
     int Len = 128 - (int)(m >> 64 != 0 ? __builtin_clzll((ULONG64)(m >> 64)) : 64 + __builtin_clzll((ULONG64)m));
     /* The exponent of the lowest bit of the significand, denormal at most */
     int q = e + Len - 64 > NTCRT_LDBL_MIN_SCALE ? e + Len - 64 : NTCRT_LDBL_MIN_SCALE, k = q - e;
-    unsigned __int128 r;
+    NTCRT_UINT128 r;
 
     if (k <= 0)
     {
@@ -769,7 +769,7 @@ static BOOL _NtCRT_HexLongDoubleBits(unsigned __int128 m, int e, BOOL Sticky, UL
         r = 0;
     } else
     {
-        unsigned __int128 Half = (unsigned __int128)1 << (k - 1), Low = m & ((Half << 1) - 1);
+        NTCRT_UINT128 Half = (NTCRT_UINT128)1 << (k - 1), Low = m & ((Half << 1) - 1);
 
         r = m >> k;
         if (Low > Half || (Low == Half && (Sticky || (r & 1) != 0)))
@@ -808,11 +808,11 @@ typedef struct _NTCRT_BIG
 /* a = a * m + Add */
 static void _NtCRT_BigMulAdd(NTCRT_BIG* a, ULONG64 m, ULONG64 Add)
 {
-    unsigned __int128 Carry = Add;
+    NTCRT_UINT128 Carry = Add;
 
     for (int i = 0; i < a->n; i++)
     {
-        Carry += (unsigned __int128)a->w[i] * m;
+        Carry += (NTCRT_UINT128)a->w[i] * m;
         a->w[i] = (ULONG64)Carry;
         Carry >>= 64;
     }
@@ -962,7 +962,7 @@ static unsigned _NtCRT_BigDivStep(NTCRT_BIG* r, const NTCRT_BIG* v, unsigned Bit
 static BOOL _NtCRT_BigLongDoubleBits(NTCRT_DECIMAL* d, ULONG64* Mant, int* BiasedExp)
 {
     NTCRT_BIG a, v;
-    unsigned __int128 m = 0;
+    NTCRT_UINT128 m = 0;
     BOOL Sticky = d->Trunc;
     int p, e, i;
 
@@ -1027,11 +1027,11 @@ static BOOL _NtCRT_BigLongDoubleBits(NTCRT_DECIMAL* d, ULONG64* Mant, int* Biase
         /* The low 68 bits are taken one by one into a remainder below v */
         for (i = 0; i < 68; i++)
         {
-            m |= (unsigned __int128)_NtCRT_BigBit(&a, i) << i;
+            m |= (NTCRT_UINT128)_NtCRT_BigBit(&a, i) << i;
         }
         _NtCRT_BigShiftRight(&a, 68);
         {
-            unsigned __int128 Low = m;
+            NTCRT_UINT128 Low = m;
 
             m = 0;
             for (i = 67; i >= 0; i--)
@@ -1047,7 +1047,7 @@ static BOOL _NtCRT_BigLongDoubleBits(NTCRT_DECIMAL* d, ULONG64* Mant, int* Biase
 
 /* The digits of the hex number t at s: up to 30 significant digits in *m, *Sticky if more are not 0, returns Exp */
 template<typename TChar>
-static int _NtCRT_HexMantissa(const TChar* s, const NTCRT_FLOAT_TEXT* t, unsigned __int128* m, BOOL* Sticky)
+static int _NtCRT_HexMantissa(const TChar* s, const NTCRT_FLOAT_TEXT* t, NTCRT_UINT128* m, BOOL* Sticky)
 {
     LONG64 nd = 0;
     int ndMant = 0;
@@ -1105,7 +1105,7 @@ static size_t _NtCRT_AtofLong(const TChar* s, long double* Value, BOOL* Range)
         /* Zero */
     } else if (t.Hex)
     {
-        unsigned __int128 m;
+        NTCRT_UINT128 m;
         BOOL Sticky;
         int e = _NtCRT_HexMantissa(s, &t, &m, &Sticky);
 

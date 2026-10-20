@@ -1,6 +1,6 @@
 # ntcrt-mingw
 
-A C runtime for MinGW-w64 (x64, GCC or clang) that imports `ntdll.dll` only. C and C++ programs link the msvcrt
+A C runtime for MinGW-w64 (x64, GCC or clang; x86 in progress) that imports `ntdll.dll` only. C and C++ programs link the msvcrt
 functions from this library instead of `msvcrt.dll` and `kernel32.dll`. A program links `kernel32.dll` only for the
 Win32 functions it calls that NtCRT does not have (`objdump -p hello.exe` lists them under `DLL Name: KERNEL32.dll`);
 with `-ntcrt-strict` (GCC) or `--config=build-llvm/ntcrt-strict.cfg` (clang) kernel32 is not linked and such a call
@@ -26,7 +26,7 @@ An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`,
 directory and libraries found relative to themselves, so that `CC=x86_64-w64-ntcrt-mingw32-gcc` is one word for
 configure, make or CMake. They take `-ntcrt-strict` too. The specs and configuration files link statically
 (`-Bstatic`, `-static`) when `-static` is not given, a program does not import `libstdc++-6.dll` or
-`libgcc_s_seh-1.dll`. NtCRT is x64 only.
+`libgcc_s_seh-1.dll`. The drivers are x64 only, see [x86](#x86).
 
 ## Layout
 
@@ -160,6 +160,21 @@ does what the specs do and links by lld. clang uses the headers and libraries of
   `std::call_once` in its emulated `thread_local` variables.
 - The directory of the libraries is a `-L` of the driver, which precedes the directories of the toolchain:
   `-lpthread` finds the empty `libpthread.a` of NtCRT, not winpthreads.
+
+## x86
+
+With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686-w64-mingw32`, such as the
+`mingw32/bin` of msys2, MinGW-w64 15), `make` builds for x86 into `build-i686`. The port is in progress:
+
+- Done: the PEB and TEB of x86 (`fs`), the stubs with the names of x86 (`_printf` and `__imp__printf`, a stdcall
+  function of kernel32 with `@` and the size of its arguments, which `make` reads from the objects), the startup,
+  stdio, the float conversions (a 128-bit integer of two halves for `unsigned __int128`), `setjmp` (`_setjmp3`) and
+  `longjmp`, which unwinds the SEH frames registered since as msvcrt does (the ntdll of x86 has neither), and the
+  DWARF unwinder of libgcc (`libgcc_eh`) for C++ exceptions.
+- Not yet: the arguments of printf and scanf (the engine reads slots of 8 bytes), the locks of pthreads,
+  `pthread_once`, semaphores and the synchronization of C11 `<threads.h>`, whose state is in the 64 bits of a word
+  (their sources are left out of the build), the functions of msvcrt with a 32-bit `time_t` (`time`, `_stat`, ...)
+  and the others that only x86 has, the x87 control word, `make test` and clang.
 
 ## Behavior
 

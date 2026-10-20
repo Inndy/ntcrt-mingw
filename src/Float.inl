@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "UInt128.inl"
+
 typedef struct _NTCRT_POW10
 {
     ULONG64 Hi;
@@ -65,7 +67,7 @@ static inline void _NtCRT_Prescale(NTCRT_SCALER* Pre, int e, int p, int lp)
 /* The unrounded x * 2**e * 10**p, x left-justified (high bit set), s < 64 */
 static inline NTCRT_UNROUNDED _NtCRT_Uscale(ULONG64 x, const NTCRT_SCALER* c)
 {
-    unsigned __int128 Product = (unsigned __int128)x * c->PmHi;
+    NTCRT_UINT128 Product = (NTCRT_UINT128)x * c->PmHi;
     ULONG64 Hi = (ULONG64)(Product >> 64), Mid = (ULONG64)Product, Mid2;
     int s = c->s & 63;
 
@@ -73,7 +75,7 @@ static inline NTCRT_UNROUNDED _NtCRT_Uscale(ULONG64 x, const NTCRT_SCALER* c)
     {
         return Hi >> s | 1;
     }
-    Mid2 = (ULONG64)(((unsigned __int128)x * c->PmLo) >> 64);
+    Mid2 = (ULONG64)(((NTCRT_UINT128)x * c->PmLo) >> 64);
     Hi -= Mid < Mid2;
     return Hi >> s | (Mid - Mid2 > 1);
 }

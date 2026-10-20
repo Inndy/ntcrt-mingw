@@ -26,16 +26,28 @@
 /* Only "__imp_Name", for a name that the MinGW-w64 runtime defines itself, collected as above */
 #define NTCRT_IMPORT_ONLY(Name, Impl) static_assert(sizeof(&Impl) != 0, #Name)
 
+/* The prefix of the assembler names of C names ("_" on x86), the alignment and the directive of a pointer */
+#define NTCRT_STRINGIZE_(x) #x
+#define NTCRT_STRINGIZE(x) NTCRT_STRINGIZE_(x)
+#define NTCRT_ASM_PREFIX NTCRT_STRINGIZE(__USER_LABEL_PREFIX__)
+#ifdef _WIN64
+#define NTCRT_ASM_PTR_ALIGN ".p2align 3\n"
+#define NTCRT_ASM_PTR ".quad "
+#else
+#define NTCRT_ASM_PTR_ALIGN ".p2align 2\n"
+#define NTCRT_ASM_PTR ".long "
+#endif
+
 /* A variable cannot be forwarded by a jump, "Name" and "__imp_Name" are defined in the object of "Impl" */
 #define NTCRT_IMPORT_DATA(Name, Impl) \
-    __asm__(".globl " #Name "\n\t" \
-            ".set " #Name ", " #Impl "\n\t" \
+    __asm__(".globl " NTCRT_ASM_PREFIX #Name "\n\t" \
+            ".set " NTCRT_ASM_PREFIX #Name ", " NTCRT_ASM_PREFIX #Impl "\n\t" \
             ".section .rdata$__imp_" #Name ",\"dr\"\n\t" \
             ".linkonce discard\n\t" \
-            ".globl __imp_" #Name "\n\t" \
-            ".p2align 3\n" \
-            "__imp_" #Name ":\n\t" \
-            ".quad " #Impl "\n\t" \
+            ".globl __imp_" NTCRT_ASM_PREFIX #Name "\n\t" \
+            NTCRT_ASM_PTR_ALIGN \
+            "__imp_" NTCRT_ASM_PREFIX #Name ":\n\t" \
+            NTCRT_ASM_PTR NTCRT_ASM_PREFIX #Impl "\n\t" \
             ".text")
 
 #define NTCRT_API extern "C" __attribute__((used))
@@ -167,7 +179,7 @@ extern "C" int __cdecl _NtCRT_nanosleep(const struct timespec* request, struct t
 extern "C" PLARGE_INTEGER _NtCRT_Timeout(LONGLONG Units, int Clock, PLARGE_INTEGER Timeout);
 
 /* pthread_create with a start function of C11 (thrd_create) if StartC11 */
-extern "C" int _NtCRT_ThreadCreate(ULONG_PTR* Thread, const void* Attr, void* (*Start)(void*), int (*StartC11)(void*),
+extern "C" int _NtCRT_ThreadCreate(uintptr_t* Thread, const void* Attr, void* (*Start)(void*), int (*StartC11)(void*),
                                    void* Arg);
 
 /* The mutex of a condition wait, unlocked whatever its recursion count, which Relock restores */
