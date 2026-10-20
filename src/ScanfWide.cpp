@@ -9,7 +9,7 @@
 
 EXTERN_C int _NtCRT_ScanW(NTCRT_SCANF_INPUT<wchar_t>* In, const wchar_t* Format, va_list ap, ULONG Options)
 {
-    return _NtCRT_ScanFormat(In, Format, (const ULONG64*)ap, Options);
+    return _NtCRT_ScanFormat(In, Format, (const ULONG_PTR*)ap, Options);
 }
 
 EXTERN_C int _NtCRT_ScanStringW(const wchar_t* Input, size_t Count, const wchar_t* Format, va_list ap, ULONG Options)
@@ -23,7 +23,7 @@ EXTERN_C int _NtCRT_ScanStringW(const wchar_t* Input, size_t Count, const wchar_
     }
     In.Next = Input;
     In.Left = Count;
-    return _NtCRT_ScanFormat(&In, Format, (const ULONG64*)ap, Options);
+    return _NtCRT_ScanFormat(&In, Format, (const ULONG_PTR*)ap, Options);
 }
 
 EXTERN_C int __cdecl _NtCRT_vswscanf(const wchar_t* str, const wchar_t* format, va_list ap)

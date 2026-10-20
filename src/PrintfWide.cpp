@@ -32,7 +32,7 @@ _NtCRT_FormatGrowW(wchar_t** Buffer, size_t Count, const wchar_t* Format, va_lis
     o.Buffer = *Buffer;
     o.Count = Count;
     o.Grow = TRUE;
-    _NtCRT_Format(&o, Format, (const ULONG64*)ap, Options);
+    _NtCRT_Format(&o, Format, ap, Options);
     *Buffer = o.Buffer;
     return _NtCRT_FormatResult(&o);
 }

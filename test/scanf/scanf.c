@@ -81,9 +81,10 @@ static void examples(void)
     char name[50], units[21], item[21];
     FILE* f;
 
-    /* EXAMPLE 1 */
+    /* EXAMPLE 1, the cast rounds the constant on x87 too (FLT_EVAL_METHOD 2) */
     n = sscanf("25 54.32E-1 thompson", "%d%f%s", &i, &x, name);
-    EXPECT(n == 3 && i == 25 && x == 5.432f && strcmp(name, "thompson") == 0, "example 1: %d %d %g %s", n, i, x, name);
+    EXPECT(n == 3 && i == 25 && x == (float)5.432f && strcmp(name, "thompson") == 0, "example 1: %d %d %g %s", n, i, x,
+           name);
 
     /* EXAMPLE 2: the next character is a */
     f = file_of("56789 0123 56a72", "rb");
@@ -492,7 +493,7 @@ static void floats(void)
 
     /* Hex floats, inf, nan */
     Ret = sscanf("0x1.8p1 -0X.8P-1 0x1p-1074", "%lf %f %lf", &d, &f, &d2);
-    EXPECT(Ret == 3 && d == 3.0 && f == -0.25f && d2 == 5e-324, "hex: %d %g %g %g", Ret, d, f, d2);
+    EXPECT(Ret == 3 && d == 3.0 && f == -0.25f && d2 == (double)5e-324, "hex: %d %g %g %g", Ret, d, f, d2);
     Ret = sscanf("inf -INFINITY nan(abc_1) -NaN", "%lf %f %lf %lf", &d, &f, &d2, &d3);
     EXPECT(Ret == 4 && isinf(d) && d > 0 && isinf(f) && f < 0 && isnan(d2) && isnan(d3) && signbit(d3),
            "inf nan: %d", Ret);

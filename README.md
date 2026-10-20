@@ -167,14 +167,14 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
 `mingw32/bin` of msys2, MinGW-w64 15), `make` builds for x86 into `build-i686`. The port is in progress:
 
 - Done: the PEB and TEB of x86 (`fs`), the stubs with the names of x86 (`_printf` and `__imp__printf`, a stdcall
-  function of kernel32 with `@` and the size of its arguments, which `make` reads from the objects), the startup,
-  stdio, the float conversions (a 128-bit integer of two halves for `unsigned __int128`), `setjmp` (`_setjmp3`) and
-  `longjmp`, which unwinds the SEH frames registered since as msvcrt does (the ntdll of x86 has neither), and the
-  DWARF unwinder of libgcc (`libgcc_eh`) for C++ exceptions.
-- Not yet: the arguments of printf and scanf (the engine reads slots of 8 bytes), the locks of pthreads,
-  `pthread_once`, semaphores and the synchronization of C11 `<threads.h>`, whose state is in the 64 bits of a word
-  (their sources are left out of the build), the functions of msvcrt with a 32-bit `time_t` (`time`, `_stat`, ...)
-  and the others that only x86 has, the x87 control word, `make test` and clang.
+  function of kernel32 with `@` and the size of its arguments, which `make` reads from the objects), the startup, stdio,
+  the float conversions (a 128-bit integer of two halves for `unsigned __int128`), `setjmp` (`_setjmp3`) and `longjmp`,
+  which unwinds the SEH frames registered since as msvcrt does (the ntdll of x86 has neither), the DWARF unwinder of
+  libgcc (`libgcc_eh`) for C++ exceptions, and the arguments of printf and scanf: by the size of their types, the
+  positional ones by the types the whole format gives them (a long double of GCC takes 12 bytes).
+- Not yet: the locks of pthreads, `pthread_once`, semaphores and the synchronization of C11 `<threads.h>`, whose state
+  is in the 64 bits of a word (their sources are left out of the build), the functions of msvcrt with a 32-bit `time_t`
+  (`time`, `_stat`, ...) and the others that only x86 has, the x87 control word, `make test` and clang.
 
 ## Behavior
 
@@ -215,20 +215,23 @@ MinGW-w64 formats through in C++, with `__USE_MINGW_ANSI_STDIO` and for its inli
 specs, defined by libntcrt for lld). The printf of libmingwex (`pformat`, `gdtoa`) is not linked. It follows C and
 takes the conventions of msvcrt beside:
 
-- C: the flags, width and precision (also `*` and `*m$`), positional arguments (`%n$`, POSIX), `hh`, `h`, `l`,
-  `ll`, `j`, `z`, `t` and `L`, `%a`, `%n`. Floating point numbers are exact and round ties
-  to even, by the digits of `src/FloatFormat.cpp` (the ftoa of Go 1.27: unrounded scaling for up to 18 digits, the
-  multiprecision decimal for more and for long double). A length beyond `INT_MAX` fails with `EOVERFLOW`.
-- The long double of `%Lf` is that of the caller, as in mingw-w64: a `double` for the functions of msvcrt (the
-  `long double` of MSVC and of the Windows ABI, also what tcc passes), the 80-bit long double of GCC and clang for
+- C: the flags, width and precision (also `*` and `*m$`), positional arguments (`%n$`, POSIX, 100 at most as the
+  `_ARGMAX` of msvcrt, beyond is `EINVAL`), `hh`, `h`, `l`, `ll`, `j`, `z`, `t` and `L`, `%a`, `%n`. Floating point
+  numbers are exact and round ties to even, by the digits of `src/FloatFormat.cpp` (the ftoa of Go 1.27: unrounded
+  scaling for up to 18 digits, the multiprecision decimal for more and for long double). A length beyond `INT_MAX` fails
+  with `EOVERFLOW`.
+- The long double of `%Lf` is that of the caller, as in mingw-w64: a `double` for the functions of msvcrt (the `long
+  double` of MSVC and of the Windows ABI, also what tcc passes), the 80-bit long double of GCC and clang for
   `__mingw_*printf` and `__mingw_*scanf`, which `<stdio.h>` calls with `__USE_MINGW_ANSI_STDIO` (C99 and C++ with
   msvcrt). scanf stores a `double` for `%Lf` and `%llf` of the functions of msvcrt. A program built with
-  `__USE_MINGW_ANSI_STDIO=0` that passes a GCC long double to `printf` prints 0, as with msvcrt and UCRT.
-- msvcrt: the length modifiers `I`, `I32`, `I64` and `w`, `%S`/`%C` (the other width than the function), `%Z`
-  (`ANSI_STRING`, `%wZ` `UNICODE_STRING`), `%p` as 16 uppercase digits, and in the wide functions of msvcrt
-  (`swprintf`, `_snwprintf`, `fwprintf`, ...) `%s`/`%c` wide and `%S`/`%C` narrow, where the C99 ones of MinGW-w64
-  take `%s`/`%c` narrow. `_snprintf` and `_snwprintf` write no terminator when the output fills the buffer and
-  return -1 when it does not fit, `snprintf` truncates as C does.
+  `__USE_MINGW_ANSI_STDIO=0` that passes a GCC long double to `printf` prints 0, as with msvcrt and UCRT. `L` of an
+  integer conversion (`%Lx`) and of `%Ln` is ignored by the functions of msvcrt, as by msvcrt, and is `ll` for
+  `__mingw_*printf` and `__mingw_*scanf`, as by mingw-w64.
+- msvcrt: the length modifiers `I`, `I32`, `I64` and `w` (`z`, `t` and `I` the size of a pointer), `%S`/`%C` (the other
+  width than the function), `%Z` (`ANSI_STRING`, `%wZ` `UNICODE_STRING`), `%p` as uppercase digits (16 on x64, 8 on
+  x86), and in the wide functions of msvcrt (`swprintf`, `_snwprintf`, `fwprintf`, ...) `%s`/`%c` wide and `%S`/`%C`
+  narrow, where the C99 ones of MinGW-w64 take `%s`/`%c` narrow. `_snprintf` and `_snwprintf` write no terminator when
+  the output fills the buffer and return -1 when it does not fit, `snprintf` truncates as C does.
 - `%ls`/`%lc` of the narrow functions and the narrow strings of the wide functions convert by the current locale,
   an unconvertible character fails the call with -1 and `EILSEQ` and a stream gets no output. The precision of a
   narrow `%ls` counts bytes and never cuts a character, the precision of a narrow string in a wide function counts
@@ -247,7 +250,7 @@ of pushback at most, the console functions (`_cscanf`, ...) read a line and scan
   characters are consumed, as the `"100ergs"` of the examples of C. EOF is returned for an input failure (the end of
   the input, an encoding error of a stream) before the first conversion, a suppressed one (`%*d`) and `%n` count.
   `%c`, `%[` and `%n` do not skip white space, `%%` does. `hh`, `h`, `l`, `ll`, `j`, `z`, `t` and `L`, `%a`, `%p`
-  (16 hex digits as printf writes them, with or without `0x`), positional arguments (`%n$`) and `m` (`%ms`, an
+  (hex digits as printf writes them, with or without `0x`), positional arguments (`%n$`) and `m` (`%ms`, an
   allocated string, POSIX: no memory is an error, `ENOMEM` and EOF before the first conversion).
 - Integers are the result of `strtoll` (`%d`, `%i`) or `strtoull` (`%u`, `%o`, `%x`, `%p`, which take a sign too),
   base prefixes for `%i`, stored in the size of the type: the low bits of a number out of its range, `ERANGE` and

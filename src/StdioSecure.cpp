@@ -29,14 +29,6 @@ EXTERN_C int __cdecl _NtCRT__vcwprintf(const wchar_t* format, va_list ap);
 static size_t _NtCRT_TLen(const char* s) { return strlen(s); }
 static size_t _NtCRT_TLen(const wchar_t* s) { return wcslen(s); }
 
-static
-va_list
-_NtCRT_SlotList(
-    _In_ ULONG_PTR* Slots)
-{
-    return (va_list)(void*)Slots;
-}
-
 /* Allocate a copy of the first Length characters of Str */
 template<typename TChar>
 static
@@ -66,14 +58,10 @@ _NtCRT_IsDigit(
 /* A printf conversion specification after '%' */
 typedef struct _NTCRT_PRINTF_SPEC
 {
-    size_t Start;       /* Offset of '%' */
     size_t End;         /* Offset after the conversion character */
-    size_t FlagsStart;  /* Offset after "n$" */
     int Position;       /* n of "%n$", 0 if not positional */
     int WidthPosition;  /* m of "*m$", -1 for '*', 0 for none */
     int PrecisionPosition;
-    size_t WidthStart, WidthEnd;         /* Width text, "*m$" included */
-    size_t PrecisionStart, PrecisionEnd; /* Precision text after '.', "*m$" included */
     unsigned int Conversion;
 } NTCRT_PRINTF_SPEC, *PNTCRT_PRINTF_SPEC;
 
@@ -109,14 +97,12 @@ _NtCRT_ParsePrintfSpec(
     _In_ size_t i,
     _Out_ PNTCRT_PRINTF_SPEC Spec)
 {
-    Spec->Start = i++;
+    i++;
     Spec->Position = _NtCRT_ParsePosition(Format, &i);
-    Spec->FlagsStart = i;
     while (Format[i] == '-' || Format[i] == '+' || Format[i] == ' ' || Format[i] == '#' || Format[i] == '0')
     {
         i++;
     }
-    Spec->WidthStart = i;
     Spec->WidthPosition = 0;
     if (Format[i] == '*')
     {
@@ -133,12 +119,10 @@ _NtCRT_ParsePrintfSpec(
             i++;
         }
     }
-    Spec->WidthEnd = i;
     Spec->PrecisionPosition = 0;
-    Spec->PrecisionStart = Spec->PrecisionEnd = 0;
     if (Format[i] == '.')
     {
-        Spec->PrecisionStart = ++i;
+        i++;
         if (Format[i] == '*')
         {
             i++;
@@ -154,7 +138,6 @@ _NtCRT_ParsePrintfSpec(
                 i++;
             }
         }
-        Spec->PrecisionEnd = i;
     }
     for (;;)
     {
@@ -247,8 +230,8 @@ _NtCRT_PrintS(
 }
 
 /*
- * Print a format with positional parameters ("%n$", "*m$") by Print(Format, ap). All conversions must be either
- * positional or not. A format without them is printed as is.
+ * Print a format with positional parameters ("%n$", "*m$") by Print(Format, ap), the engine of printf takes them.
+ * All conversions must be either positional or not, NTCRT_ARGMAX positions at most.
  */
 template<typename TChar, typename TPrint>
 static
@@ -259,18 +242,11 @@ _NtCRT_PrintP(
     _In_ TPrint Print)
 {
     NTCRT_PRINTF_SPEC Spec;
-    ULONG_PTR Slots[NTCRT_ARGMAX + 1];
-    ULONG_PTR* Args;
-    size_t ArgCount = 0;
     size_t Length = _NtCRT_TLen(Format);
-    TChar* NewFormat;
-    TChar* o;
     int Mode = 0; /* 1 positional, -1 not */
-    int Max = 0;
-    int Ret;
     size_t i;
 
-    /* Check the mode and find the largest position */
+    /* Check the mode and the positions */
     for (i = 0; i < Length; i++)
     {
         int ThisMode;
@@ -318,89 +294,9 @@ _NtCRT_PrintP(
             _NtCRT_InvalidParameter(EINVAL);
             return -1;
         }
-        Max = Spec.Position > Max ? Spec.Position : Max;
-        Max = Spec.WidthPosition > Max ? Spec.WidthPosition : Max;
-        Max = Spec.PrecisionPosition > Max ? Spec.PrecisionPosition : Max;
-        /* A position may be used again, every use takes a slot of Args */
-        ArgCount += 1 + (Spec.WidthPosition > 0) + (Spec.PrecisionPosition > 0);
         i = Spec.End - 1;
     }
-    if (Mode <= 0)
-    {
-        return Print(Format, ap);
-    }
-
-    for (int n = 1; n <= Max; n++)
-    {
-        Slots[n] = va_arg(ap, ULONG_PTR);
-    }
-    /* A conversion is at least 3 characters ("%1$d") and takes 3 slots at most, the sizes cannot overflow */
-    Args = (ULONG_PTR*)RtlAllocateHeap(NTCRT_HEAP, 0, ArgCount * sizeof(ULONG_PTR) + (Length + 1) * sizeof(TChar));
-    if (Args == NULL)
-    {
-        NTCRT_ERRNO = ENOMEM;
-        return -1;
-    }
-    NewFormat = (TChar*)(Args + ArgCount);
-    ArgCount = 0;
-    o = NewFormat;
-    for (i = 0; i < Length; i++)
-    {
-        if (Format[i] != '%' || Format[i + 1] == '%')
-        {
-            *o++ = Format[i];
-            if (Format[i] == '%')
-            {
-                *o++ = Format[++i];
-            }
-            continue;
-        }
-        if (!_NtCRT_ParsePrintfSpec(Format, i, &Spec))
-        {
-            break;
-        }
-        *o++ = '%';
-        for (size_t j = Spec.FlagsStart; j < Spec.WidthStart; j++)
-        {
-            *o++ = Format[j];
-        }
-        if (Spec.WidthPosition > 0)
-        {
-            *o++ = '*';
-            Args[ArgCount++] = Slots[Spec.WidthPosition];
-        } else
-        {
-            for (size_t j = Spec.WidthStart; j < Spec.WidthEnd; j++)
-            {
-                *o++ = Format[j];
-            }
-        }
-        if (Spec.PrecisionStart != 0)
-        {
-            *o++ = '.';
-            if (Spec.PrecisionPosition > 0)
-            {
-                *o++ = '*';
-                Args[ArgCount++] = Slots[Spec.PrecisionPosition];
-            } else
-            {
-                for (size_t j = Spec.PrecisionStart; j < Spec.PrecisionEnd; j++)
-                {
-                    *o++ = Format[j];
-                }
-            }
-        }
-        for (size_t j = Spec.PrecisionStart != 0 ? Spec.PrecisionEnd : Spec.WidthEnd; j < Spec.End; j++)
-        {
-            *o++ = Format[j];
-        }
-        Args[ArgCount++] = Slots[Spec.Position];
-        i = Spec.End - 1;
-    }
-    *o = 0;
-    Ret = Print(NewFormat, _NtCRT_SlotList(Args));
-    RtlFreeHeap(NTCRT_HEAP, 0, Args);
-    return Ret;
+    return Print(Format, ap);
 }
 
 #pragma region "_s" printf

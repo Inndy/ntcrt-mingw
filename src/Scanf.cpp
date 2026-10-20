@@ -10,7 +10,7 @@
 
 EXTERN_C int _NtCRT_Scan(NTCRT_SCANF_INPUT<char>* In, const char* Format, va_list ap, ULONG Options)
 {
-    return _NtCRT_ScanFormat(In, Format, (const ULONG64*)ap, Options);
+    return _NtCRT_ScanFormat(In, Format, (const ULONG_PTR*)ap, Options);
 }
 
 /* Count characters of Input at most, up to a null character */
@@ -25,7 +25,7 @@ EXTERN_C int _NtCRT_ScanString(const char* Input, size_t Count, const char* Form
     }
     In.Next = Input;
     In.Left = Count;
-    return _NtCRT_ScanFormat(&In, Format, (const ULONG64*)ap, Options);
+    return _NtCRT_ScanFormat(&In, Format, (const ULONG_PTR*)ap, Options);
 }
 
 EXTERN_C int __cdecl _NtCRT_vsscanf(const char* str, const char* format, va_list ap)

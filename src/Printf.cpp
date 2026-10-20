@@ -32,7 +32,7 @@ EXTERN_C int _NtCRT_FormatAlloc(char** Result, const char* Format, va_list ap, U
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    _NtCRT_Format(&o, Format, (const ULONG64*)ap, Options);
+    _NtCRT_Format(&o, Format, ap, Options);
     Ret = _NtCRT_FormatResult(&o);
     if (Ret >= 0)
     {
@@ -70,7 +70,7 @@ EXTERN_C int _NtCRT_FormatStream(FILE* Stream, const char* Format, va_list ap, U
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    _NtCRT_Format(&o, Format, (const ULONG64*)ap, Options);
+    _NtCRT_Format(&o, Format, ap, Options);
     Ret = _NtCRT_FormatResult(&o);
     if (Ret >= 0 && _NtCRT_StreamWrite(Stream, o.Buffer, o.Length) != 0)
     {

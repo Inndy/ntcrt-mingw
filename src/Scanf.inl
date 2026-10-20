@@ -15,7 +15,8 @@
  * of %c, %s and %[ with NTCRT_SCANF_SECURE (the _s functions) and, with NTCRT_SCANF_LEGACY_WIDE, the %s, %c and %[
  * of the wide functions, which are wide (%hs narrow). POSIX: %n$ and the m of an allocated string.
  *
- * A va_list of x64 is a pointer to slots of 8 bytes, which makes a positional argument an index.
+ * Every argument is a pointer (the size of the _s functions an unsigned int): a slot of the va_list, of 8 bytes on
+ * x64 and 4 on x86, which makes a positional argument an index.
  *
  * The engine is a template of the character type, instantiated for char by Scanf.cpp and for wchar_t by
  * ScanfWide.cpp: ld links whole objects, a program with sscanf does not link the wide engine nor the streams. The
@@ -612,9 +613,9 @@ typedef enum _NTCRT_SCANF_LENGTH
     NtCRTScanChar,     /* hh */
     NtCRTScanShort,    /* h */
     NtCRTScanLong,     /* l: 32 bits, double */
-    NtCRTScanLongLong, /* ll, q: long double; j, z, t, I, I64: 64 bits */
+    NtCRTScanLongLong, /* ll, q: long double; j, I64: 64 bits */
     NtCRTScanInt32,    /* I32 */
-    NtCRTScanDouble    /* L: long double, 64 bits */
+    NtCRTScanDouble    /* L: long double, 64 bits for __mingw_*scanf (ignored by msvcrt) */
 } NTCRT_SCANF_LENGTH;
 
 /* Scan Format, returns the count of assignments, EOF for an input failure before the first conversion */
@@ -624,7 +625,7 @@ int
 _NtCRT_ScanFormat(
     _Inout_ NTCRT_SCANF_INPUT<TChar>* In,
     _In_z_ const TChar* f,
-    _In_ const ULONG64* Args,
+    _In_ const ULONG_PTR* Args,
     _In_ ULONG Options)
 {
     typedef typename std::make_unsigned<TChar>::type UChar;
@@ -705,9 +706,12 @@ _NtCRT_ScanFormat(
             } else if (*f == 'L')
             {
                 Length = NtCRTScanDouble;
-            } else if (*f == 'q' || *f == 'j' || *f == 'z' || *f == 't')
+            } else if (*f == 'q' || *f == 'j')
             {
                 Length = NtCRTScanLongLong;
+            } else if (*f == 'z' || *f == 't')
+            {
+                Length = sizeof(void*) == 8 ? NtCRTScanLongLong : NtCRTScanLong;
             } else if (*f == 'I')
             {
                 if (f[1] == '3' && f[2] == '2')
@@ -716,8 +720,10 @@ _NtCRT_ScanFormat(
                     Length = NtCRTScanInt32;
                 } else
                 {
-                    f += f[1] == '6' && f[2] == '4' ? 2 : 0;
-                    Length = NtCRTScanLongLong;
+                    BOOL Is64 = f[1] == '6' && f[2] == '4';
+
+                    f += Is64 ? 2 : 0;
+                    Length = Is64 || sizeof(void*) == 8 ? NtCRTScanLongLong : NtCRTScanLong;
                 }
             } else if (*f != '\'')
             {
@@ -730,17 +736,20 @@ _NtCRT_ScanFormat(
             break;
         }
         f++;
+
+        /* The size of an integer: L is ignored by msvcrt, 64 bits for __mingw_*scanf */
+        BOOL L64 = Length == NtCRTScanDouble && (Options & NTCRT_SCANF_LONG_DOUBLE);
+        int IntSize = Length == NtCRTScanChar    ? 1
+                      : Length == NtCRTScanShort ? 2
+                      : Length == NtCRTScanLongLong || L64 ? 8
+                                                           : 4;
+
         if (Conv == 'n')
         {
             /* No input is read, the count is no assignment */
             if (!Suppress)
             {
-                _NtCRT_ScanStore((void*)Arg(Position),
-                                 Length == NtCRTScanChar    ? 1
-                                 : Length == NtCRTScanShort ? 2
-                                 : Length == NtCRTScanLongLong || Length == NtCRTScanDouble ? 8
-                                                                                            : 4,
-                                 In->Count);
+                _NtCRT_ScanStore((void*)Arg(Position), IntSize, In->Count);
             }
             Converted = TRUE;
             continue;
@@ -757,10 +766,7 @@ _NtCRT_ScanFormat(
         case 'P':
         {
             ULONG64 v;
-            int Size = Length == NtCRTScanChar    ? 1
-                       : Length == NtCRTScanShort ? 2
-                       : Length == NtCRTScanLongLong || Length == NtCRTScanDouble || (Conv | 0x20) == 'p' ? 8
-                                                                                                           : 4;
+            int Size = (Conv | 0x20) == 'p' && IntSize > 2 ? (int)sizeof(void*) : IntSize;
 
             if (!Suppress)
             {

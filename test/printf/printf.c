@@ -128,7 +128,8 @@ int main(void)
 
         CHECK("[abc] [xy] [  a] [(null)]", "[%Z] [%wZ] [%3.1Z] [%Z]", &a, &u, &a, (void*)NULL);
     }
-    CHECK("-5 4294967295 wide 0000000000001234", "%I64d %I32u %S %p", -5ll, 0xFFFFFFFFu, L"wide", (void*)0x1234);
+    CHECK(sizeof(void*) == 8 ? "-5 4294967295 wide 0000000000001234" : "-5 4294967295 wide 00001234",
+          "%I64d %I32u %S %p", -5ll, 0xFFFFFFFFu, L"wide", (void*)0x1234);
     checkw(L"wide|narrow", 1, L"%s|%S", L"wide", "narrow");
     checkw(L"narrow|wide", 0, L"%s|%S", "narrow", L"wide");
 

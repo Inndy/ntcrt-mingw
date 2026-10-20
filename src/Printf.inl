@@ -12,7 +12,9 @@
  * long double of GCC and clang for __mingw_*printf (NTCRT_PRINTF_LONG_DOUBLE), as mingw-w64 does.
  *
  * An argument takes a slot of 8 bytes in the va_list of x64 (a long double is passed by address), which makes the
- * positional arguments an index. A conversion the engine does not know is copied to the output as it is.
+ * positional arguments an index. On x86 it takes the size of its type, the positional arguments are found by the
+ * types the format gives them (NTCRT_PRINTF_ARGS). A conversion the engine does not know is copied to the output as
+ * it is.
  *
  * The engine is a template of the character type, instantiated for char by Printf.cpp and for wchar_t by
  * PrintfWide.cpp: ld links whole objects, a program with printf only does not link the wide engine.
@@ -159,10 +161,16 @@ typedef enum _NTCRT_PRINTF_LENGTH
     NtCRTLengthChar,     /* hh */
     NtCRTLengthShort,    /* h */
     NtCRTLengthLong,     /* l, 32 bits */
-    NtCRTLengthLongLong, /* ll, j, z, t, q, I, I64: 64 bits */
+    NtCRTLengthLongLong, /* ll, j, q, I64: 64 bits */
     NtCRTLengthInt32,    /* I32 */
-    NtCRTLengthDouble    /* L: long double, or 64 bits for an integer */
+    NtCRTLengthDouble    /* L of __mingw_*printf: long double, or 64 bits for an integer */
 } NTCRT_PRINTF_LENGTH;
+
+/* z, t and I: the size of a pointer */
+#define NTCRT_PRINTF_LENGTH_PTR (sizeof(void*) == 8 ? NtCRTLengthLongLong : NtCRTLengthLong)
+
+/* The position of an argument: -1 the next one, NTCRT_PRINTF_NO_ARG none (a width or precision of the format) */
+#define NTCRT_PRINTF_NO_ARG (-2)
 
 typedef struct _NTCRT_PRINTF_SPEC
 {
@@ -175,6 +183,9 @@ typedef struct _NTCRT_PRINTF_SPEC
     int Precision;  /* -1 if none */
     NTCRT_PRINTF_LENGTH Length;
     int Text; /* Width of a string or character: 1 narrow (h), 2 wide (l, w), 0 by the conversion */
+    int Position;     /* Of the argument (n$), -1 the next one */
+    int WidthArg;     /* Of the width (*, *m$) */
+    int PrecisionArg; /* Of the precision (.*, .*m$) */
 } NTCRT_PRINTF_SPEC;
 
 /* The field: Prefix (sign, "0x"), the padding to Width (zeros after Prefix if ZeroPad) and the body */
@@ -530,8 +541,9 @@ _NtCRT_FormatHex(
     }
 }
 
+/* Not inlined in the loop of the format, where it takes more space */
 template<typename TChar>
-static
+static __attribute__((noinline))
 void
 _NtCRT_FormatFloat(
     _Inout_ NTCRT_PRINTF_OUT<TChar>* o,
@@ -549,7 +561,7 @@ _NtCRT_FormatFloat(
 
     if (Spec->Length == NtCRTLengthDouble)
     {
-        _NtCRT_UnpackLongDouble((const void*)Arg, &f);
+        _NtCRT_UnpackLongDouble((const void*)(ULONG_PTR)Arg, &f);
     } else
     {
         _NtCRT_UnpackDouble(Arg, &f);
@@ -915,25 +927,353 @@ _NtCRT_ParseNumber(
     return n;
 }
 
+/*
+ * The conversion after a "%" at *p: the flags, width, precision, length and the positions of the arguments in Spec,
+ * returns the conversion character, '\0' at the end of the format. The long double of %Lf is a double for the
+ * functions of msvcrt, as for MSVC, and L of the other conversions is ignored as msvcrt does. For __mingw_*printf
+ * (NTCRT_PRINTF_LONG_DOUBLE) it is the long double of GCC and an integer of 64 bits.
+ */
+template<typename TChar>
+static
+TChar
+_NtCRT_ParseSpec(
+    _Inout_ const TChar** p,
+    _Out_ NTCRT_PRINTF_SPEC* Spec,
+    _In_ ULONG Options)
+{
+    const TChar* f = *p;
+    TChar Conv;
+
+    *Spec = {};
+    Spec->Position = _NtCRT_ParseArgPosition(&f);
+    for (;; f++)
+    {
+        if (*f == '-')
+        {
+            Spec->Left = TRUE;
+        } else if (*f == '+')
+        {
+            Spec->Plus = TRUE;
+        } else if (*f == ' ')
+        {
+            Spec->Space = TRUE;
+        } else if (*f == '#')
+        {
+            Spec->Alt = TRUE;
+        } else if (*f == '0')
+        {
+            Spec->Zero = TRUE;
+        } else if (*f != '\'')
+        {
+            break;
+        }
+    }
+    Spec->WidthArg = NTCRT_PRINTF_NO_ARG;
+    if (*f == '*')
+    {
+        f++;
+        Spec->WidthArg = _NtCRT_ParseArgPosition(&f);
+    } else
+    {
+        Spec->Width = _NtCRT_ParseNumber(&f);
+    }
+    Spec->Precision = -1;
+    Spec->PrecisionArg = NTCRT_PRINTF_NO_ARG;
+    if (*f == '.')
+    {
+        f++;
+        if (*f == '*')
+        {
+            f++;
+            Spec->PrecisionArg = _NtCRT_ParseArgPosition(&f);
+        } else
+        {
+            unsigned Precision = _NtCRT_ParseNumber(&f);
+
+            Spec->Precision = Precision > INT_MAX ? INT_MAX : (int)Precision;
+        }
+    }
+    switch (*f)
+    {
+    case 'h':
+        f++;
+        Spec->Length = *f == 'h' ? (f++, NtCRTLengthChar) : NtCRTLengthShort;
+        Spec->Text = 1;
+        break;
+    case 'l':
+        f++;
+        Spec->Length = *f == 'l' ? (f++, NtCRTLengthLongLong) : NtCRTLengthLong;
+        Spec->Text = 2;
+        break;
+    case 'w':
+        f++;
+        Spec->Length = NtCRTLengthLong;
+        Spec->Text = 2;
+        break;
+    case 'L':
+        f++;
+        Spec->Length = Options & NTCRT_PRINTF_LONG_DOUBLE ? NtCRTLengthDouble : NtCRTLengthNone;
+        break;
+    case 'q':
+    case 'j':
+        f++;
+        Spec->Length = NtCRTLengthLongLong;
+        break;
+    case 'z':
+    case 't':
+        f++;
+        Spec->Length = NTCRT_PRINTF_LENGTH_PTR;
+        break;
+    case 'I':
+        f++;
+        if (f[0] == '3' && f[1] == '2')
+        {
+            f += 2;
+            Spec->Length = NtCRTLengthInt32;
+        } else if (f[0] == '6' && f[1] == '4')
+        {
+            f += 2;
+            Spec->Length = NtCRTLengthLongLong;
+        } else
+        {
+            Spec->Length = NTCRT_PRINTF_LENGTH_PTR;
+        }
+        break;
+    default:
+        break;
+    }
+    Conv = *f;
+    if (Conv != '\0')
+    {
+        f++;
+    }
+    *p = f;
+    return Conv;
+}
+
+#pragma region Arguments
+
+/*
+ * The variadic arguments, which a va_list of x64 and of x86 points to. On x64 an argument takes a slot of 8 bytes
+ * (a long double is passed by address), a position is an index. On x86 an int or a pointer takes 4 bytes, a long
+ * long or a double 8 and the long double of GCC 12: the offsets of the positional arguments follow from the types
+ * that the whole format gives them, a position that no conversion takes is an int. NTCRT_PRINTF_POSITIONS
+ * positions at most on both (_ARGMAX of msvcrt).
+ */
+typedef enum _NTCRT_PRINTF_ARG
+{
+    NtCRTArgNone,
+    NtCRTArgInt,
+    NtCRTArgLongLong,
+    NtCRTArgPointer,
+    NtCRTArgDouble,
+    NtCRTArgLongDouble
+} NTCRT_PRINTF_ARG;
+
+#define NTCRT_PRINTF_POSITIONS 100
+
+struct NTCRT_PRINTF_ARGS
+{
+    const char* Base;
+    size_t Next; /* Offset of the next argument */
+#ifndef _WIN64
+    BOOL Positioned; /* Offsets is set */
+    USHORT Offsets[NTCRT_PRINTF_POSITIONS];
+#endif
+};
+
+static inline size_t _NtCRT_ArgSize(NTCRT_PRINTF_ARG Kind)
+{
+#ifdef _WIN64
+    UNREFERENCED_PARAMETER(Kind);
+    return 8;
+#else
+    return Kind == NtCRTArgLongLong || Kind == NtCRTArgDouble ? 8 : Kind == NtCRTArgLongDouble ? 12 : 4;
+#endif
+}
+
+/* The argument a conversion takes */
+static inline NTCRT_PRINTF_ARG _NtCRT_ArgKind(const NTCRT_PRINTF_SPEC* Spec, int Conv)
+{
+    switch (Conv)
+    {
+    case 'd':
+    case 'i':
+    case 'u':
+    case 'o':
+    case 'x':
+    case 'X':
+        return Spec->Length == NtCRTLengthLongLong || Spec->Length == NtCRTLengthDouble ? NtCRTArgLongLong
+                                                                                        : NtCRTArgInt;
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'F':
+    case 'g':
+    case 'G':
+    case 'a':
+    case 'A':
+        return Spec->Length == NtCRTLengthDouble ? NtCRTArgLongDouble : NtCRTArgDouble;
+    case 'c':
+    case 'C':
+        return NtCRTArgInt;
+    case 'p':
+    case 's':
+    case 'S':
+    case 'Z':
+    case 'n':
+        return NtCRTArgPointer;
+    default:
+        return NtCRTArgNone;
+    }
+}
+
+#ifndef _WIN64
+/* The offsets of the positional arguments of Format, FALSE if one is beyond NTCRT_PRINTF_POSITIONS */
+template<typename TChar>
+static
+BOOL
+_NtCRT_ArgOffsets(
+    _Inout_ NTCRT_PRINTF_ARGS* Args,
+    _In_z_ const TChar* f,
+    _In_ ULONG Options)
+{
+    NTCRT_PRINTF_ARG Kinds[NTCRT_PRINTF_POSITIONS] = {};
+    int Count = 0;
+    size_t Offset = 0;
+
+    while (*f != '\0')
+    {
+        NTCRT_PRINTF_SPEC Spec;
+        TChar Conv;
+        NTCRT_PRINTF_ARG Kind;
+
+        if (*f++ != '%')
+        {
+            continue;
+        }
+        Conv = _NtCRT_ParseSpec(&f, &Spec, Options);
+        if (Conv == '\0')
+        {
+            break;
+        }
+        Kind = _NtCRT_ArgKind(&Spec, Conv);
+        const int Positions[3] = {Spec.WidthArg, Spec.PrecisionArg, Kind != NtCRTArgNone ? Spec.Position : -1};
+        const NTCRT_PRINTF_ARG Types[3] = {NtCRTArgInt, NtCRTArgInt, Kind};
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (Positions[i] >= NTCRT_PRINTF_POSITIONS)
+            {
+                return FALSE;
+            }
+            if (Positions[i] >= 0)
+            {
+                Kinds[Positions[i]] = Types[i];
+                Count = Positions[i] >= Count ? Positions[i] + 1 : Count;
+            }
+        }
+    }
+    for (int i = 0; i < Count; i++)
+    {
+        Args->Offsets[i] = (USHORT)Offset;
+        Offset += _NtCRT_ArgSize(Kinds[i] != NtCRTArgNone ? Kinds[i] : NtCRTArgInt);
+    }
+    Args->Positioned = TRUE;
+    return TRUE;
+}
+#endif
+
+/*
+ * The argument at Position, or the next one for -1: its bits, or the address of a long double. A position beyond
+ * NTCRT_PRINTF_POSITIONS fails the output with EINVAL.
+ */
+template<typename TChar>
+static
+ULONG64
+_NtCRT_Arg(
+    _Inout_ NTCRT_PRINTF_OUT<TChar>* o,
+    _Inout_ NTCRT_PRINTF_ARGS* Args,
+    _In_z_ const TChar* Format,
+    _In_ int Position,
+    _In_ NTCRT_PRINTF_ARG Kind,
+    _In_ ULONG Options)
+{
+    const char* p;
+    ULONG64 v64;
+    ULONG v32;
+
+    if (Position < 0)
+    {
+        p = Args->Base + Args->Next;
+        Args->Next += _NtCRT_ArgSize(Kind);
+    } else
+    {
+#ifdef _WIN64
+        BOOL Ok = Position < NTCRT_PRINTF_POSITIONS;
+
+        UNREFERENCED_PARAMETER(Format);
+        UNREFERENCED_PARAMETER(Options);
+#else
+        BOOL Ok = Args->Positioned || _NtCRT_ArgOffsets(Args, Format, Options);
+#endif
+        if (!Ok)
+        {
+            NTCRT_ERRNO = EINVAL;
+            o->Failed = TRUE;
+            return 0;
+        }
+#ifdef _WIN64
+        p = Args->Base + (size_t)Position * 8;
+#else
+        p = Args->Base + Args->Offsets[Position];
+#endif
+    }
+#ifndef _WIN64
+    if (Kind == NtCRTArgLongDouble)
+    {
+        return (ULONG_PTR)p;
+    }
+#endif
+    if (_NtCRT_ArgSize(Kind) == 8)
+    {
+        memcpy(&v64, p, sizeof(v64));
+        return v64;
+    }
+    memcpy(&v32, p, sizeof(v32));
+    return v32;
+}
+
+#pragma endregion
+
 template<typename TChar>
 static
 void
 _NtCRT_Format(
     _Inout_ NTCRT_PRINTF_OUT<TChar>* o,
     _In_z_ const TChar* Format,
-    _In_ const ULONG64* Args,
+    _In_ va_list ap,
     _In_ ULONG Options)
 {
     const TChar* f = Format;
-    int Next = 0;
+    NTCRT_PRINTF_ARGS Args;
 
-    auto Arg = [&](int Position) { return Position >= 0 ? Args[Position] : Args[Next++]; };
+    Args.Base = (const char*)ap;
+    Args.Next = 0;
+#ifndef _WIN64
+    Args.Positioned = FALSE;
+#endif
+
+    auto Arg = [&](int Position, NTCRT_PRINTF_ARG Kind) {
+        return _NtCRT_Arg(o, &Args, Format, Position, Kind, Options);
+    };
 
     while (*f != '\0' && !o->Failed)
     {
         const TChar* Start = f;
-        NTCRT_PRINTF_SPEC Spec = {};
-        int Position;
+        NTCRT_PRINTF_SPEC Spec;
+        NTCRT_PRINTF_ARG Kind;
+        ULONG64 Value;
         TChar Conv;
         BOOL Wide = sizeof(TChar) != sizeof(char);
 
@@ -947,115 +1287,38 @@ _NtCRT_Format(
             continue;
         }
         f++;
-        Position = _NtCRT_ParseArgPosition(&f);
-        for (;; f++)
+        Conv = _NtCRT_ParseSpec(&f, &Spec, Options);
+        if (Conv == '\0')
         {
-            if (*f == '-')
-            {
-                Spec.Left = TRUE;
-            } else if (*f == '+')
-            {
-                Spec.Plus = TRUE;
-            } else if (*f == ' ')
-            {
-                Spec.Space = TRUE;
-            } else if (*f == '#')
-            {
-                Spec.Alt = TRUE;
-            } else if (*f == '0')
-            {
-                Spec.Zero = TRUE;
-            } else if (*f != '\'')
-            {
-                break;
-            }
+            _NtCRT_OutChars(o, Start, (size_t)(f - Start));
+            break;
         }
-        if (*f == '*')
+        if (Spec.WidthArg != NTCRT_PRINTF_NO_ARG)
         {
-            int Width;
+            int Width = (int)Arg(Spec.WidthArg, NtCRTArgInt);
 
-            f++;
-            Width = (int)Arg(_NtCRT_ParseArgPosition(&f));
             /* A negative width is the flag - and its magnitude, that of INT_MIN too */
             if (Width < 0)
             {
                 Spec.Left = TRUE;
             }
             Spec.Width = Width < 0 ? 0u - (unsigned)Width : (unsigned)Width;
-        } else
-        {
-            Spec.Width = _NtCRT_ParseNumber(&f);
         }
-        Spec.Precision = -1;
-        if (*f == '.')
+        if (Spec.PrecisionArg != NTCRT_PRINTF_NO_ARG)
         {
-            f++;
-            if (*f == '*')
-            {
-                f++;
-                Spec.Precision = (int)Arg(_NtCRT_ParseArgPosition(&f));
-                Spec.Precision = Spec.Precision < 0 ? -1 : Spec.Precision;
-            } else
-            {
-                unsigned Precision = _NtCRT_ParseNumber(&f);
-
-                Spec.Precision = Precision > INT_MAX ? INT_MAX : (int)Precision;
-            }
+            Spec.Precision = (int)Arg(Spec.PrecisionArg, NtCRTArgInt);
+            Spec.Precision = Spec.Precision < 0 ? -1 : Spec.Precision;
         }
         if (Spec.Left)
         {
             Spec.Zero = FALSE;
         }
-        switch (*f)
+        Kind = _NtCRT_ArgKind(&Spec, Conv);
+        Value = Kind != NtCRTArgNone ? Arg(Spec.Position, Kind) : 0;
+        if (o->Failed)
         {
-        case 'h':
-            f++;
-            Spec.Length = *f == 'h' ? (f++, NtCRTLengthChar) : NtCRTLengthShort;
-            Spec.Text = 1;
-            break;
-        case 'l':
-            f++;
-            Spec.Length = *f == 'l' ? (f++, NtCRTLengthLongLong) : NtCRTLengthLong;
-            Spec.Text = 2;
-            break;
-        case 'w':
-            f++;
-            Spec.Length = NtCRTLengthLong;
-            Spec.Text = 2;
-            break;
-        case 'L':
-            f++;
-            Spec.Length = NtCRTLengthDouble;
-            break;
-        case 'q':
-        case 'j':
-        case 'z':
-        case 't':
-            f++;
-            Spec.Length = NtCRTLengthLongLong;
-            break;
-        case 'I':
-            f++;
-            if (f[0] == '3' && f[1] == '2')
-            {
-                f += 2;
-                Spec.Length = NtCRTLengthInt32;
-            } else
-            {
-                f += f[0] == '6' && f[1] == '4' ? 2 : 0;
-                Spec.Length = NtCRTLengthLongLong;
-            }
-            break;
-        default:
             break;
         }
-        Conv = *f;
-        if (Conv == '\0')
-        {
-            _NtCRT_OutChars(o, Start, (size_t)(f - Start));
-            break;
-        }
-        f++;
         switch (Conv)
         {
         case 'd':
@@ -1072,7 +1335,7 @@ _NtCRT_Format(
             {
                 Spec.Plus = Spec.Space = FALSE;
             }
-            _NtCRT_FormatInteger(o, &Spec, Conv, Arg(Position));
+            _NtCRT_FormatInteger(o, &Spec, Conv, Value);
             break;
         case 'e':
         case 'E':
@@ -1082,24 +1345,20 @@ _NtCRT_Format(
         case 'G':
         case 'a':
         case 'A':
-            /* The long double of %Lf is a double for the functions of msvcrt, as for MSVC */
-            if (Spec.Length == NtCRTLengthDouble && (Options & NTCRT_PRINTF_LONG_DOUBLE) == 0)
-            {
-                Spec.Length = NtCRTLengthNone;
-            }
-            _NtCRT_FormatFloat(o, &Spec, Conv, Arg(Position));
+            _NtCRT_FormatFloat(o, &Spec, Conv, Value);
             break;
         case 'p':
         {
-            /* 16 uppercase hexadecimal digits as msvcrt */
-            ULONG64 v = Arg(Position);
+            /* The digits of a pointer, uppercase as msvcrt */
+            const int Count = (int)sizeof(void*) * 2;
+            ULONG64 v = Value;
             char Digits[16];
 
-            for (int i = 15; i >= 0; i--, v >>= 4)
+            for (int i = Count - 1; i >= 0; i--, v >>= 4)
             {
                 Digits[i] = "0123456789ABCDEF"[v & 0xF];
             }
-            _NtCRT_OutField(o, &Spec, "", 16, FALSE, [&]() { _NtCRT_OutAscii(o, Digits, 16); });
+            _NtCRT_OutField(o, &Spec, "", Count, FALSE, [&]() { _NtCRT_OutAscii(o, Digits, Count); });
             break;
         }
         case 's':
@@ -1116,17 +1375,17 @@ _NtCRT_Format(
             if (Conv == 'c' || Conv == 'C')
             {
                 Spec.Precision = -1;
-                _NtCRT_FormatChar(o, &Spec, Arg(Position), WideArg != Wide);
+                _NtCRT_FormatChar(o, &Spec, Value, WideArg != Wide);
             } else
             {
-                _NtCRT_FormatString(o, &Spec, (const void*)Arg(Position), WideArg != Wide, SIZE_MAX);
+                _NtCRT_FormatString(o, &Spec, (const void*)(ULONG_PTR)Value, WideArg != Wide, SIZE_MAX);
             }
             break;
         }
         case 'Z':
         {
             /* An ANSI_STRING, a UNICODE_STRING with l or w */
-            const void* s = (const void*)Arg(Position);
+            const void* s = (const void*)(ULONG_PTR)Value;
             BOOL WideArg = Spec.Text == 2;
             const void* Buffer = NULL;
             size_t Count = 0;
@@ -1142,7 +1401,7 @@ _NtCRT_Format(
         }
         case 'n':
         {
-            void* p = (void*)Arg(Position);
+            void* p = (void*)(ULONG_PTR)Value;
 
             switch (Spec.Length)
             {
@@ -1214,7 +1473,7 @@ _NtCRT_FormatBuffer(
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    _NtCRT_Format(&o, Format, (const ULONG64*)ap, Options);
+    _NtCRT_Format(&o, Format, ap, Options);
     Ret = _NtCRT_FormatResult(&o);
     if (Buffer == NULL || Count == 0)
     {
