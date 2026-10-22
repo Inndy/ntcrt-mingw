@@ -19,7 +19,6 @@ _NtCRT___wgetmainargs(
     _In_ int dowildcard,
     _In_opt_ _NtCRT_startupinfo* startinfo)
 {
-    UNREFERENCED_PARAMETER(dowildcard);
     UNREFERENCED_PARAMETER(startinfo);
 
     _NtCRT_InitRuntime();
@@ -27,6 +26,19 @@ _NtCRT___wgetmainargs(
     {
         _NtCRT_wcmdln = NtCurrentPeb()->ProcessParameters->CommandLine.Buffer;
         _NtCRT_wargv = _NtCRT_BuildArgv<wchar_t>(_NtCRT_wcmdln, &_NtCRT_argc);
+        /* The expanded argv points into the block of the arguments, which stays */
+        if (dowildcard == NTCRT_DOWILDCARD_DEFAULT)
+        {
+            dowildcard = _NtCRT_GlobWargv != NULL;
+        }
+        if (_NtCRT_wargv != NULL && dowildcard != 0)
+        {
+            if (_NtCRT_GlobWargv == NULL)
+            {
+                _NtCRT_GlobMissing();
+            }
+            _NtCRT_wargv = _NtCRT_GlobWargv(_NtCRT_wargv, &_NtCRT_argc);
+        }
         if (_NtCRT_wargv == NULL)
         {
             _NtCRT_amsg_exit(8);

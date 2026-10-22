@@ -6,8 +6,9 @@
  *   clang, clang++      NTCRT_LLVM_DIR clang or clang++ --config=<prefix>/lib/clang/ntcrt.cfg
  *
  * with the arguments of the driver after these, and returns its exit code. -ntcrt-strict leaves kernel32 out (GCC:
- * the specs read it, clang: ntcrt-strict.cfg). An empty NTCRT_GCC_DIR or NTCRT_LLVM_DIR finds the compiler by the
- * search of CreateProcessW (PATH). The arguments are quoted again as the C runtime of the compiler parses them.
+ * the specs read it, clang: ntcrt-strict.cfg). -ntcrt-glob links libntcrt_glob, the wildcards of argv (GCC: the
+ * specs, clang: -lntcrt_glob). An empty NTCRT_GCC_DIR or NTCRT_LLVM_DIR finds the compiler by the search of
+ * CreateProcessW (PATH). The arguments are quoted again as the C runtime of the compiler parses them.
  */
 
 #include <stdio.h>
@@ -158,7 +159,10 @@ int wmain(int argc, wchar_t** argv)
     }
     for (int i = 1; i < argc; i++)
     {
-        if (!Clang || wcscmp(argv[i], L"-ntcrt-strict") != 0)
+        if (Clang && wcscmp(argv[i], L"-ntcrt-glob") == 0)
+        {
+            AppendArgument(L"-lntcrt_glob");
+        } else if (!Clang || wcscmp(argv[i], L"-ntcrt-strict") != 0)
         {
             AppendArgument(argv[i]);
         }

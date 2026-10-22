@@ -49,6 +49,8 @@ OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 and libgcc members, linked before them
 START_SRCS := $(wildcard src/start/*.cpp)
 START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
+# libntcrt_glob: the wildcards of argv, linked by -lntcrt_glob (src/glob/Glob.cpp)
+GLOB_OBJS := $(BUILD)/glob/Glob.o
 HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/*.h) $(wildcard include/KNSoft/NDK/*) \
             $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
@@ -85,7 +87,7 @@ DRIVER   := $(BUILD)/ntcrt.specs
 endif
 
 LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a \
-        $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a $(BUILD)/libdl.a
+        $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a $(BUILD)/libdl.a $(BUILD)/libntcrt_glob.a
 
 # make TCC=1: build-tcc/libntcrt.a and build-tcc/ntdll.def for tcc in place of msvcrt.def, x64 (NTCRT_TCC in NtCRT.h).
 # tcc links ELF objects, which clang makes for Windows (LLVM=<dir>/ for clang in <dir>). tcc links whole objects: a
@@ -101,7 +103,7 @@ TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf "--sysroot=$(GCC_ROOT)" -stdlib
 LIB_CXX  := $(filter %/,$(LLVM))clang++ $(TCC_FLAGS)
 LIB_AS   := $(filter %/,$(LLVM))clang --target=x86_64-w64-windows-gnu-elf
 CXXFLAGS := $(patsubst -O2,-Os,$(filter-out -ffunction-sections,$(CXXFLAGS)))
-LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def
+LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def $(BUILD)/lib/libntcrt_glob.a
 DRIVER   :=
 # What tcc-built programs get beyond msvcrt.dll, as a GCC build of NtCRT: the C99 math of <math.h> (double and float,
 # the long double of tcc is a double), strnlen, wcsnlen, snprintf, vsnprintf
@@ -128,6 +130,15 @@ $(BUILD)/start/%.o: src/start/%.cpp $(HEADERS) | $(BUILD)
 	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD)/libntcrt_start.a: $(START_OBJS)
+	rm -f $@
+	ar rcs $@ $^
+
+$(BUILD)/glob/%.o: src/glob/%.cpp $(HEADERS) | $(BUILD)
+	mkdir -p $(@D)
+	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BUILD)/libntcrt_glob.a $(BUILD)/lib/libntcrt_glob.a: $(GLOB_OBJS)
+	mkdir -p $(@D)
 	rm -f $@
 	ar rcs $@ $^
 
@@ -255,12 +266,13 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
 # of libmingw32, which would link the printf family into every program, and emutls of libgcc. libntcrt has the
 # pthread functions, winpthreads is not linked. include/ (<threads.h>) is a system include directory of the programs.
 # kernel32 follows the group: it gives only the functions a program calls that NtCRT does not have, -ntcrt-strict
-# leaves it out. -Bstatic links libstdc++ and the others statically without -static. The specs of an installation
-# (install) have no paths, its drivers pass them. A libgcc built for a shared libgcc has the unwinder in libgcc_eh
-# (that of i686 in MSYS2, DWARF).
+# leaves it out. -ntcrt-glob links libntcrt_glob before the group, as -lntcrt_glob would: its _setargv and _wsetargv
+# precede those of libmingw32. -Bstatic links libstdc++ and the others statically without -static. The specs of an
+# installation (install) have no paths, its drivers pass them. A libgcc built for a shared libgcc has the unwinder in
+# libgcc_eh (that of i686 in MSYS2, DWARF).
 GCC_EH := $(shell test -f "$$($(CXX) -print-file-name=libgcc_eh.a)" && echo gcc_eh)
-SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc $(addprefix -l,$(GCC_EH)) -lmingwex -lntcrt -lmsvcrt_static \
-                -lntdll_crt -lntdll --end-group %{!ntcrt-strict:-lkernel32}
+SPECS_LIBGCC := %{ntcrt-glob:-lntcrt_glob} --start-group -lntcrt_start -lmingw32 -lgcc $(addprefix -l,$(GCC_EH)) \
+                -lmingwex -lntcrt -lmsvcrt_static -lntdll_crt -lntdll --end-group %{!ntcrt-strict:-lkernel32}
 
 # GNU ld drops the unused functions on x86, x64 keeps them by .pdata (README.md "Size")
 SPECS_LINK := $(if $(X86),--gc-sections )$(WRAPS)
@@ -499,6 +511,22 @@ $(BUILD)/start/argv.exe: test/start/argv.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
 
+# The wildcards of the arguments, by libntcrt_glob (-ntcrt-glob of the specs): alone, with int _dowildcard = -1 and
+# with CRT_glob.o of MinGW-w64 (wmain). Not expanded without it and with _dowildcard = 0. _dowildcard = -1 and
+# CRT_glob.o without it stop with an error.
+CRT_GLOB := "$(shell $(CXX) -print-file-name=CRT_glob.o)"
+GLOB_EXES := $(addprefix $(BUILD)/start/,glob.exe globl.exe globw.exe glob0.exe globz.exe globerr.exe globwerr.exe)
+
+$(GLOB_EXES) &: test/start/glob.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -static -DDEFINE=-1 -o $(BUILD)/start/glob.exe $< -lntcrt_glob
+	$(NTCRT_CC) -O2 -static -o $(BUILD)/start/globl.exe $< $(if $(LLVM),-lntcrt_glob,-ntcrt-glob)
+	$(NTCRT_CC) -O2 -static -municode -DWIDE -o $(BUILD)/start/globw.exe $< $(CRT_GLOB) -lntcrt_glob
+	$(NTCRT_CC) -O2 -static -DNONE -o $(BUILD)/start/glob0.exe $<
+	$(NTCRT_CC) -O2 -static -DNONE -DDEFINE=0 -o $(BUILD)/start/globz.exe $< -lntcrt_glob
+	$(NTCRT_CC) -O2 -static -DDEFINE=-1 -o $(BUILD)/start/globerr.exe $<
+	$(NTCRT_CC) -O2 -static -municode -DWIDE -o $(BUILD)/start/globwerr.exe $< $(CRT_GLOB)
+
 $(BUILD)/start/names.exe: test/start/names.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -O2 -static -o $@ $<
@@ -566,9 +594,14 @@ test-dl: $(BUILD)/dl/dl.exe $(BUILD)/dl/min.exe $(BUILD)/dl/empty.exe $(BUILD)/d
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
             $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe \
             $(BUILD)/start/time32.exe $(BUILD)/start/nlsdata.exe $(BUILD)/start/tlsattach.exe \
-            $(BUILD)/start/loadlib.exe
+            $(BUILD)/start/loadlib.exe $(GLOB_EXES)
 	cd $(BUILD)/start && ./reloc.exe
 	$(BUILD)/start/argv.exe
+	cd $(BUILD)/start && rm -rf glob.tmp && for t in glob globl globw glob0 globz; do \
+	    ./$$t.exe | grep -q '^glob: ok$$' || { echo "$$t.exe fails"; exit 1; }; done
+	cd $(BUILD)/start && for t in globerr globwerr; do \
+	    ./$$t.exe 2>&1 | grep -q '^_dowildcard requires -lntcrt_glob' && { ./$$t.exe 2>/dev/null; test $$? = 255; } || \
+	    { echo "$$t.exe does not stop"; exit 1; }; done
 	$(BUILD)/start/names.exe | grep -q '^names: ok$$'
 	$(BUILD)/start/kernel32.exe | grep -q '^kernel32: ok$$'
 	$(BUILD)/start/pebteb.exe | grep -q '^pebteb: ok$$'
@@ -714,9 +747,9 @@ install: $(INSTALL_DEPS)
 	$(call install-to,$(PREFIX))
 
 # An installation in a directory with a space: C and C++ by the drivers without -static, an argument with quotes
-# and spaces, -ntcrt-strict. Then the specs (GCC) or the configuration (clang) of a build, made for the include/ and
-# the libraries of that directory: for clang with a sysroot of a space too, a junction to the toolchain, which rm
-# removes without what it points to. TCC=1: the files of tcc in that directory.
+# and spaces, -ntcrt-strict, -ntcrt-glob. Then the specs (GCC) or the configuration (clang) of a build, made for the
+# include/ and the libraries of that directory: for clang with a sysroot of a space too, a junction to the toolchain,
+# which rm removes without what it points to. TCC=1: the files of tcc in that directory.
 INSTALL_TEST := $(BUILD)/install test
 INSTALL_FULL := $(CURDIR)/$(INSTALL_TEST)
 
@@ -736,6 +769,9 @@ test-install: $(INSTALL_DEPS)
 	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(word 2,$(INSTALL_TOOLS)).exe" -O2 -ntcrt-strict -x c++ \
 	    -DTEXT='"c++"' -o "$(INSTALL_TEST)/hello++.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello++.exe" | tr -d '\r' | grep -q -x -F 'c++'
+	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(firstword $(INSTALL_TOOLS)).exe" -O2 -ntcrt-glob -DGLOB \
+	    -o "$(INSTALL_TEST)/glob.exe" test/start/install.c
+	cd "$(INSTALL_TEST)" && test "$$(./glob.exe 'hel*.exe' | tr -d '\r' | tr '\n' ' ')" = "hello++.exe hello.exe "
 ifdef LLVM
 	cmd //c mklink //J "$$(cygpath -w "$(INSTALL_TEST)/sys root")" "$$(cygpath -w "$(GCC_ROOT)")" > /dev/null
 	$(call build-cfg,$(INSTALL_FULL)/sys root,$(INSTALL_FULL)/include,$(INSTALL_FULL)/$(INSTALL_LIB),$(INSTALL_TEST)/build.cfg)
@@ -747,7 +783,7 @@ else
 	    test/start/install.c
 endif
 	"$(INSTALL_TEST)/build.exe" | tr -d '\r' | grep -q -x -F 'build'
-	for t in hello hello++ build; do \
+	for t in hello hello++ glob build; do \
 	    if objdump -p "$(INSTALL_TEST)/$$t.exe" | grep 'DLL Name' | grep -v -i -q ntdll.dll; then \
 	        echo "$$t.exe imports more than ntdll.dll"; exit 1; fi; \
 	done

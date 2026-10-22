@@ -1,6 +1,7 @@
 /* msvcrt directory, file search and file time functions */
 
 #include "NtCRT.h"
+#include "FindMask.inl"
 
 #include <stdio.h>
 #include <direct.h>
@@ -582,7 +583,7 @@ _NtCRT_FindFirst(
     _In_ PCWSTR Pattern,
     _Out_ PNTCRT_FIND_DATA Data)
 {
-    PCWSTR FileName, p;
+    PCWSTR FileName;
     PWSTR DirectoryPath;
     size_t DirectoryLength, MaskLength;
     PNTCRT_FIND Find;
@@ -596,14 +597,7 @@ _NtCRT_FindFirst(
         NTCRT_ERRNO = EINVAL;
         return NULL;
     }
-    FileName = Pattern;
-    for (p = Pattern; *p != L'\0'; p++)
-    {
-        if (*p == L'\\' || *p == L'/' || (*p == L':' && p == Pattern + 1))
-        {
-            FileName = p + 1;
-        }
-    }
+    FileName = _NtCRT_FindFileName(Pattern);
     if (*FileName == L'\0')
     {
         NTCRT_ERRNO = ENOENT;
@@ -626,28 +620,7 @@ _NtCRT_FindFirst(
         NTCRT_ERRNO = ENOMEM;
         return NULL;
     }
-    if (wcscmp(FileName, L"*.*") == 0)
-    {
-        MaskLength = 1;
-        Find->Mask.Buffer[0] = L'*';
-    } else
-    {
-        for (size_t i = 0; i < MaskLength; i++)
-        {
-            WCHAR c = FileName[i];
-            if (c == L'?')
-            {
-                c = DOS_QM;
-            } else if (c == L'.' && (FileName[i + 1] == L'?' || FileName[i + 1] == L'*'))
-            {
-                c = DOS_DOT;
-            } else if (c == L'*' && FileName[i + 1] == L'.')
-            {
-                c = DOS_STAR;
-            }
-            Find->Mask.Buffer[i] = c;
-        }
-    }
+    MaskLength = _NtCRT_FindMask(FileName, Find->Mask.Buffer);
     Find->Mask.Length = Find->Mask.MaximumLength = (USHORT)(MaskLength * sizeof(WCHAR));
 
     /* Open the directory */

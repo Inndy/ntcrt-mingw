@@ -133,6 +133,15 @@ _NtCRT_BuildArgv(
     return Argv;
 }
 
+/*
+ * The wildcards of the arguments, expanded by libntcrt_glob.a (src/glob/Glob.cpp) unless the program sets _dowildcard
+ * to 0: the weak references link nothing, they are NULL without the library. A program that sets _dowildcard without
+ * it stops by _NtCRT_GlobMissing (Startup.cpp).
+ */
+extern "C" __attribute__((weak)) char** _NtCRT_GlobArgv(wchar_t** Wide, char** Argv, int* Argc);
+extern "C" __attribute__((weak)) wchar_t** _NtCRT_GlobWargv(wchar_t** Argv, int* Argc);
+EXTERN_C __declspec(noreturn) void _NtCRT_GlobMissing(void);
+
 /* The last argument of __getmainargs and __wgetmainargs */
 typedef struct
 {

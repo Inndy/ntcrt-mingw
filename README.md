@@ -67,8 +67,9 @@ path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put tha
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
 - `test/thread/` the pthread functions, `<threads.h>` and the threads of libstdc++ (`make test-thread`)
 - `test/dl/` `<dlfcn.h>` with two DLLs (`make test-dl`)
-- `test/start/` pseudo relocations of data auto-imported from a DLL, `_matherr` and the narrow `argv` of
-  characters converted to bytes that a parser would take for a backslash or a quote (`make test-start`)
+- `test/start/` pseudo relocations of data auto-imported from a DLL, `_matherr`, the narrow `argv` of
+  characters converted to bytes that a parser would take for a backslash or a quote and the wildcards of `argv`
+  (`make test-start`)
 - `test/size/` small programs measured by `make size`
 - `test/compare/` tests whose output is compared with UCRT, `run.sh` finds `vcvars64.bat` by vswhere or `VCVARS`
 - `test/wine/` the msvcrt and ucrtbase tests of Wine 11.0 on NtCRT (`make test-wine`, downloads them into the build
@@ -596,6 +597,28 @@ limitation.
   `argv` with non-ASCII characters is read as UTF-8 by `fopen` and not found (a Big5 name with the ANSI code page
   950). A program in "C.UTF-8" takes its arguments in UTF-8 with the `activeCodePage` manifest setting (UTF-8 is
   then the ANSI code page and the names of every code page work), or by `wmain` and `_wfopen`.
+- The wildcards of `argv` are expanded as msvcrt expands them by `libntcrt_glob.a`: `-lntcrt_glob`, or
+  `-ntcrt-glob` of the specs and of the drivers. An argument after the program name with `*` or `?`, quoted or
+  not, is replaced by the names that match it, files and directories, each after the directory part of the
+  argument as written. `.` and `..` are left out, hidden files are not. The names are sorted with the ASCII letters
+  folded, the narrow ones after their conversion. They match as for `FindFirstFile`: `a?.c` matches `a.c`, `*.` the
+  names without a dot, a short name matches too. An argument that nothing matches, or with a wildcard in its
+  directory part, stays as it is. The narrow `argv` is expanded from the wide one, so a name matches by its
+  characters, not by their best fit in the ANSI code page.
+- As in MinGW-w64, the program may define `_dowildcard`, which the library follows: 0 leaves the arguments as they
+  are. Unlike MinGW-w64, `_dowildcard` alone does not link the expansion: a program that defines it as not 0
+  (`int _dowildcard = -1;`, `CRT_glob.o` of MinGW-w64) without the library stops at its start with
+  `_dowildcard requires -lntcrt_glob` on stderr and the exit code 255. A program with neither is not expanded, not
+  even by the libmingw32 of a MinGW-w64 configured with `--enable-wildcard`. Only the programs that link the library
+  have its code (4.5 KB of an x64 program by GCC); the others have the check, 128 bytes of `.text` (192 with
+  `wmain`).
+- tcc (`make TCC=1`, `lib/libntcrt_glob.a`): its `crt1.c` defines `_dowildcard` as 0, a program sets
+  `int _dowildcard = -1;` (no conflict with that of `crt1.c`). tcc reads an archive when it comes to it and links a
+  member for a weak reference, so the library must follow `libntcrt.a` in the libraries that tcc adds itself
+  (`pe_add_runtime`): a `-lntcrt_glob` of the command line comes before `libntcrt.a`, which refers to the
+  expansion, and links nothing (the program stops with the error). Added there for every program, the library would
+  be linked into every one: tcc-ntdll adds it after `libntcrt.a` when the program asks for it by `-lntcrt_glob` or
+  `#pragma comment(lib, "ntcrt_glob")`.
 - When `LC_CTYPE` is "C.UTF-8", a text mode console fd writes and reads UTF-8 through `WriteConsoleW` and
   `ReadConsoleW` whatever the console code page is: a character split between writes is kept until it is
   complete, reads translate CRLF to LF. Ctrl+Z is read as in the "C" locale (`ReadFile` of a console, msvcrt and

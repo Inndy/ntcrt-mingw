@@ -4,10 +4,6 @@ Proposals, kept here until they are taken up or dropped; those taken up say so.
 
 ## Correctness
 
-- **Wildcards of `__getmainargs`** (in progress, ntcrt-mingw-e1). msvcrt expands `*` and `?` of the command line
-  when the program sets `_dowildcard` (`CRT_glob` of MinGW-w64, `-D_CRT_glob` or `int _dowildcard = -1`), NtCRT
-  passes them as they are. Behind the flag, so that a program without it does not link the directory functions. The
-  tests of Wine show it.
 - **A correctly rounded libm**, a port of CORE-MATH for example, in place of the math of libmingwex. A large work.
 
 ## Builds and features

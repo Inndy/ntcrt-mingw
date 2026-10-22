@@ -499,7 +499,6 @@ _NtCRT___getmainargs(
     _In_ int dowildcard,
     _In_opt_ _NtCRT_startupinfo* startinfo)
 {
-    UNREFERENCED_PARAMETER(dowildcard);
     UNREFERENCED_PARAMETER(startinfo);
 
     _NtCRT_InitRuntime();
@@ -529,6 +528,27 @@ _NtCRT___getmainargs(
             }
         }
         _NtCRT_argv[_NtCRT_argc] = NULL;
+        if (dowildcard == NTCRT_DOWILDCARD_DEFAULT)
+        {
+            dowildcard = _NtCRT_GlobArgv != NULL;
+        }
+        if (dowildcard != 0)
+        {
+            char** Expanded;
+
+            if (_NtCRT_GlobArgv == NULL)
+            {
+                _NtCRT_GlobMissing();
+            }
+            Expanded = _NtCRT_GlobArgv(Wide, _NtCRT_argv, &_NtCRT_argc);
+            if (Expanded == NULL)
+            {
+                _NtCRT_amsg_exit(8);
+                return -1;
+            }
+            RtlFreeHeap(NTCRT_HEAP, 0, _NtCRT_argv);
+            _NtCRT_argv = Expanded;
+        }
         RtlFreeHeap(NTCRT_HEAP, 0, Wide);
     }
     _NtCRT_InitEnviron();
@@ -776,6 +796,13 @@ _NtCRT_AppendNumber(
         Value /= 10;
     } while (Value != 0 || Digits + sizeof(Digits) - 1 - p < MinDigits);
     _NtCRT_AppendText(Buffer, Size, p);
+}
+
+/* A program that sets _dowildcard (int _dowildcard = -1, CRT_glob.o) and does not link libntcrt_glob.a */
+EXTERN_C __declspec(noreturn) void _NtCRT_GlobMissing(void)
+{
+    _NtCRT_WriteStderrRaw("_dowildcard requires -lntcrt_glob\r\n");
+    _NtCRT__exit(255);
 }
 
 EXTERN_C void __cdecl _NtCRT_amsg_exit(int rterrnum)

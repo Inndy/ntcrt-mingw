@@ -275,6 +275,13 @@ extern "C" int _NtCRT_Win32ToErrno(ULONG Win32Error);
 /* Report an invalid parameter of a "_s" function like msvcrt.dll: set errno and return it */
 extern "C" int _NtCRT_InvalidParameter(int Errno);
 
+/*
+ * The _dowildcard of libntcrt_start (src/start/DoWildcard.cpp), of a program that defines none: __getmainargs expands
+ * the wildcards when the program links libntcrt_glob.a, which defines no _dowildcard (a weak one would not take the
+ * place of that of libntcrt_start, which ld links for it).
+ */
+#define NTCRT_DOWILDCARD_DEFAULT (-0x7FFFFFFF - 1)
+
 /* Heap */
 #define NTCRT_HEAP RtlProcessHeap()
 
