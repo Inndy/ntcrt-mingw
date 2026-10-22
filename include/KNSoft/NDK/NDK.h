@@ -1432,6 +1432,9 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryVirtualMemory(
     _Out_writes_bytes_(MemoryInformationLength) PVOID MemoryInformation,
     _In_ SIZE_T MemoryInformationLength,
     _Out_opt_ PSIZE_T ReturnLength);
+NTSYSCALLAPI NTSTATUS NTAPI NtUnmapViewOfSection(
+    _In_ HANDLE ProcessHandle,
+    _In_opt_ PVOID BaseAddress);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushInstructionCache(
     _In_ HANDLE ProcessHandle,
     _In_opt_ PVOID BaseAddress,

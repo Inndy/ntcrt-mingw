@@ -389,6 +389,49 @@ TestWideCharToMultiByteDefaultUsed(
         CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, 1252, NotRepresentable, -1, 2);
 }
 
+/* The mapped views of the process */
+static
+ULONG
+CountMappedViews(VOID)
+{
+    MEMORY_BASIC_INFORMATION Info;
+    ULONG_PTR Address = 0;
+    ULONG Count = 0;
+
+    while (NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)Address, MemoryBasicInformation, &Info,
+                                           sizeof(Info), NULL)) &&
+           Address + Info.RegionSize > Address)
+    {
+        Count += Info.State == MEM_COMMIT && Info.Type == MEM_MAPPED && Info.AllocationBase == Info.BaseAddress;
+        Address = (ULONG_PTR)Info.BaseAddress + Info.RegionSize;
+    }
+    return Count;
+}
+
+/* A conversion maps the .nls data of its code page once, not at each call (Windows 11 24H2 has none in the PEB) */
+static
+BOOL
+TestCodePageViews(VOID)
+{
+    static const UINT CodePages[] = { CP_ACP, CP_OEMCP, 1252, 437, 932 };
+    WCHAR Buffer[8];
+    ULONG Before;
+
+    for (UINT CodePage : CodePages)
+    {
+        __acrt_MultiByteToWideChar(CodePage, 0, "Az", 2, Buffer, _countof(Buffer));
+    }
+    Before = CountMappedViews();
+    for (int i = 0; i < 1000; i++)
+    {
+        for (UINT CodePage : CodePages)
+        {
+            __acrt_MultiByteToWideChar(CodePage, 0, "Az", 2, Buffer, _countof(Buffer));
+        }
+    }
+    return CountMappedViews() == Before;
+}
+
 extern "C"
 BOOL
 TestConversion(VOID)
@@ -458,5 +501,6 @@ TestConversion(VOID)
         CompareWideCharToMultiByte(SystemWideCharToMultiByte, NtCurrentPeb()->ActiveCodePage, 0, WideString, -1) &&
         TestMultiByteToWideCharErrors(SystemMultiByteToWideChar) &&
         TestWideCharToMultiByteErrors(SystemWideCharToMultiByte) &&
-        TestWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte);
+        TestWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte) &&
+        TestCodePageViews();
 }

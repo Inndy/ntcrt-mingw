@@ -75,6 +75,32 @@ _CRT_GetLocaleDefaultCodePage(
     return ERROR_FILE_NOT_FOUND;
 }
 
+/*
+ * The .nls data of the code pages that NtGetNlsSectionPtr mapped, which maps a new view at each call: a code page
+ * is mapped once and stays. A list published by compare and exchange, the thread that loses unmaps its view.
+ */
+typedef struct _CRT_CODEPAGE_DATA
+{
+    struct _CRT_CODEPAGE_DATA* Next;
+    UINT CodePage;
+    PVOID Data;
+} CRT_CODEPAGE_DATA;
+
+static CRT_CODEPAGE_DATA* _CRT_CodePageData;
+
+static
+CRT_CODEPAGE_DATA*
+_CRT_FindCodePageData(
+    _In_opt_ CRT_CODEPAGE_DATA* Entry,
+    _In_ UINT CodePage)
+{
+    while (Entry != NULL && Entry->CodePage != CodePage)
+    {
+        Entry = Entry->Next;
+    }
+    return Entry;
+}
+
 /* Not inline: each conversion function calls it */
 static __attribute__((noinline))
 DWORD
@@ -87,6 +113,7 @@ _CRT_GetCodePageTable(
     SIZE_T SectionSize;
     PVOID SectionPointer;
     PPEB Peb;
+    CRT_CODEPAGE_DATA *Entry, *Other;
 
     if (CodePage >= 50000 && CodePage <= 59999)
     {
@@ -107,13 +134,39 @@ _CRT_GetCodePageTable(
         return ERROR_SUCCESS;
     }
 
-    Status = NtGetNlsSectionPtr(11, CodePage, NULL, &SectionPointer, &SectionSize); // Codepage NLS section.
-    if (!NT_SUCCESS(Status))
+    Entry = _CRT_FindCodePageData(__atomic_load_n(&_CRT_CodePageData, __ATOMIC_ACQUIRE), CodePage);
+    if (Entry == NULL)
     {
-        return _Inline_RtlNtStatusToDosError(Status);
+        Status = NtGetNlsSectionPtr(11, CodePage, NULL, &SectionPointer, &SectionSize); // Codepage NLS section.
+        if (!NT_SUCCESS(Status))
+        {
+            return _Inline_RtlNtStatusToDosError(Status);
+        }
+        Entry = (CRT_CODEPAGE_DATA*)RtlAllocateHeap(RtlProcessHeap(), 0, sizeof(*Entry));
+        if (Entry == NULL)
+        {
+            NtUnmapViewOfSection(NtCurrentProcess(), SectionPointer);
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        Entry->CodePage = CodePage;
+        Entry->Data = SectionPointer;
+        Entry->Next = __atomic_load_n(&_CRT_CodePageData, __ATOMIC_ACQUIRE);
+        while (!__atomic_compare_exchange_n(&_CRT_CodePageData, &Entry->Next, Entry, false, __ATOMIC_RELEASE,
+                                            __ATOMIC_ACQUIRE))
+        {
+            /* Another thread added entries, maybe this code page */
+            Other = _CRT_FindCodePageData(Entry->Next, CodePage);
+            if (Other != NULL)
+            {
+                NtUnmapViewOfSection(NtCurrentProcess(), Entry->Data);
+                RtlFreeHeap(RtlProcessHeap(), 0, Entry);
+                Entry = Other;
+                break;
+            }
+        }
     }
 
-    RtlInitCodePageTable((PUSHORT)SectionPointer, CodePageTable);
+    RtlInitCodePageTable((PUSHORT)Entry->Data, CodePageTable);
     return ERROR_SUCCESS;
 }
 
