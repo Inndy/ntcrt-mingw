@@ -178,6 +178,11 @@ _K32_CreateDirectoryW(
         {
             _Inline_SetLastError(ERROR_ALREADY_EXISTS);
         }
+        else if (RtlIsDosDeviceName_U(lpPathName) != 0)
+        {
+            /* A device as kernel32 (STATUS_NOT_A_DIRECTORY), not missing (Windows 7) or a bad parameter (Windows 11) */
+            _Inline_SetLastError(ERROR_DIRECTORY);
+        }
         return FALSE;
     }
     NtClose(Handle);

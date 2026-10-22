@@ -281,6 +281,7 @@ static void TestStatNull(void)
 static void TestPathNames(void)
 {
     static const char* const Invalid[] = {"a<b.tmp", "dir|x\\f.tmp", "a*b.tmp", "a?b.tmp"};
+    static const char* const Devices[] = {"CON", "AUX", "COM1", "LPT1"};
     static const char Name[] = "ntcrt_path.tmp";
     struct _stat64 St;
     char Full[MAX_PATH], Long[MAX_PATH + 4];
@@ -302,6 +303,12 @@ static void TestPathNames(void)
     CHECK(_stat64("ntcrt_missing.tmp", &St) == -1 && errno == ENOENT);
     errno = 0;
     CHECK(_stat64("ntcrt_missing\\f.tmp", &St) == -1 && errno == ENOENT);
+    /* A device is no directory, as CreateDirectoryW of kernel32 (ERROR_DIRECTORY); NUL takes it */
+    for (const char* Device : Devices)
+    {
+        errno = 0;
+        Check(_mkdir(Device) == -1 && errno == ENOTDIR, Device);
+    }
 
     File = fopen(Name, "w");
     CHECK(File != NULL);
