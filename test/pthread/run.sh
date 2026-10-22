@@ -118,7 +118,7 @@ for s in pthreads4w libc-test; do
         result=
         if ! [ -f "$exe" ]; then
             result="does not build, see $dir/log/$s/$t.build.txt"
-        elif objdump -p "$exe" | grep 'DLL Name' | grep -v -q ntdll.dll; then
+        elif objdump -p "$exe" | grep 'DLL Name' | grep -v -q -i ntdll.dll; then
             result="imports more than ntdll.dll: $(objdump -p "$exe" | sed -n 's/.*DLL Name: //p' | tr '\n' ' ')"
         else
             n=0 bad=0 how=
