@@ -305,6 +305,36 @@ _CRT_GetCustomUnicodeSize(
     return Characters * sizeof(WCHAR);
 }
 
+/* The string ends with a lead byte alone, which RtlCustomCPToUnicodeN converts to U+0000 */
+FORCEINLINE
+BOOL
+WINAPI
+_CRT_EndsInLeadByte(
+    _In_ PCPTABLEINFO CodePageTable,
+    _In_reads_bytes_(BytesInCustomCPString) LPCCH CustomCPString,
+    _In_ ULONG BytesInCustomCPString)
+{
+    ULONG i;
+
+    if (CodePageTable->MaximumCharacterSize == 1)
+    {
+        return FALSE;
+    }
+    for (i = 0; i < BytesInCustomCPString; ++i)
+    {
+        if (_CRT_IsLeadByte(CodePageTable->LeadByte, (BYTE)CustomCPString[i]))
+        {
+            if (i + 1 == BytesInCustomCPString)
+            {
+                return TRUE;
+            }
+            ++i;
+        }
+    }
+
+    return FALSE;
+}
+
 FORCEINLINE
 ULONG
 WINAPI
@@ -566,6 +596,13 @@ __acrt_MultiByteToWideChar(
                                            &BytesInUnicodeString,
                                            (PCH)lpMultiByteStr,
                                            (ULONG)cbMultiByte);
+            /* A lead byte alone at the end is the default character, as kernel32 converts it */
+            if (NT_SUCCESS(Status) && _CRT_EndsInLeadByte(&CodePageTable, lpMultiByteStr, (ULONG)cbMultiByte) &&
+                BytesInUnicodeString ==
+                    _CRT_GetCustomUnicodeSize(&CodePageTable, lpMultiByteStr, (ULONG)cbMultiByte))
+            {
+                lpWideCharStr[BytesInUnicodeString / sizeof(WCHAR) - 1] = CodePageTable.UniDefaultChar;
+            }
         }
     }
 

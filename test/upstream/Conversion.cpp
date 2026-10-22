@@ -347,6 +347,11 @@ TestMultiByteToWideCharErrors(
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, MB_ERR_INVALID_CHARS, InvalidDbcs, sizeof(InvalidDbcs), NULL, 0) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, MB_ERR_INVALID_CHARS, InvalidDbcs, sizeof(InvalidDbcs), Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 1200, 0, "A", 1, Buffer, _countof(Buffer)) &&
+        /* A lead byte alone at the end is the default character ('?', U+30FB of 932), not U+0000 */
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 950, 0, "A\x81", 2, Buffer, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, 0, "\x81", 1, Buffer, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 936, 0, "\x81\x40\x81", 3, Buffer, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 950, 0, "A\x81", 2, Buffer, 1) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 60000, 0, "A", 1, Buffer, _countof(Buffer));
 }
 
