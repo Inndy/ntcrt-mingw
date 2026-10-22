@@ -66,6 +66,7 @@ path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put tha
   input and checks the screen
 - `test/cxx/` libstdc++ on NtCRT (`make test-cxx`)
 - `test/thread/` the pthread functions, `<threads.h>` and the threads of libstdc++ (`make test-thread`)
+- `test/dl/` `<dlfcn.h>` with two DLLs (`make test-dl`)
 - `test/start/` pseudo relocations of data auto-imported from a DLL, `_matherr` and the narrow `argv` of
   characters converted to bytes that a parser would take for a backslash or a quote (`make test-start`)
 - `test/size/` small programs measured by `make size`
@@ -534,6 +535,33 @@ exceptions), what is not supported (asynchronous cancellation, robust mutexes, n
 `dlopen` of libc-test), the priorities and the preference for readers described above, and what POSIX leaves undefined
 or optional (unlocking a mutex or spin lock that is not locked, the ID of an ended thread, `sem_getvalue` counting the
 waiters).
+
+### dlfcn
+
+`<dlfcn.h>` (`include/dlfcn.h`, `src/Dlfcn.cpp`) has `dlopen`, `dlsym`, `dlclose`, `dlerror` and `dladdr` on the loader
+of ntdll, as [dlfcn-win32](https://github.com/dlfcn-win32/dlfcn-win32) has them on kernel32, with its values of
+`RTLD_*`. `-ldl` finds an empty `libdl.a`.
+
+- `dlopen(NULL)` is the program. A file name is converted as for `fopen`, its slashes become backslashes, and the
+  module is loaded with `LOAD_WITH_ALTERED_SEARCH_PATH`, without a hard error box (`SEM_FAILCRITICALERRORS` of the
+  thread). `RTLD_LAZY` is `RTLD_NOW`: Windows binds the imports of a module when it loads it.
+- A module is global unless `dlopen` loads it with `RTLD_LOCAL`: `dlsym` of the program and of `RTLD_DEFAULT`
+  search the program, then the global modules in the order they were loaded. `RTLD_NEXT` searches the global
+  modules loaded after the one that calls `dlsym`. A local module becomes global when `dlopen` opens it again
+  without `RTLD_LOCAL`. The program and its modules export a symbol by `__declspec(dllexport)` (or
+  `-Wl,--export-all-symbols`).
+- `dlclose` of the program does nothing, each `dlopen` of a module needs a `dlclose`.
+- `dladdr` gives the path of the module in a buffer of the thread, and the nearest named export at or below the
+  address.
+- The messages are those of FormatMessage in English for the common errors (`"name": The specified module could
+  not be found.`), `Error <n>.` for the others.
+
+These differ from dlfcn-win32, by POSIX:
+
+- `dlerror` is of the thread, dlfcn-win32 has one for the process.
+- Only `dlerror` clears the error: POSIX has it return the last error since the last `dlerror`, a `dlopen`,
+  `dlsym` or `dlclose` that succeeds does not clear it as in dlfcn-win32.
+- A local module leaves the list of local modules when it is unloaded, not at its first `dlclose`.
 
 ### File names, console and streams
 

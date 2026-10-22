@@ -140,6 +140,9 @@ typedef struct _NTCRT_PTD
     char StrerrorBuffer[128];
     struct _NTCRT_PARKER* Parker; /* The event of the waits (PthreadWait.cpp), a reference */
     HANDLE ThreadHandle;          /* Of a thread of _beginthread, which _endthread closes */
+    char* DlerrorBuffer;          /* The last error of dlopen, dlsym or dlclose (Dlfcn.cpp) */
+    char* DladdrName;             /* The dli_fname of the last dladdr */
+    BOOLEAN DlerrorPending;       /* dlerror has not returned DlerrorBuffer yet */
 #ifndef _WIN64
     struct
     {

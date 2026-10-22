@@ -190,6 +190,8 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->AsctimeBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->WcserrorBuffer);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd->CvtBuffer);
+        RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DlerrorBuffer);
+        RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DladdrName);
         RtlFreeHeap(NTCRT_HEAP, 0, Ptd);
         /* The slot holds the data, an expansion slot has its array */
         if (g_PtdIndex < TLS_MINIMUM_AVAILABLE)

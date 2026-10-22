@@ -85,7 +85,7 @@ DRIVER   := $(BUILD)/ntcrt.specs
 endif
 
 LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a \
-        $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a
+        $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a $(BUILD)/libdl.a
 
 # make TCC=1: build-tcc/libntcrt.a and build-tcc/ntdll.def for tcc in place of msvcrt.def, x64 (NTCRT_TCC in NtCRT.h).
 # tcc links ELF objects, which clang makes for Windows (LLVM=<dir>/ for clang in <dir>). tcc links whole objects: a
@@ -155,9 +155,10 @@ $(BUILD)/libntcrt.a: $(OBJS) $(BUILD)/exports.stamp
 	ar rcs $@ $(OBJS)
 	cd $(BUILD)/exports && ar rs ../libntcrt.a *.o
 
-# libntcrt has the pthread functions (src/Pthread*.cpp). Empty libraries take the place of winpthreads for -lpthread
-# and -lwinpthread, the directory of the build precedes that of the toolchain.
-$(BUILD)/libpthread.a $(BUILD)/libwinpthread.a: | $(BUILD)
+# libntcrt has the pthread functions (src/Pthread*.cpp) and those of <dlfcn.h> (src/Dlfcn.cpp). Empty libraries take
+# the place of winpthreads for -lpthread and -lwinpthread, and of libdl for -ldl, the directory of the build precedes
+# that of the toolchain.
+$(BUILD)/libpthread.a $(BUILD)/libwinpthread.a $(BUILD)/libdl.a: | $(BUILD)
 	rm -f $@
 	ar rc $@
 
@@ -532,6 +533,19 @@ $(BUILD)/start/pebteb.exe: test/start/pebteb.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(KERNEL32_CC) -O2 -static -o $@ $<
 
+# <dlfcn.h>: the program runs in the directory of its DLLs, dllocal.dll for RTLD_LOCAL
+$(BUILD)/dl/dllib.dll $(BUILD)/dl/dllocal.dll: test/dl/lib.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -shared -o $(BUILD)/dl/dllib.dll $<
+	$(NTCRT_CC) -O2 -shared -DLOCAL -o $(BUILD)/dl/dllocal.dll $<
+
+$(BUILD)/dl/dl.exe: test/dl/dl.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
+
+test-dl: $(BUILD)/dl/dl.exe $(BUILD)/dl/dllib.dll
+	cd $(BUILD)/dl && ./dl.exe
+
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
             $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe \
             $(BUILD)/start/time32.exe $(BUILD)/start/nlsdata.exe $(BUILD)/start/tlsattach.exe \
@@ -608,7 +622,7 @@ $(PTHREAD)/src.stamp: test/pthread/fetch.sh
 test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	set -f; NTCRT_CC="$(NTCRT_CC)$(if $(PARKER_OBJ), $(CURDIR)/$(PARKER_OBJ))" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
 
-test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start test-install
+test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start test-install test-dl
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -714,4 +728,4 @@ clean:
 	rm -rf $(BUILD)
 
 .PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
-        test-start test-install test-wine test-pthread size compare install clean
+        test-start test-install test-dl test-wine test-pthread size compare install clean

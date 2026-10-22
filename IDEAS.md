@@ -28,8 +28,6 @@ Proposals, kept here until they are taken up or dropped; those taken up say so.
 
 - libssp and `_FORTIFY_SOURCE` (`__stack_chk_fail`, `__stack_chk_guard`, `__memcpy_chk` and the like), now taken
   from mingw-w64.
-- `dlopen`, `dlsym`, `dlclose` and `dlerror` by `LdrLoadDll` and `LdrGetProcedureAddress` (in progress,
-  ntcrt-mingw-e1).
 - `mmap` and `munmap` by `NtCreateSection` and `NtMapViewOfSection`; `clock_gettime` and `nanosleep` if the
   pthread work leaves them out.
 - Sockets would mean IOCTLs on `\Device\Afd` (undocumented, large): not recommended.
