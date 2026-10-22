@@ -1650,6 +1650,12 @@ NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
     _Out_ PUNICODE_STRING NtFileName,
     _Out_opt_ PWSTR* FilePart,
     _Reserved_ PVOID Reserved);
+/* The offset of a DOS device name in the path (high word, bytes) and its length (low word, bytes), 0 if none */
+NTSYSAPI ULONG NTAPI RtlIsDosDeviceName_U(_In_ PCWSTR DosFileName);
+NTSYSAPI BOOLEAN NTAPI RtlEqualUnicodeString(
+    _In_ PCUNICODE_STRING String1,
+    _In_ PCUNICODE_STRING String2,
+    _In_ BOOLEAN CaseInSensitive);
 NTSYSAPI ULONG NTAPI RtlGetFullPathName_UEx(
     _In_ PCWSTR FileName,
     _In_ ULONG BufferLength,

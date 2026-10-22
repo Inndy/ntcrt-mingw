@@ -28,6 +28,7 @@ static const SCENARIO g_Scenarios[] = {
     { "dbcs", "",
       { "D1<\xe9\x8a\x9d\xe5\x89\x9c? \xe7\x9f\x87 \?\?>|", "D2<\xe9\x8a\x9d\xe5\x89\x9c? \xe7\x9f\x87 \?\?>|", "D3:end",
         "end" } },
+    { "open", "xy\rz", { "O1", "O2", "O3:78790a", "O4:007a", "end" } },
     { "u8write", "", { "W6[\xe4\xb8\xad\xc3\xa9]", "W7[\xf0\x9f\x98\x80]", "end" } },
     { "read", "\xe4\xb8\xad\xf0\x9f\x98\x80\xc3\xa9\r" "ab\xe4\xb8\xad\r" "\x1a\r",
       { "R1:e4b8adf09f9880c3a90a", "R2:6162e4b8ad0a", "R3:eof", "end" } },

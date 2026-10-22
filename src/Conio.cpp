@@ -8,14 +8,6 @@
 #include <stdlib.h>
 #include <wchar.h>
 
-EXTERN_C HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
-                                        DWORD dwDesiredAccess,
-                                        DWORD dwShareMode,
-                                        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-                                        DWORD dwCreationDisposition,
-                                        DWORD dwFlagsAndAttributes,
-                                        HANDLE hTemplateFile);
-
 typedef BOOL(WINAPI* PNTCRT_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD);
 typedef BOOL(WINAPI* PNTCRT_GET_NUMBER_OF_CONSOLE_INPUT_EVENTS)(HANDLE, LPDWORD);
 typedef BOOL(WINAPI* PNTCRT_SET_CONSOLE_MODE)(HANDLE, DWORD);
@@ -74,7 +66,7 @@ _NtCRT_OpenConsole(
         }
         if (_InterlockedCompareExchangePointer(Cache, Handle, INVALID_HANDLE_VALUE) != INVALID_HANDLE_VALUE)
         {
-            NtClose(Handle);
+            _NtCRT_CloseHandle(Handle);
         }
     }
     return *Cache;

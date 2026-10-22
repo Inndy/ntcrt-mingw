@@ -574,6 +574,13 @@ extern "C" BOOL WINAPI _K32_MoveFileExW(LPCWSTR lpExistingFileName, LPCWSTR lpNe
 extern "C" DWORD WINAPI _K32_GetTempPathW(DWORD nBufferLength, LPWSTR lpBuffer);
 extern "C" DWORD WINAPI _K32_GetFileAttributesW(LPCWSTR lpFileName);
 extern "C" BOOL WINAPI _K32_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags);
+extern "C" HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
+                                          DWORD dwDesiredAccess,
+                                          DWORD dwShareMode,
+                                          LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+                                          DWORD dwCreationDisposition,
+                                          DWORD dwFlagsAndAttributes,
+                                          HANDLE hTemplateFile);
 
 /* Resolve a kernel32 export at runtime, for what ntdll cannot do (console input, process creation) */
 extern "C" PVOID _NtCRT_GetKernel32Function(PCSTR Name);
@@ -589,6 +596,12 @@ _NtCRT_IsLegacyConsoleHandle(
 {
     return ((ULONG_PTR)Handle & 3) == 3 && !IS_NT_VERSION_GE(NT_VERSION_WIN8);
 }
+
+/* A name that CreateFileW of kernel32 of Windows 7 and earlier opens as a console handle */
+extern "C" BOOL _NtCRT_IsLegacyConsoleName(_In_ PCWSTR FileName, _In_ ACCESS_MASK DesiredAccess);
+
+/* NtClose, CloseHandle of kernel32 for a console handle of Windows 7 */
+extern "C" NTSTATUS _NtCRT_CloseHandle(_In_ HANDLE Handle);
 
 /* Return Name of kernel32 with the arguments for a console handle of Windows 7, Failure if kernel32 has none */
 #define NTCRT_LEGACY_CONSOLE_CALL(Handle, Failure, Name, ...)                                 \

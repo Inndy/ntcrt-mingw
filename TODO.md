@@ -23,9 +23,10 @@ The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by n
 - [ ] **`CONIN$` and `CONOUT$` on Windows 7.** CreateFile of kernel32 opens them by the console server,
   `NtCreateFile` does not: `_open` (`_NtCRT_CreateFile`) and `CreateFileW` (`_K32_CreateFileW`) fail. `_getwch`,
   `_getch` and the other functions of `Conio.cpp` open `CONIN$` by `_K32_CreateFileW` and always return `WEOF` there
-  (win32lab, `research/console_encoding/README.md` §10). Fix: before Windows 8, `CON`, `CONIN$` and `CONOUT$` go to
-  CreateFileW of kernel32, the handle is a legacy console handle (`_NtCRT_IsLegacyConsoleHandle`); `Conio.cpp`
-  closes a handle it lost the race for by `_NtCRT_CloseHandle`, not `NtClose`.
+  (win32lab, `research/console_encoding/README.md` §10). Fixed, to verify on Windows 7: before Windows 8 the names
+  of `BaseIsThisAConsoleName` of kernel32 (`_NtCRT_IsLegacyConsoleName`: `CONIN$`, `CONOUT$`, `CON` for reading or
+  writing alone) go to CreateFileW of kernel32 and give a legacy console handle; `_open` makes it inheritable by
+  `SetHandleInformation`. `make test-console` opens them by name (`open`).
 - [ ] **The whole test suite on Windows 7.** Only the programs above ran there. The event parker of
   `PthreadWait.cpp` (no `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
 

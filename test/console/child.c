@@ -2,7 +2,7 @@
  * Console scenarios run by conpty.exe in a pseudo console, built with NtCRT. The console code pages are set to
  * 437, the "C.UTF-8" locale must not depend on them. What is read is printed in hex.
  *
- *   child.exe write | u8write | read | u8read | u16read | getch | scanf
+ *   child.exe write | dbcs | open | u8write | read | u8read | u16read | getch | scanf
  */
 #include <conio.h>
 #include <fcntl.h>
@@ -75,6 +75,35 @@ int main(int argc, char** argv)
             n += sprintf(Long + n, "%050d\n", i);
         n += sprintf(Long + n, "D3:end\n");
         _write(1, Long, n);
+        printf("end\n");
+    } else if (strcmp(Scenario, "open") == 0)
+    {
+        /* The console by name: kernel32 opens it before Windows 8, NtCreateFile after */
+        char Line[16];
+        int Fd = _open("CONOUT$", _O_WRONLY);
+        FILE* f = fopen("con", "w");
+        int n = 0;
+
+        if (Fd < 0 || f == NULL)
+        {
+            printf("O:open failed %d %p\n", Fd, (void*)f);
+            return 1;
+        }
+        _write(Fd, "O1\n", 3);
+        _close(Fd);
+        fputs("O2\n", f);
+        fclose(f);
+        Fd = _open("CONIN$", _O_RDONLY);
+        if (Fd < 0)
+        {
+            printf("O:CONIN$ failed\n");
+            return 1;
+        }
+        while (n < (int)sizeof(Line) && _read(Fd, Line + n, 1) == 1 && Line[n++] != '\n')
+            ;
+        _close(Fd);
+        hex("O3", Line, n);
+        printf("O4:%04x\n", _getwch());
         printf("end\n");
     } else if (strcmp(Scenario, "u8write") == 0)
     {

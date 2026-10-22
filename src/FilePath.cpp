@@ -32,6 +32,41 @@ _NtCRT_OpenPath(
     return Status;
 }
 
+/*
+ * Before Windows 8 the console is no device that NtCreateFile opens: CreateFileW of kernel32 opens CONIN$, CONOUT$
+ * and CON (for GENERIC_READ or GENERIC_WRITE alone) by the console server, a legacy console handle. The names are
+ * those of BaseIsThisAConsoleName of kernel32 of Windows 7: the device of a DOS device name, else the whole path.
+ */
+EXTERN_C
+BOOL
+_NtCRT_IsLegacyConsoleName(
+    _In_ PCWSTR FileName,
+    _In_ ACCESS_MASK DesiredAccess)
+{
+#define NTCRT_NAME(s) { sizeof(s) - sizeof(WCHAR), sizeof(s), (PWSTR)(s) }
+    static const UNICODE_STRING Input = NTCRT_NAME(L"CONIN$");
+    static const UNICODE_STRING Output = NTCRT_NAME(L"CONOUT$");
+    static const UNICODE_STRING Generic = NTCRT_NAME(L"CON");
+#undef NTCRT_NAME
+    UNICODE_STRING Name;
+    ULONG Device;
+    ACCESS_MASK Generics = DesiredAccess & (GENERIC_READ | GENERIC_WRITE);
+
+    if (IS_NT_VERSION_GE(NT_VERSION_WIN8) || FileName[0] == UNICODE_NULL)
+    {
+        return FALSE;
+    }
+    RtlInitUnicodeString(&Name, FileName);
+    Device = RtlIsDosDeviceName_U(FileName);
+    if (Device != 0)
+    {
+        Name.Buffer = (PWSTR)((PCHAR)FileName + (Device >> 16));
+        Name.Length = Name.MaximumLength = (USHORT)Device;
+    }
+    return RtlEqualUnicodeString(&Name, &Input, TRUE) || RtlEqualUnicodeString(&Name, &Output, TRUE) ||
+           (RtlEqualUnicodeString(&Name, &Generic, TRUE) && (Generics == GENERIC_READ || Generics == GENERIC_WRITE));
+}
+
 EXTERN_C
 ULONG
 _NtCRT_CreateFile(
@@ -50,6 +85,17 @@ _NtCRT_CreateFile(
     IO_STATUS_BLOCK IoStatusBlock;
 
     *FileHandle = INVALID_HANDLE_VALUE;
+    if (_NtCRT_IsLegacyConsoleName(FileName, DesiredAccess))
+    {
+        /* Not inheritable, the console server takes only the generic rights and opens what exists */
+        if (Information != NULL)
+        {
+            *Information = FILE_OPENED;
+        }
+        *FileHandle = _K32_CreateFileW(
+            FileName, DesiredAccess & (GENERIC_READ | GENERIC_WRITE), ShareAccess, NULL, OPEN_EXISTING, 0, NULL);
+        return *FileHandle != INVALID_HANDLE_VALUE ? ERROR_SUCCESS : _Inline_GetLastError();
+    }
     Status = RtlDosPathNameToNtPathName_U_WithStatus(FileName, &NtPath, NULL, NULL);
     if (!NT_SUCCESS(Status))
     {

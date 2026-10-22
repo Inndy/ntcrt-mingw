@@ -23,7 +23,21 @@ _K32_CreateFileW(
     HANDLE FileHandle;
     ULONG Disposition, Options = 0;
 
-    UNREFERENCED_PARAMETER(hTemplateFile);
+    if (_NtCRT_IsLegacyConsoleName(lpFileName, dwDesiredAccess))
+    {
+        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function("CreateFileW");
+
+        if (CreateFileW != NULL)
+        {
+            return CreateFileW(lpFileName,
+                               dwDesiredAccess,
+                               dwShareMode,
+                               lpSecurityAttributes,
+                               dwCreationDisposition,
+                               dwFlagsAndAttributes,
+                               hTemplateFile);
+        }
+    }
     switch (dwCreationDisposition)
     {
         case CREATE_NEW: Disposition = FILE_CREATE; break;

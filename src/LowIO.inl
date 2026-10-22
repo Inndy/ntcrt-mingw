@@ -142,8 +142,6 @@ extern "C" PNTCRT_RW_FILE _NtCRT_GetLegacyConsoleIo(_In_ BOOL Write);
 
 /* A console handle of Windows 7 (see NtCRT.h) goes to kernel32, what a console does not do fails with EBADF */
 
-/* NtClose, CloseHandle of kernel32 for a console handle of Windows 7 */
-extern "C" NTSTATUS _NtCRT_CloseHandle(_In_ HANDLE Handle);
 /* An inheritable duplicate in this process, DuplicateHandle of kernel32 for a console handle of Windows 7 */
 extern "C" NTSTATUS _NtCRT_DuplicateHandle(_In_ HANDLE Handle, _Out_ PHANDLE NewHandle);
 
