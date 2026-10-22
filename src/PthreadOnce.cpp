@@ -120,9 +120,14 @@ NTCRT_X86_X64(_NtCRT_OnceSeh, _NtCRT_OnceUnwind)(
 /*
  * The personality routine of _NtCRT_OnceCall for DWARF: the cleanup unwinds the call and the SEH registration, which
  * the frames of DWARF leave. _Unwind_GetCFA is the stack pointer of the frame at the call (libgcc and libunwind),
- * where the registration is.
+ * where the registration is. With clang it is in the section of _NtCRT_OnceCall, which is no COMDAT there: lld keeps
+ * no section for the relocations of .eh_frame and would leave the personality of the CIE null. GNU as makes every
+ * .text$ section a COMDAT, ld keeps what .eh_frame refers to.
  */
 EXTERN_C
+#ifdef __clang__
+__attribute__((section(".text$_NtCRT_OnceCall")))
+#endif
 _Unwind_Reason_Code
 _NtCRT_OncePersonality(
     _In_ int Version,

@@ -186,7 +186,26 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   `_stat32i64`, `_findfirst32i64`, `clock_gettime32`, `cnd_timedwait32`, ...), which libntcrt has.
 - `_control87`, `_controlfp`: the x87 control word with its precision and infinity control, or'ed with the control of
   SSE and `_EM_AMBIGUOUS` when the two differ, as the x86 msvcrt.
-- Not yet: `make test` (`test-thread` and `test-start` pass) and clang.
+- clang: `make LLVM=<clang64>/` with the i686 GCC first in `PATH`, clang of msys2 clang64 for `i686-w64-mingw32` on
+  the sysroot of mingw32 (there is no clang32). The library has the DWARF unwind tables of GCC (`-funwind-tables`), and
+  the personality routine of `pthread_once` is in a section that is no COMDAT: lld keeps no section for the
+  relocations of `.eh_frame`.
+- `make test` passes with GCC and clang.
+
+On x86 the specs of GCC link with `--gc-sections`, which drops unused functions there (not on x64, see "Size").
+The unwind tables of NtCRT let a C++ exception go through a callback that NtCRT calls (`qsort`, `bsearch`,
+`pthread_once` of `std::call_once`), but the `.eh_frame` of an object keeps all its functions with GNU ld, and lld
+keeps the tables of the functions it drops. `make UNWIND=0` builds without them into `build-i686-nounwind`
+(`build-llvm-i686-nounwind`), where such an exception ends the program. The default keeps them, as GCC does on x86
+and x64. `make size`, bytes:
+
+| x86          | GNU ld  | GNU ld, `UNWIND=0` | lld    | lld, `UNWIND=0` |
+|--------------|---------|--------------------|--------|-----------------|
+| empty `main` | 179712  | 44032              | 77312  | 41472           |
+| `printf`     | 216576  | 79360              | 112128 | 73728           |
+| `sscanf`     | 229888  | 83968              | 118272 | 79872           |
+| iostream     | 1398784 | 1219584            | 847872 | 794112          |
+| threads      | 455168  | 310272             | 289280 | 244736          |
 
 ## tcc
 

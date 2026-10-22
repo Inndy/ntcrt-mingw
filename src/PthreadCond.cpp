@@ -42,7 +42,7 @@ static COND_STATE* CondState(pthread_cond_t* c, bool Create)
     UNREFERENCED_PARAMETER(Create);
     return (COND_STATE*)c;
 #else
-    LONG_PTR Raw = __atomic_load_n(c, __ATOMIC_ACQUIRE);
+    pthread_cond_t Raw = __atomic_load_n(c, __ATOMIC_ACQUIRE);
     LONG64* State;
 
     if (Raw != -1 && Raw != 0)
@@ -55,7 +55,7 @@ static COND_STATE* CondState(pthread_cond_t* c, bool Create)
     }
     *State = Raw;
     /* Another thread may set its state first */
-    if (!__atomic_compare_exchange_n(c, &Raw, (LONG_PTR)State, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+    if (!__atomic_compare_exchange_n(c, &Raw, (pthread_cond_t)State, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
     {
         RtlFreeHeap(NTCRT_HEAP, 0, State);
         return (COND_STATE*)Raw;

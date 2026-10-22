@@ -813,7 +813,7 @@ static size_t _NtCRT_Atof32(const TChar* s, float* Value, BOOL* Range)
 /* The bits of the nearest long double to m * 2**e, Sticky for nonzero bits below m, TRUE if it overflows */
 static BOOL _NtCRT_HexLongDoubleBits(NTCRT_UINT128 m, int e, BOOL Sticky, ULONG64* Mant, int* BiasedExp)
 {
-    int Len = 128 - (int)(m >> 64 != 0 ? __builtin_clzll((ULONG64)(m >> 64)) : 64 + __builtin_clzll((ULONG64)m));
+    int Len = 128 - (int)((m >> 64) != 0 ? __builtin_clzll((ULONG64)(m >> 64)) : 64 + __builtin_clzll((ULONG64)m));
     /* The exponent of the lowest bit of the significand, denormal at most */
     int q = e + Len - 64 > NTCRT_LDBL_MIN_SCALE ? e + Len - 64 : NTCRT_LDBL_MIN_SCALE, k = q - e;
     NTCRT_UINT128 r;
@@ -835,7 +835,7 @@ static BOOL _NtCRT_HexLongDoubleBits(NTCRT_UINT128 m, int e, BOOL Sticky, ULONG6
             r++;
         }
     }
-    if (r >> 64 != 0)
+    if ((r >> 64) != 0)
     {
         r >>= 1;
         q++;

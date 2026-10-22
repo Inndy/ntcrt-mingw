@@ -262,7 +262,8 @@ static void Once()
     std::atomic<int> Calls = 0;
     std::vector<std::thread> Threads;
 
-    /* An exception leaves the flag unset for another call */
+    /* An exception leaves the flag unset for another call, it goes through pthread_once of NtCRT */
+#ifndef NTCRT_NO_UNWIND
     try
     {
         std::call_once(Flag, [] { throw std::runtime_error("once"); });
@@ -270,6 +271,7 @@ static void Once()
     } catch (const std::runtime_error&)
     {
     }
+#endif
     for (int i = 0; i < 8; i++)
     {
         Threads.emplace_back([&] {

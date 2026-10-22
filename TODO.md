@@ -8,10 +8,11 @@ Phases 1 to 4 are done: the build (`build-i686` by the gcc of MSYS2 mingw32, Min
 the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x87 control word.
 `make test` passes on x86 (MinGW-w64 15 of MSYS2 mingw32).
 
-- [ ] **clang for x86.** MSYS2 has no clang32: clang64 with `--target=i686-w64-mingw32` on the sysroot of mingw32.
-- [ ] **Size.** Under `--gc-sections` of GNU ld the `.eh_frame` keeps every function alive: hello is 179200 bytes,
-  46080 with `-fno-asynchronous-unwind-tables`. Without the tables a C++ exception cannot go through a callback
-  called by NtCRT (`qsort`, `bsearch`, `pthread_once`, `call_once`). Measure and choose.
+- [x] **clang for x86.** MSYS2 has no clang32: clang64 with `--target=i686-w64-mingw32` on the sysroot of mingw32.
+  `make test` passes (README "x86"): the library has unwind tables, the personality of `pthread_once` stays with lld.
+- [x] **Size.** The specs of GCC had no `--gc-sections`, which works on x86. With it the unwind tables cost 135 KB
+  in a program with GNU ld, 35 KB with lld. The user chose both: `make UNWIND=0` builds without them, the default
+  keeps them (README "x86" has the sizes).
 
 ## Windows 7
 

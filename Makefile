@@ -25,15 +25,23 @@ X86      := 1
 CXXFLAGS += -D_TIME_BITS=64
 endif
 
+# UNWIND=0: NtCRT without unwind tables, into build-...-nounwind. The .eh_frame of an object keeps all its functions
+# under --gc-sections of GNU ld on x86; without the tables a C++ exception cannot go through a callback that NtCRT
+# calls (qsort, bsearch, pthread_once of std::call_once). See README.md "x86".
+ifeq ($(UNWIND),0)
+NOUNWIND := -nounwind
+CXXFLAGS += -fno-asynchronous-unwind-tables -fno-unwind-tables
+endif
+
 ifdef TCC
 BUILD    ?= build-tcc
 else ifdef LLVM
 # A section for each variable, which lld drops unused. GCC would put the zero data in .data$ sections, which take
 # space in the file unlike .bss, and ld links whole objects anyway.
 CXXFLAGS += -fdata-sections
-BUILD    ?= build-llvm$(if $(X86),-i686)
+BUILD    ?= build-llvm$(if $(X86),-i686)$(NOUNWIND)
 else
-BUILD    ?= build$(if $(X86),-i686)
+BUILD    ?= build$(if $(X86),-i686)$(NOUNWIND)
 endif
 # tcc defines __STDC_NO_THREADS__, its library has no thread functions
 SRCS     := $(filter-out $(if $(TCC),$(filter-out src/PthreadTime.cpp,$(wildcard src/Pthread*.cpp)) src/C11%.cpp),$(wildcard src/*.cpp))
@@ -55,6 +63,11 @@ LLVM_PREFIX := $(filter %/,$(LLVM))
 GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
 LLVM_FLAGS := --target=$(TARGET) --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
               -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -femulated-tls
+ifeq ($(X86)$(NOUNWIND),1)
+# The DWARF unwind tables of GCC on x86, which clang leaves out without exceptions: a C++ exception goes through the
+# callbacks that NtCRT calls (qsort, pthread_once of std::call_once)
+CXXFLAGS += -funwind-tables
+endif
 LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
 LIB_AS   := $(LLVM_PREFIX)clang --target=$(TARGET)
 NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt-strict.cfg
@@ -248,15 +261,18 @@ GCC_EH := $(if $(wildcard $(shell $(CXX) -print-file-name=libgcc_eh.a)),gcc_eh)
 SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc $(addprefix -l,$(GCC_EH)) -lmingwex -lntcrt -lmsvcrt_static \
                 -lntdll_crt -lntdll --end-group %{!ntcrt-strict:-lkernel32}
 
+# GNU ld drops the unused functions on x86, x64 keeps them by .pdata (README.md "Size")
+SPECS_LINK := $(if $(X86),--gc-sections )$(WRAPS)
+
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
 	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
-	printf '*link:\n+ -L%s -Bstatic %s\n\n' "$(CURDIR)/$(BUILD)" "$(WRAPS)" >> $@
+	printf '*link:\n+ -L%s -Bstatic %s\n\n' "$(CURDIR)/$(BUILD)" "$(SPECS_LINK)" >> $@
 	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
 $(BUILD)/install/ntcrt.specs: Makefile
 	mkdir -p $(@D)
-	printf '*link:\n+ -Bstatic %s\n\n' "$(WRAPS)" > $@
+	printf '*link:\n+ -Bstatic %s\n\n' "$(SPECS_LINK)" > $@
 	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@
 	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
 
@@ -427,7 +443,8 @@ $(THREAD)/exit.exe: test/thread/exit.c $(LIBS) $(DRIVER) $(PARKER_OBJ)
 
 $(THREAD)/cxx.exe: test/thread/cxx.cpp $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	mkdir -p $(@D)
-	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread -o $@ $< $(PARKER_OBJ) -Wl,-Map=$(THREAD)/cxx.map
+	$(NTCRT_CXX) -std=c++23 -O2 -static -pthread $(if $(NOUNWIND),-DNTCRT_NO_UNWIND) -o $@ $< $(PARKER_OBJ) \
+	    -Wl,-Map=$(THREAD)/cxx.map
 
 # exit.exe: the end of the process without exit (the last thread, ExitProcess), its status and output (a pipe). The
 # libmingw32 of x86 (MinGW-w64 15) runs no key destructor of __mingwthr_key_dtor at DLL_PROCESS_DETACH, x64 does
