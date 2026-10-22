@@ -551,6 +551,9 @@ of ntdll, as [dlfcn-win32](https://github.com/dlfcn-win32/dlfcn-win32) has them 
   without `RTLD_LOCAL`. The program and its modules export a symbol by `__declspec(dllexport)` (or
   `-Wl,--export-all-symbols`).
 - `dlclose` of the program does nothing, each `dlopen` of a module needs a `dlclose`.
+- `dlopen` and `dlclose` run one at a time, so that what other threads open and close does not make a local module
+  global. Not those of a `DllMain`, which holds the loader lock that the load of another thread may wait for, nor
+  `LoadLibrary`: a module that `dlopen` with `RTLD_LOCAL` loads while another thread loads it by these is global.
 - `dladdr` gives the path of the module in a buffer of the thread, and the nearest named export at or below the
   address.
 - The messages are those of FormatMessage in English for the common errors (`"name": The specified module could

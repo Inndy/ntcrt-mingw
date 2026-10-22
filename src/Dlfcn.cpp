@@ -23,6 +23,57 @@ EXTERN_C HMODULE WINAPI _K32_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
 EXTERN_C NTSYSAPI NTSTATUS NTAPI LdrAddRefDll(_In_ ULONG Flags, _In_ PVOID DllHandle);
 
 /*
+ * The modules in load order, the callback under the loader lock. The loader of Windows 8 and later inserts modules
+ * under a lock of its own, not the loader lock: this one first waits for the loads in progress and keeps others from
+ * starting until it returns, so the list stays as it is.
+ */
+typedef VOID(NTAPI* NTCRT_LDR_ENUM_CALLBACK)(_In_ PLDR_DATA_TABLE_ENTRY Module, _In_opt_ PVOID Context,
+                                             _Out_ PBOOLEAN Stop);
+EXTERN_C NTSYSAPI NTSTATUS NTAPI LdrEnumerateLoadedModules(_In_ BOOLEAN ReservedFlag,
+                                                           _In_ NTCRT_LDR_ENUM_CALLBACK EnumProc,
+                                                           _In_opt_ PVOID Context);
+
+/*
+ * dlopen and dlclose (exclusive), each with its update of g_Opens, and the searches of dlsym (shared): another thread
+ * cannot load or unload a module between the call of the loader and the update, so that a module that one loads with
+ * RTLD_LOCAL is not taken by another for one loaded before, nor a module loaded at the address of one just unloaded
+ * for that one; a search sees no module loaded and not yet in g_Opens, and a module it references is not closed
+ * meanwhile, which would keep it loaded for the next dlopen. A thread that holds the loader lock (a DllMain that
+ * calls them) does not take it, as a load of a thread that holds it may wait for the loader lock.
+ */
+static RTL_SRWLOCK g_DlLock = RTL_SRWLOCK_INIT;
+
+/* 0 not taken, 1 shared, 2 exclusive */
+static
+int
+_NtCRT_DlLock(
+    _In_ BOOL Exclusive)
+{
+    if (NtCurrentPeb()->LoaderLock->OwningThread == NtCurrentTeb()->ClientId.UniqueThread)
+    {
+        return 0;
+    }
+    if (Exclusive)
+    {
+        RtlAcquireSRWLockExclusive(&g_DlLock);
+        return 2;
+    }
+    RtlAcquireSRWLockShared(&g_DlLock);
+    return 1;
+}
+
+static inline void _NtCRT_DlUnlock(int Locked)
+{
+    if (Locked == 2)
+    {
+        RtlReleaseSRWLockExclusive(&g_DlLock);
+    } else if (Locked == 1)
+    {
+        RtlReleaseSRWLockShared(&g_DlLock);
+    }
+}
+
+/*
  * The modules that dlopen opened and dlclose did not close as often: the opens, and whether the module is local
  * (_NtCRT_DlOpened). The lock is never held across a call of the loader, and is taken under the loader lock (a
  * DllMain that calls dlopen), never the reverse.
@@ -185,6 +236,12 @@ _NtCRT_DlError(
         memcpy(p - 6, "Error ", 6);
         Text = p - 6;
     }
+    /* The threads that share the fallback PTD have no buffer: one could free that another returned */
+    Ptd->DlerrorPending = TRUE;
+    if (Ptd == &_NtCRT_FallbackPtd)
+    {
+        return;
+    }
     RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DlerrorBuffer);
     ArgumentLength = strlen(Argument);
     TextLength = strlen(Text);
@@ -197,7 +254,6 @@ _NtCRT_DlError(
         memcpy(p, "\": ", 3);
         memcpy(p + 3, Text, TextLength + 1);
     }
-    Ptd->DlerrorPending = TRUE;
 }
 
 static inline PVOID _NtCRT_ProgramBase(void) { return NtCurrentPeb()->ImageBaseAddress; }
@@ -208,6 +264,8 @@ NTCRT_API void* dlopen(const char* file, int mode)
     PWSTR WideName;
     PVOID Base, Loaded = NULL;
     ULONG ErrorMode, Error;
+    BOOL Opened;
+    int Locked;
 
     if (file == NULL)
     {
@@ -226,6 +284,7 @@ NTCRT_API void* dlopen(const char* file, int mode)
 
     /* Whether the module was loaded before, for RTLD_LOCAL */
     RtlInitUnicodeString(&Name, WideName);
+    Locked = _NtCRT_DlLock(TRUE);
     if (!NT_SUCCESS(LdrGetDllHandle(NULL, NULL, &Name, &Loaded)))
     {
         Loaded = NULL;
@@ -236,6 +295,19 @@ NTCRT_API void* dlopen(const char* file, int mode)
     Error = RtlGetLastWin32Error();
     RtlSetThreadErrorMode(ErrorMode, NULL);
     RtlFreeHeap(NTCRT_HEAP, 0, WideName);
+
+    /* RTLD_LOCAL hides a module that this dlopen loads, or that it opened before with RTLD_LOCAL only */
+    Opened = Base != NULL && _NtCRT_DlOpened(Base, (mode & RTLD_LOCAL) != 0, Loaded == Base);
+    if (Base != NULL && !Opened)
+    {
+        LdrUnloadDll(Base);
+    }
+    _NtCRT_DlUnlock(Locked);
+    if (Base != NULL && !Opened)
+    {
+        _NtCRT_DlError(file, ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
     if (Base == NULL)
     {
         char* Converted = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, strlen(file) + 1);
@@ -251,13 +323,6 @@ NTCRT_API void* dlopen(const char* file, int mode)
         }
         _NtCRT_DlError(Converted != NULL ? Converted : file, Error);
         RtlFreeHeap(NTCRT_HEAP, 0, Converted);
-        return NULL;
-    }
-    /* RTLD_LOCAL hides a module that this dlopen loads, or that it opened before with RTLD_LOCAL only */
-    if (!_NtCRT_DlOpened(Base, (mode & RTLD_LOCAL) != 0, Loaded == Base))
-    {
-        LdrUnloadDll(Base);
-        _NtCRT_DlError(file, ERROR_NOT_ENOUGH_MEMORY);
         return NULL;
     }
     return Base;
@@ -279,6 +344,51 @@ _NtCRT_DlExport(
     return NT_SUCCESS(*Status) ? Address : NULL;
 }
 
+/* The modules of a search, each referenced: those loaded after After, all if NULL, but the program */
+typedef struct
+{
+    PVOID After;
+    PVOID* Bases;
+    ULONG Count, Capacity;
+    BOOL Searching, Failed;
+} NTCRT_DLMODULES;
+
+static
+VOID
+NTAPI
+_NtCRT_DlCollect(
+    _In_ PLDR_DATA_TABLE_ENTRY Module,
+    _In_opt_ PVOID Context,
+    _Out_ PBOOLEAN Stop)
+{
+    NTCRT_DLMODULES* Modules = (NTCRT_DLMODULES*)Context;
+    PVOID Base = Module->DllBase;
+
+    if (Modules->Searching && Base != _NtCRT_ProgramBase())
+    {
+        if (Modules->Count == Modules->Capacity)
+        {
+            ULONG Capacity = Modules->Capacity * 2 + 32;
+            PVOID* Bases = (PVOID*)(Modules->Bases == NULL
+                                        ? RtlAllocateHeap(NTCRT_HEAP, 0, Capacity * sizeof(PVOID))
+                                        : RtlReAllocateHeap(NTCRT_HEAP, 0, Modules->Bases, Capacity * sizeof(PVOID)));
+            if (Bases == NULL)
+            {
+                Modules->Failed = TRUE;
+                *Stop = TRUE;
+                return;
+            }
+            Modules->Bases = Bases;
+            Modules->Capacity = Capacity;
+        }
+        if (NT_SUCCESS(LdrAddRefDll(0, Base)))
+        {
+            Modules->Bases[Modules->Count++] = Base;
+        }
+    }
+    Modules->Searching |= Base == Modules->After;
+}
+
 /* The search of RTLD_DEFAULT and of the program (After NULL), and of RTLD_NEXT (After the module of the caller) */
 static
 void*
@@ -287,11 +397,11 @@ _NtCRT_DlSearch(
     _In_ const char* Name,
     _Inout_ NTSTATUS* Error)
 {
-    PLIST_ENTRY Head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList, Entry;
-    PVOID Cookie, Address = NULL, *Bases;
-    BOOL Searching = After == NULL;
-    ULONG Count = 0, i;
+    NTCRT_DLMODULES Modules = { After, NULL, 0, 0, After == NULL, FALSE };
+    PVOID Address = NULL;
     NTSTATUS Status;
+    ULONG i;
+    int Locked;
 
     if (After == NULL && (Address = _NtCRT_DlExport(_NtCRT_ProgramBase(), Name, &Status)) != NULL)
     {
@@ -299,46 +409,30 @@ _NtCRT_DlSearch(
     }
 
     /*
-     * The modules in load order, each referenced under the loader lock, are searched after it: the export of a
-     * forwarder makes LdrGetProcedureAddress load its target, which under the loader lock deadlocks with another
-     * thread that loads a module (the parallel loader of Windows 10). A module that is closed meanwhile stays until
-     * its reference is released, outside all locks.
+     * The modules, each referenced under the loader lock, are searched after it: the export of a forwarder makes
+     * LdrGetProcedureAddress load its target, which under the loader lock deadlocks with another thread that loads a
+     * module (the parallel loader of Windows 10). A module that FreeLibrary frees meanwhile stays until its reference
+     * is released, outside the loader lock; dlclose waits for g_DlLock.
      */
-    LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
-    for (Entry = Head->Flink; Entry != Head; Entry = Entry->Flink)
-    {
-        Count++;
-    }
-    Bases = (PVOID*)RtlAllocateHeap(NTCRT_HEAP, 0, Count * sizeof(PVOID));
-    Count = 0;
-    for (Entry = Head->Flink; Entry != Head && Bases != NULL; Entry = Entry->Flink)
-    {
-        PVOID Base = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks)->DllBase;
-
-        if (Searching && Base != _NtCRT_ProgramBase() && NT_SUCCESS(LdrAddRefDll(0, Base)))
-        {
-            Bases[Count++] = Base;
-        }
-        Searching |= Base == After;
-    }
-    LdrUnlockLoaderLock(LDR_UNLOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
-    if (Bases == NULL)
+    Locked = _NtCRT_DlLock(FALSE);
+    LdrEnumerateLoadedModules(FALSE, _NtCRT_DlCollect, &Modules);
+    if (Modules.Failed)
     {
         *Error = STATUS_NO_MEMORY;
-        return NULL;
     }
-    for (i = 0; i < Count && Address == NULL; i++)
+    for (i = 0; i < Modules.Count && Address == NULL && !Modules.Failed; i++)
     {
-        if (!_NtCRT_IsLocal(Bases[i]))
+        if (!_NtCRT_IsLocal(Modules.Bases[i]))
         {
-            Address = _NtCRT_DlExport(Bases[i], Name, &Status);
+            Address = _NtCRT_DlExport(Modules.Bases[i], Name, &Status);
         }
     }
-    for (i = 0; i < Count; i++)
+    for (i = 0; i < Modules.Count; i++)
     {
-        LdrUnloadDll(Bases[i]);
+        LdrUnloadDll(Modules.Bases[i]);
     }
-    RtlFreeHeap(NTCRT_HEAP, 0, Bases);
+    _NtCRT_DlUnlock(Locked);
+    RtlFreeHeap(NTCRT_HEAP, 0, Modules.Bases);
     return Address;
 }
 
@@ -374,12 +468,19 @@ NTCRT_API __attribute__((noinline)) void* dlsym(void* handle, const char* name)
 NTCRT_API int dlclose(void* handle)
 {
     NTSTATUS Status;
+    int Locked;
 
     if (handle == _NtCRT_ProgramBase())
     {
         return 0;
     }
+    Locked = _NtCRT_DlLock(TRUE);
     Status = LdrUnloadDll(handle);
+    if (NT_SUCCESS(Status))
+    {
+        _NtCRT_DlClosed(handle);
+    }
+    _NtCRT_DlUnlock(Locked);
     if (!NT_SUCCESS(Status))
     {
         char Argument[2 + 2 * sizeof(void*) + 1];
@@ -390,7 +491,6 @@ NTCRT_API int dlclose(void* handle)
         _NtCRT_DlError(Argument, RtlNtStatusToDosError(Status));
         return 1;
     }
-    _NtCRT_DlClosed(handle);
     return 0;
 }
 
@@ -406,49 +506,67 @@ NTCRT_API char* dlerror(void)
     return Ptd->DlerrorBuffer != NULL ? Ptd->DlerrorBuffer : (char*)"Not enough memory for the error.";
 }
 
+/* The module of dladdr: the one of Address, referenced, and its path */
+typedef struct
+{
+    ULONG_PTR Address;
+    PVOID Base;
+    PWSTR Path;
+} NTCRT_DLADDR;
+
+static
+VOID
+NTAPI
+_NtCRT_DlFindAddress(
+    _In_ PLDR_DATA_TABLE_ENTRY Module,
+    _In_opt_ PVOID Context,
+    _Out_ PBOOLEAN Stop)
+{
+    NTCRT_DLADDR* Find = (NTCRT_DLADDR*)Context;
+
+    if (Find->Address - (ULONG_PTR)Module->DllBase < Module->SizeOfImage)
+    {
+        if (Module->DllBase == _NtCRT_ProgramBase() || NT_SUCCESS(LdrAddRefDll(0, Module->DllBase)))
+        {
+            Find->Base = Module->DllBase;
+            Find->Path = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Module->FullDllName.Length + sizeof(WCHAR));
+            if (Find->Path != NULL)
+            {
+                memcpy(Find->Path, Module->FullDllName.Buffer, Module->FullDllName.Length);
+                Find->Path[Module->FullDllName.Length / sizeof(WCHAR)] = L'\0';
+            }
+        }
+        *Stop = TRUE;
+    }
+}
+
 NTCRT_API int dladdr(const void* addr, Dl_info* info)
 {
     PNTCRT_PTD Ptd = _NtCRT_GetPtd();
-    PLIST_ENTRY Head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
+    NTCRT_DLADDR Find = { (ULONG_PTR)addr, NULL, NULL };
     PIMAGE_NT_HEADERS Headers;
     PIMAGE_DATA_DIRECTORY Directory;
-    PVOID Base = NULL, Cookie;
-    PWSTR Path = NULL;
+    PVOID Base;
     ULONG_PTR Offset;
 
-    /* The module of the address and its path, referenced so that it stays while its exports are read after the lock */
-    LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
-    for (PLIST_ENTRY Entry = Head->Flink; Entry != Head; Entry = Entry->Flink)
-    {
-        PLDR_DATA_TABLE_ENTRY Module = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-
-        if ((ULONG_PTR)addr - (ULONG_PTR)Module->DllBase < Module->SizeOfImage)
-        {
-            if (Module->DllBase == _NtCRT_ProgramBase() || NT_SUCCESS(LdrAddRefDll(0, Module->DllBase)))
-            {
-                Base = Module->DllBase;
-                Path = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Module->FullDllName.Length + sizeof(WCHAR));
-                if (Path != NULL)
-                {
-                    memcpy(Path, Module->FullDllName.Buffer, Module->FullDllName.Length);
-                    Path[Module->FullDllName.Length / sizeof(WCHAR)] = L'\0';
-                }
-            }
-            break;
-        }
-    }
-    LdrUnlockLoaderLock(LDR_UNLOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
-    if (Base == NULL)
+    /* Referenced so that the module stays while its exports are read after the loader lock */
+    LdrEnumerateLoadedModules(FALSE, _NtCRT_DlFindAddress, &Find);
+    if ((Base = Find.Base) == NULL)
     {
         return 0;
     }
     info->dli_fbase = Base;
     info->dli_sname = NULL;
     info->dli_saddr = NULL;
-    RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DladdrName);
-    Ptd->DladdrName = Path != NULL ? _NtCRT_WideToFile(Path) : NULL;
-    RtlFreeHeap(NTCRT_HEAP, 0, Path);
-    info->dli_fname = Ptd->DladdrName;
+    /* No path for the threads that share the fallback PTD, as for dlerror */
+    info->dli_fname = NULL;
+    if (Ptd != &_NtCRT_FallbackPtd)
+    {
+        RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DladdrName);
+        Ptd->DladdrName = Find.Path != NULL ? _NtCRT_WideToFile(Find.Path) : NULL;
+        info->dli_fname = Ptd->DladdrName;
+    }
+    RtlFreeHeap(NTCRT_HEAP, 0, Find.Path);
 
     /* The nearest named export at or below the address, not a forwarder */
     Headers = (PIMAGE_NT_HEADERS)((PUCHAR)Base + ((PIMAGE_DOS_HEADER)Base)->e_lfanew);
