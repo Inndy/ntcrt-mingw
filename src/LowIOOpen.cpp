@@ -498,7 +498,22 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
     } else
     {
         /* msvcrt opens inheritable handles, spawned children receive them by lpReserved2 */
-        _K32_SetHandleInformation(Handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        OBJECT_HANDLE_FLAG_INFORMATION Info;
+
+        if (_NtCRT_IsLegacyConsoleHandle(Handle))
+        {
+            auto const SetHandleInformation =
+                (decltype(&_K32_SetHandleInformation))_NtCRT_GetKernel32Function("SetHandleInformation");
+
+            if (SetHandleInformation != NULL)
+            {
+                SetHandleInformation(Handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+            }
+        } else if (NT_SUCCESS(NtQueryObject(Handle, ObjectHandleFlagInformation, &Info, sizeof(Info), NULL)))
+        {
+            Info.Inherit = TRUE;
+            NtSetInformationObject(Handle, ObjectHandleFlagInformation, &Info, sizeof(Info));
+        }
     }
     if ((oflag & _O_TEXT) ||
         (!(oflag & _O_BINARY) && ((oflag & (_O_WTEXT | _O_U16TEXT | _O_U8TEXT)) || _NtCRT_fmode != _O_BINARY)))
