@@ -230,6 +230,28 @@ _NtCRT_WriteConsoleUtf8(
     return Consumed != 0 ? (int)Consumed : -1;
 }
 
+/*
+ * Write bytes of the binary or ANSI text mode. A write to a console that succeeds took all of them: conhost of
+ * Windows 10 and later reports the length of the text converted back to the code page (GetALengthFromW of
+ * src/host/_stream.cpp of microsoft/terminal), less than the bytes it took for a character the code page does not
+ * have. The count of a pipe or a file is the bytes written.
+ */
+static
+int
+_NtCRT_WriteBytes(
+    _In_ PNTCRT_FD Entry,
+    _In_reads_bytes_(Count) const void* Buffer,
+    _In_ ULONG Count)
+{
+    int Written = _NtCRT_RawWrite(Entry->Handle, Buffer, Count);
+
+    if (Written >= 0 && (ULONG)Written < Count && _NtCRT_IsConsoleFd(Entry))
+    {
+        return (int)Count;
+    }
+    return Written;
+}
+
 /* Public functions */
 
 EXTERN_C int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count)
@@ -273,7 +295,7 @@ EXTERN_C int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count
         unsigned int Done = 0;
         while (Done < count)
         {
-            int Written = _NtCRT_RawWrite(Entry->Handle, Src + Done, count - Done);
+            int Written = _NtCRT_WriteBytes(Entry, Src + Done, count - Done);
             if (Written <= 0)
             {
                 break;
@@ -304,7 +326,7 @@ EXTERN_C int __cdecl _NtCRT_write(int fd, const void* buffer, unsigned int count
                 Line[Used++] = c;
                 Taken++;
             }
-            Written = _NtCRT_RawWrite(Entry->Handle, Line, Used);
+            Written = _NtCRT_WriteBytes(Entry, Line, Used);
             if (Written < (int)Used)
             {
                 if (Written > 0)

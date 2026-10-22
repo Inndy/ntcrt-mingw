@@ -52,6 +52,30 @@ int main(int argc, char** argv)
         _putwch(0xD83D);
         _putwch(0xDE00);
         _cputs("]\r\nend\r\n");
+    } else if (strcmp(Scenario, "dbcs") == 0)
+    {
+        /*
+         * Code page 950, "C": conhost of Windows 10 and later reports fewer bytes than it took for a write of bytes
+         * that are not characters of the code page (UTF-8 here). Binary mode must not write the rest again, text mode
+         * must write the chunks after a short one (one _write of more than 1023 bytes).
+         */
+        static const char Text[] = "<\xe4\xb8\xad\xe6\x96\x87 \xc3\xa9 \xf0\x9f\x98\x80>";
+        static char Long[1200];
+        int n = 0;
+
+        SetConsoleOutputCP(950);
+        setlocale(LC_ALL, "C");
+        _setmode(1, _O_BINARY);
+        _write(1, "D1", 2);
+        _write(1, Text, sizeof(Text) - 1);
+        _write(1, "|\r\n", 3);
+        _setmode(1, _O_TEXT);
+        n += sprintf(Long + n, "D2%s|\n", Text);
+        for (int i = 0; i < 20; i++)
+            n += sprintf(Long + n, "%050d\n", i);
+        n += sprintf(Long + n, "D3:end\n");
+        _write(1, Long, n);
+        printf("end\n");
     } else if (strcmp(Scenario, "u8write") == 0)
     {
         _setmode(1, _O_U8TEXT);

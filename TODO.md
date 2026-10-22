@@ -34,16 +34,16 @@ The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by n
 Found by win32lab on NtCRT 0f359eb (`research/console_encoding/README.md` §9 and §10 of win32lab, commits 5e424df
 and 59b9e70). Waiting for the user to order them with the rest.
 
-- [ ] **The bytes written that conhost reports in a DBCS code page.** conhost of Windows 10 and later reports the
+- [x] **The bytes written that conhost reports in a DBCS code page.** conhost of Windows 10 and later reports the
   length of the text converted back to the code page (`GetALengthFromW`, `src/host/_stream.cpp:629` of
   microsoft/terminal), less than the bytes it took when a character is not in the code page; Windows 7 reports the
   bytes taken. `_NtCRT_write` (`src/LowIO.cpp`) trusts the count:
   - binary mode writes the rest again, the console shows the end twice;
   - ANSI text mode takes a short chunk (1023 bytes) as the end and writes no more: 70 of 1093 bytes are lost while
     `fwrite` and `printf` return the whole count.
-  Fix: a write to a console that succeeds took all the bytes (a console write is not partial), one helper for both
-  paths checks `_NtCRT_IsConsoleFd` on a short count only. The Unicode modes and "C.UTF-8" write by `WriteConsoleW`
-  and are right.
+  Fixed: a write to a console that succeeds took all the bytes (`_NtCRT_WriteBytes`, `_NtCRT_IsConsoleFd` on a
+  short count only); `make test-console` writes in code page 950 (`dbcs`). The Unicode modes and "C.UTF-8" write
+  by `WriteConsoleW` and are right.
 - [ ] **Ctrl+Z in the middle of a console line.** In "C" and `""` a read keeps `ab^Z` and drops the rest of the
   line, then waits for more (as msvcrt); in "C.UTF-8" and the Unicode modes it returns `ab`, then end of file once.
   Choose one: the second (the end of the input, as at the start of a line) unless the user wants the msvcrt one.
@@ -61,9 +61,8 @@ and 59b9e70). Waiting for the user to order them with the rest.
 
 ## kernel32
 
-- [ ] **A kernel32 polyfill library**, opt-in, for the kernel32 functions ported programs call
-  (`GetSystemDirectoryA`, `SearchPathA` for tcc, `SetConsoleMode`, `GetConsoleScreenBufferInfo` for quickjs).
-  kernel32 is linked after NtCRT by default, `-ntcrt-strict` leaves it out.
+- Out of scope: a kernel32 polyfill library (`GetSystemDirectoryA`, `SearchPathA`, `SetConsoleMode`, ...) is not
+  the work of a C runtime. kernel32 is linked after NtCRT by default, `-ntcrt-strict` leaves it out.
 
 ## Housekeeping
 

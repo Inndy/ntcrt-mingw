@@ -24,6 +24,10 @@ static const SCENARIO g_Scenarios[] = {
     { "write", "",
       { "W1[a\xe4\xb8\xad\xc3\xa9]", "W2[\xf0\x9f\x98\x80]", "W3[\xe4\xb8\xad\xf0\x9f\x98\x80]",
         "W4[\xc3\xa9\xe4\xb8\xad\xf0\x9f\x98\x80]", "W5[\xf0\x9f\x98\x80]", "end" } },
+    /* The UTF-8 bytes of <中文 é 😀> as Big5: U+929D U+525C ?, U+77C7, ?? */
+    { "dbcs", "",
+      { "D1<\xe9\x8a\x9d\xe5\x89\x9c? \xe7\x9f\x87 \?\?>|", "D2<\xe9\x8a\x9d\xe5\x89\x9c? \xe7\x9f\x87 \?\?>|", "D3:end",
+        "end" } },
     { "u8write", "", { "W6[\xe4\xb8\xad\xc3\xa9]", "W7[\xf0\x9f\x98\x80]", "end" } },
     { "read", "\xe4\xb8\xad\xf0\x9f\x98\x80\xc3\xa9\r" "ab\xe4\xb8\xad\r" "\x1a\r",
       { "R1:e4b8adf09f9880c3a90a", "R2:6162e4b8ad0a", "R3:eof", "end" } },
