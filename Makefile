@@ -543,8 +543,25 @@ $(BUILD)/dl/dl.exe: test/dl/dl.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -static -o $@ $<
 
-test-dl: $(BUILD)/dl/dl.exe $(BUILD)/dl/dllib.dll
-	cd $(BUILD)/dl && ./dl.exe
+# min.exe has only the functions of <dlfcn.h>, which must link no object of libntcrt.a but Dlfcn.o and Library.o
+# beside those of an empty program (not the printf engine, stdio or low-level I/O), and the import stubs of ntdll
+$(BUILD)/dl/min.o: test/dl/min.c $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -c -o $@ $<
+
+$(BUILD)/dl/empty.o: test/size/empty.c $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -O2 -c -o $@ $<
+
+$(BUILD)/dl/min.exe $(BUILD)/dl/empty.exe: $(BUILD)/dl/%.exe: $(BUILD)/dl/%.o $(LIBS) $(DRIVER)
+	$(NTCRT_CC) -s -static -o $@ $< -Wl,-Map=$(BUILD)/dl/$*.map
+
+test-dl: $(BUILD)/dl/dl.exe $(BUILD)/dl/min.exe $(BUILD)/dl/empty.exe $(BUILD)/dl/dllib.dll
+	cd $(BUILD)/dl && ./dl.exe && ./min.exe
+	cd $(BUILD)/dl && for m in empty min; do \
+	    grep -o -E '[A-Za-z0-9_]+\.o\b' $$m.map | grep -v -x -E 'empty\.o|min\.o|(lib|build_).*(s[0-9]+|_?[ht])\.o' | sort -u > $$m.objs || exit 1; \
+	done && extra=$$(comm -13 empty.objs min.objs | grep -v -x -e Dlfcn.o -e Library.o); \
+	if [ -n "$$extra" ]; then echo "dl: the functions of <dlfcn.h> link" $$extra; exit 1; fi
 
 test-start: $(BUILD)/start/reloc.exe $(BUILD)/start/matherr.exe $(BUILD)/start/matherr_custom.exe \
             $(BUILD)/start/argv.exe $(BUILD)/start/names.exe $(BUILD)/start/kernel32.exe $(BUILD)/start/pebteb.exe \

@@ -1,8 +1,8 @@
 /*
  * <dlfcn.h> (src/Dlfcn.cpp), run in the directory of dllib.dll and dllocal.dll (test/dl/lib.c): dlopen by name, by
  * path with slashes and by full path, the reference counts of dlclose, dlsym of a handle, of the program, of
- * RTLD_DEFAULT and of RTLD_NEXT, RTLD_LOCAL, dlerror (the messages, cleared only by dlerror, of each thread) and
- * dladdr.
+ * RTLD_DEFAULT and of RTLD_NEXT, RTLD_LOCAL and its opens, dlerror (the messages, cleared only by dlerror, of each
+ * thread) and dladdr.
  */
 
 #include <dlfcn.h>
@@ -101,6 +101,10 @@ int main(void)
     Local = dlopen("dllocal.dll", RTLD_NOW | RTLD_LOCAL);
     CHECK(Local != NULL);
     CHECK(dlsym(Local, "dl_local_only") != NULL);
+    CHECK(dlsym(RTLD_DEFAULT, "dl_local_only") == NULL);
+    CHECK(ErrorIs("\"dl_local_only\": The specified procedure could not be found."));
+    CHECK(dlopen("dllocal.dll", RTLD_NOW | RTLD_LOCAL) == Local);
+    CHECK(dlclose(Local) == 0);
     CHECK(dlsym(RTLD_DEFAULT, "dl_local_only") == NULL);
     CHECK(ErrorIs("\"dl_local_only\": The specified procedure could not be found."));
     CHECK(dlopen("dllocal.dll", RTLD_NOW) == Local);

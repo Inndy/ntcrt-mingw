@@ -3,14 +3,15 @@
  * but for these:
  *   - dlerror is of the thread, and only dlerror clears it (POSIX): a dlopen, dlsym or dlclose that succeeds keeps the
  *     error of an earlier call that dlerror did not return.
- *   - A module that dlopen loaded with RTLD_LOCAL leaves the local list when it is unloaded, not at its first dlclose.
+ *   - A module that dlopen loaded with RTLD_LOCAL stays local until each of its dlopen has a dlclose, not until the
+ *     first dlclose.
  *   - The messages are those of the common errors in English, there is no FormatMessage.
  */
 
 #include "NtCRT.h"
 
 #include <dlfcn.h>
-#include <stdio.h>
+#include <string.h>
 
 /* Win32 SEM_FAILCRITICALERRORS of the thread: no hard error box for a DLL that cannot be loaded */
 #define NTCRT_ERRORMODE_FAILCRITICALERRORS 0x10
@@ -19,66 +20,125 @@ EXTERN_C NTSYSAPI ULONG NTAPI RtlGetThreadErrorMode(VOID);
 
 EXTERN_C HMODULE WINAPI _K32_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 
-/* The modules dlopen loaded with RTLD_LOCAL */
-static RTL_SRWLOCK g_LocalLock = RTL_SRWLOCK_INIT;
-static PVOID* g_Locals;
-static ULONG g_LocalCount, g_LocalCapacity;
+EXTERN_C NTSYSAPI NTSTATUS NTAPI LdrAddRefDll(_In_ ULONG Flags, _In_ PVOID DllHandle);
+
+/*
+ * The modules that dlopen opened and dlclose did not close as often: the opens, and whether the module is local
+ * (_NtCRT_DlOpened). The lock is never held across a call of the loader, and is taken under the loader lock (a
+ * DllMain that calls dlopen), never the reverse.
+ */
+typedef struct _NTCRT_DLOPEN
+{
+    PVOID Base;
+    ULONG Opens;
+    BOOLEAN Local;
+} NTCRT_DLOPEN;
+
+static RTL_SRWLOCK g_OpenLock = RTL_SRWLOCK_INIT;
+static NTCRT_DLOPEN* g_Opens;
+static ULONG g_OpenCount, g_OpenCapacity;
+
+/* The index of Base in g_Opens, g_OpenCount if none, under g_OpenLock */
+static
+ULONG
+_NtCRT_DlFind(
+    _In_ PVOID Base)
+{
+    ULONG i;
+
+    for (i = 0; i < g_OpenCount && g_Opens[i].Base != Base; i++)
+    {
+    }
+    return i;
+}
 
 static
 BOOL
 _NtCRT_IsLocal(
     _In_ PVOID Base)
 {
-    BOOL Found = FALSE;
-
-    RtlAcquireSRWLockShared(&g_LocalLock);
-    for (ULONG i = 0; i < g_LocalCount && !Found; i++)
-    {
-        Found = g_Locals[i] == Base;
-    }
-    RtlReleaseSRWLockShared(&g_LocalLock);
-    return Found;
-}
-
-/* Add (Local) or remove a module, FALSE when out of memory */
-static
-BOOL
-_NtCRT_SetLocal(
-    _In_ PVOID Base,
-    _In_ BOOL Local)
-{
-    BOOL Done = TRUE;
+    BOOL Local;
     ULONG i;
 
-    RtlAcquireSRWLockExclusive(&g_LocalLock);
-    for (i = 0; i < g_LocalCount && g_Locals[i] != Base; i++)
+    RtlAcquireSRWLockShared(&g_OpenLock);
+    i = _NtCRT_DlFind(Base);
+    Local = i < g_OpenCount && g_Opens[i].Local;
+    RtlReleaseSRWLockShared(&g_OpenLock);
+    return Local;
+}
+
+/*
+ * An open of dlopen, FALSE when out of memory. A module is local while it is opened only with RTLD_LOCAL and the
+ * first open loaded it: a global open makes it global, whichever comes first.
+ */
+static
+BOOL
+_NtCRT_DlOpened(
+    _In_ PVOID Base,
+    _In_ BOOL Local,
+    _In_ BOOL LoadedBefore)
+{
+    ULONG i;
+
+    RtlAcquireSRWLockExclusive(&g_OpenLock);
+    i = _NtCRT_DlFind(Base);
+    if (i == g_OpenCount)
     {
-    }
-    if (!Local && i < g_LocalCount)
-    {
-        g_Locals[i] = g_Locals[--g_LocalCount];
-    } else if (Local && i == g_LocalCount)
-    {
-        if (g_LocalCount == g_LocalCapacity)
+        if (g_OpenCount == g_OpenCapacity)
         {
-            ULONG Capacity = g_LocalCapacity * 2 + 8;
-            PVOID* Locals = (PVOID*)(g_Locals == NULL
-                                         ? RtlAllocateHeap(NTCRT_HEAP, 0, Capacity * sizeof(PVOID))
-                                         : RtlReAllocateHeap(NTCRT_HEAP, 0, g_Locals, Capacity * sizeof(PVOID)));
-            if (Locals != NULL)
+            ULONG Capacity = g_OpenCapacity * 2 + 8;
+            NTCRT_DLOPEN* Opens =
+                (NTCRT_DLOPEN*)(g_Opens == NULL
+                                    ? RtlAllocateHeap(NTCRT_HEAP, 0, Capacity * sizeof(NTCRT_DLOPEN))
+                                    : RtlReAllocateHeap(NTCRT_HEAP, 0, g_Opens, Capacity * sizeof(NTCRT_DLOPEN)));
+            if (Opens == NULL)
             {
-                g_Locals = Locals;
-                g_LocalCapacity = Capacity;
+                RtlReleaseSRWLockExclusive(&g_OpenLock);
+                return FALSE;
             }
+            g_Opens = Opens;
+            g_OpenCapacity = Capacity;
         }
-        Done = g_LocalCount < g_LocalCapacity;
-        if (Done)
-        {
-            g_Locals[g_LocalCount++] = Base;
-        }
+        g_Opens[g_OpenCount].Base = Base;
+        g_Opens[g_OpenCount].Opens = 0;
+        g_Opens[g_OpenCount++].Local = (BOOLEAN)(Local && !LoadedBefore);
     }
-    RtlReleaseSRWLockExclusive(&g_LocalLock);
-    return Done;
+    g_Opens[i].Opens++;
+    g_Opens[i].Local &= (BOOLEAN)Local;
+    RtlReleaseSRWLockExclusive(&g_OpenLock);
+    return TRUE;
+}
+
+/* A dlclose that unloaded Base once: the module leaves the list at the last, though another module may keep it */
+static
+void
+_NtCRT_DlClosed(
+    _In_ PVOID Base)
+{
+    ULONG i;
+
+    RtlAcquireSRWLockExclusive(&g_OpenLock);
+    i = _NtCRT_DlFind(Base);
+    if (i < g_OpenCount && --g_Opens[i].Opens == 0)
+    {
+        g_Opens[i] = g_Opens[--g_OpenCount];
+    }
+    RtlReleaseSRWLockExclusive(&g_OpenLock);
+}
+
+/* The hexadecimal digits of Value into Buffer, Digits of them, no snprintf that would link the printf engine */
+static
+char*
+_NtCRT_DlHex(
+    _Out_writes_(Digits) char* Buffer,
+    _In_ ULONG_PTR Value,
+    _In_ int Digits)
+{
+    for (int i = Digits - 1; i >= 0; i--, Value >>= 4)
+    {
+        Buffer[i] = "0123456789ABCDEF"[Value & 15];
+    }
+    return Buffer + Digits;
 }
 
 /* The error of the thread for dlerror: "\"Argument\": text", as dlfcn-win32 writes it with FormatMessage */
@@ -105,8 +165,8 @@ _NtCRT_DlError(
     };
     PNTCRT_PTD Ptd = _NtCRT_GetPtd();
     const char* Text = NULL;
-    char Number[32];
-    size_t Size;
+    char Number[32], *p;
+    size_t ArgumentLength, TextLength;
 
     for (size_t i = 0; i < sizeof(Texts) / sizeof(Texts[0]) && Text == NULL; i++)
     {
@@ -114,15 +174,28 @@ _NtCRT_DlError(
     }
     if (Text == NULL)
     {
-        snprintf(Number, sizeof(Number), "Error %lu.", Error);
-        Text = Number;
+        /* "Error <decimal>." */
+        p = Number + sizeof(Number);
+        *--p = '\0';
+        *--p = '.';
+        do
+        {
+            *--p = (char)('0' + Error % 10);
+        } while ((Error /= 10) != 0);
+        memcpy(p - 6, "Error ", 6);
+        Text = p - 6;
     }
     RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DlerrorBuffer);
-    Size = strlen(Argument) + strlen(Text) + 5;
-    Ptd->DlerrorBuffer = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, Size);
-    if (Ptd->DlerrorBuffer != NULL)
+    ArgumentLength = strlen(Argument);
+    TextLength = strlen(Text);
+    Ptd->DlerrorBuffer = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, ArgumentLength + TextLength + 5);
+    if ((p = Ptd->DlerrorBuffer) != NULL)
     {
-        snprintf(Ptd->DlerrorBuffer, Size, "\"%s\": %s", Argument, Text);
+        *p++ = '"';
+        memcpy(p, Argument, ArgumentLength);
+        p += ArgumentLength;
+        memcpy(p, "\": ", 3);
+        memcpy(p + 3, Text, TextLength + 1);
     }
     Ptd->DlerrorPending = TRUE;
 }
@@ -180,16 +253,12 @@ NTCRT_API void* dlopen(const char* file, int mode)
         RtlFreeHeap(NTCRT_HEAP, 0, Converted);
         return NULL;
     }
-    /* A module loaded now is local with RTLD_LOCAL, one loaded before becomes global without it */
-    if (Loaded != Base && (mode & RTLD_LOCAL) != 0 && !_NtCRT_SetLocal(Base, TRUE))
+    /* RTLD_LOCAL hides a module that this dlopen loads, or that it opened before with RTLD_LOCAL only */
+    if (!_NtCRT_DlOpened(Base, (mode & RTLD_LOCAL) != 0, Loaded == Base))
     {
         LdrUnloadDll(Base);
         _NtCRT_DlError(file, ERROR_NOT_ENOUGH_MEMORY);
         return NULL;
-    }
-    if (Loaded == Base && (mode & RTLD_LOCAL) == 0)
-    {
-        _NtCRT_SetLocal(Base, FALSE);
     }
     return Base;
 }
@@ -215,29 +284,61 @@ static
 void*
 _NtCRT_DlSearch(
     _In_opt_ PVOID After,
-    _In_ const char* Name)
+    _In_ const char* Name,
+    _Inout_ NTSTATUS* Error)
 {
-    PLIST_ENTRY Head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
-    PVOID Cookie, Address = NULL;
+    PLIST_ENTRY Head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList, Entry;
+    PVOID Cookie, Address = NULL, *Bases;
     BOOL Searching = After == NULL;
+    ULONG Count = 0, i;
     NTSTATUS Status;
 
     if (After == NULL && (Address = _NtCRT_DlExport(_NtCRT_ProgramBase(), Name, &Status)) != NULL)
     {
         return Address;
     }
+
+    /*
+     * The modules in load order, each referenced under the loader lock, are searched after it: the export of a
+     * forwarder makes LdrGetProcedureAddress load its target, which under the loader lock deadlocks with another
+     * thread that loads a module (the parallel loader of Windows 10). A module that is closed meanwhile stays until
+     * its reference is released, outside all locks.
+     */
     LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
-    for (PLIST_ENTRY Entry = Head->Flink; Entry != Head && Address == NULL; Entry = Entry->Flink)
+    for (Entry = Head->Flink; Entry != Head; Entry = Entry->Flink)
+    {
+        Count++;
+    }
+    Bases = (PVOID*)RtlAllocateHeap(NTCRT_HEAP, 0, Count * sizeof(PVOID));
+    Count = 0;
+    for (Entry = Head->Flink; Entry != Head && Bases != NULL; Entry = Entry->Flink)
     {
         PVOID Base = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks)->DllBase;
 
-        if (Searching && Base != _NtCRT_ProgramBase() && !_NtCRT_IsLocal(Base))
+        if (Searching && Base != _NtCRT_ProgramBase() && NT_SUCCESS(LdrAddRefDll(0, Base)))
         {
-            Address = _NtCRT_DlExport(Base, Name, &Status);
+            Bases[Count++] = Base;
         }
         Searching |= Base == After;
     }
     LdrUnlockLoaderLock(LDR_UNLOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
+    if (Bases == NULL)
+    {
+        *Error = STATUS_NO_MEMORY;
+        return NULL;
+    }
+    for (i = 0; i < Count && Address == NULL; i++)
+    {
+        if (!_NtCRT_IsLocal(Bases[i]))
+        {
+            Address = _NtCRT_DlExport(Bases[i], Name, &Status);
+        }
+    }
+    for (i = 0; i < Count; i++)
+    {
+        LdrUnloadDll(Bases[i]);
+    }
+    RtlFreeHeap(NTCRT_HEAP, 0, Bases);
     return Address;
 }
 
@@ -255,10 +356,10 @@ NTCRT_API __attribute__((noinline)) void* dlsym(void* handle, const char* name)
             _NtCRT_DlError(name, ERROR_INVALID_PARAMETER);
             return NULL;
         }
-        Address = _NtCRT_DlSearch(Caller, name);
+        Address = _NtCRT_DlSearch(Caller, name, &Status);
     } else if (handle == RTLD_DEFAULT || handle == _NtCRT_ProgramBase())
     {
-        Address = _NtCRT_DlSearch(NULL, name);
+        Address = _NtCRT_DlSearch(NULL, name, &Status);
     } else
     {
         Address = _NtCRT_DlExport(handle, name, &Status);
@@ -273,7 +374,6 @@ NTCRT_API __attribute__((noinline)) void* dlsym(void* handle, const char* name)
 NTCRT_API int dlclose(void* handle)
 {
     NTSTATUS Status;
-    PVOID Base;
 
     if (handle == _NtCRT_ProgramBase())
     {
@@ -284,19 +384,13 @@ NTCRT_API int dlclose(void* handle)
     {
         char Argument[2 + 2 * sizeof(void*) + 1];
 
-        snprintf(Argument,
-                 sizeof(Argument),
-                 "0x%0*llX",
-                 (int)(2 * sizeof(void*)),
-                 (unsigned long long)(ULONG_PTR)handle);
+        Argument[0] = '0';
+        Argument[1] = 'x';
+        *_NtCRT_DlHex(Argument + 2, (ULONG_PTR)handle, 2 * sizeof(void*)) = '\0';
         _NtCRT_DlError(Argument, RtlNtStatusToDosError(Status));
         return 1;
     }
-    /* A local module that is gone, whose address another module may take */
-    if (RtlPcToFileHeader(handle, &Base) == NULL)
-    {
-        _NtCRT_SetLocal(handle, FALSE);
-    }
+    _NtCRT_DlClosed(handle);
     return 0;
 }
 
@@ -318,40 +412,42 @@ NTCRT_API int dladdr(const void* addr, Dl_info* info)
     PLIST_ENTRY Head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
     PIMAGE_NT_HEADERS Headers;
     PIMAGE_DATA_DIRECTORY Directory;
-    PVOID Base, Cookie;
+    PVOID Base = NULL, Cookie;
+    PWSTR Path = NULL;
     ULONG_PTR Offset;
 
-    if (RtlPcToFileHeader((PVOID)addr, &Base) == NULL)
+    /* The module of the address and its path, referenced so that it stays while its exports are read after the lock */
+    LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
+    for (PLIST_ENTRY Entry = Head->Flink; Entry != Head; Entry = Entry->Flink)
+    {
+        PLDR_DATA_TABLE_ENTRY Module = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+
+        if ((ULONG_PTR)addr - (ULONG_PTR)Module->DllBase < Module->SizeOfImage)
+        {
+            if (Module->DllBase == _NtCRT_ProgramBase() || NT_SUCCESS(LdrAddRefDll(0, Module->DllBase)))
+            {
+                Base = Module->DllBase;
+                Path = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Module->FullDllName.Length + sizeof(WCHAR));
+                if (Path != NULL)
+                {
+                    memcpy(Path, Module->FullDllName.Buffer, Module->FullDllName.Length);
+                    Path[Module->FullDllName.Length / sizeof(WCHAR)] = L'\0';
+                }
+            }
+            break;
+        }
+    }
+    LdrUnlockLoaderLock(LDR_UNLOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
+    if (Base == NULL)
     {
         return 0;
     }
     info->dli_fbase = Base;
     info->dli_sname = NULL;
     info->dli_saddr = NULL;
-
-    /* The path of the module */
     RtlFreeHeap(NTCRT_HEAP, 0, Ptd->DladdrName);
-    Ptd->DladdrName = NULL;
-    LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, NULL, &Cookie);
-    for (PLIST_ENTRY Entry = Head->Flink; Entry != Head; Entry = Entry->Flink)
-    {
-        PLDR_DATA_TABLE_ENTRY Module = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-
-        if (Module->DllBase == Base)
-        {
-            PWSTR Path = (PWSTR)RtlAllocateHeap(NTCRT_HEAP, 0, Module->FullDllName.Length + sizeof(WCHAR));
-
-            if (Path != NULL)
-            {
-                memcpy(Path, Module->FullDllName.Buffer, Module->FullDllName.Length);
-                Path[Module->FullDllName.Length / sizeof(WCHAR)] = L'\0';
-                Ptd->DladdrName = _NtCRT_WideToFile(Path);
-                RtlFreeHeap(NTCRT_HEAP, 0, Path);
-            }
-            break;
-        }
-    }
-    LdrUnlockLoaderLock(LDR_UNLOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
+    Ptd->DladdrName = Path != NULL ? _NtCRT_WideToFile(Path) : NULL;
+    RtlFreeHeap(NTCRT_HEAP, 0, Path);
     info->dli_fname = Ptd->DladdrName;
 
     /* The nearest named export at or below the address, not a forwarder */
@@ -378,6 +474,10 @@ NTCRT_API int dladdr(const void* addr, Dl_info* info)
                 info->dli_saddr = (PUCHAR)Base + Rva;
             }
         }
+    }
+    if (Base != _NtCRT_ProgramBase())
+    {
+        LdrUnloadDll(Base);
     }
     return 1;
 }

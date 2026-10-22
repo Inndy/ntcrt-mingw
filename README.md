@@ -561,7 +561,13 @@ These differ from dlfcn-win32, by POSIX:
 - `dlerror` is of the thread, dlfcn-win32 has one for the process.
 - Only `dlerror` clears the error: POSIX has it return the last error since the last `dlerror`, a `dlopen`,
   `dlsym` or `dlclose` that succeeds does not clear it as in dlfcn-win32.
-- A local module leaves the list of local modules when it is unloaded, not at its first `dlclose`.
+- A local module stays local until each of its `dlopen` has a `dlclose`, dlfcn-win32 makes it global at the first
+  `dlclose`. A module kept loaded only by another one that imports it is then global.
+
+NtCRT is linked statically, so the program and each DLL linked with it have their own list of local modules:
+a module that one of them loads with `RTLD_LOCAL` is hidden only from the `dlsym` of `RTLD_DEFAULT`, of the
+program and of `RTLD_NEXT` called by that one, the others find it. dlfcn-win32 linked statically has the same
+limitation.
 
 ### File names, console and streams
 
