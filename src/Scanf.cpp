@@ -80,6 +80,7 @@ EXTERN_C int __cdecl __ms_vsscanf(const char*, const char*, va_list) __attribute
 
 NTCRT_IMPORT_ONLY(vsscanf, _NtCRT_vsscanf);
 NTCRT_IMPORT(sscanf, _NtCRT_sscanf);
+NTCRT_IMPORT(__ms_sscanf, _NtCRT_sscanf);
 NTCRT_IMPORT(vsscanf_s, _NtCRT_vsscanf_s);
 NTCRT_IMPORT(sscanf_s, _NtCRT_sscanf_s);
 NTCRT_IMPORT(_snscanf, _NtCRT__snscanf);

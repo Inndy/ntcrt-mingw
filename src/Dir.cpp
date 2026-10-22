@@ -1018,10 +1018,12 @@ NTCRT_IMPORT(_wfindfirst64, _NtCRT__wfindfirst64);
 NTCRT_IMPORT(_wfindnext64, _NtCRT__wfindnext64);
 NTCRT_IMPORT(_wfindfirsti64, _NtCRT__wfindfirsti64);
 NTCRT_IMPORT(_wfindnexti64, _NtCRT__wfindnexti64);
+#ifndef _WIN64
 NTCRT_IMPORT(_findfirst32i64, _NtCRT__findfirst32i64);
 NTCRT_IMPORT(_findnext32i64, _NtCRT__findnext32i64);
 NTCRT_IMPORT(_wfindfirst32i64, _NtCRT__wfindfirst32i64);
 NTCRT_IMPORT(_wfindnext32i64, _NtCRT__wfindnext32i64);
+#endif
 NTCRT_IMPORT_ONLY(_wfindfirst64i32, _NtCRT__wfindfirst64i32);
 NTCRT_IMPORT_ONLY(_wfindnext64i32, _NtCRT__wfindnext64i32);
 NTCRT_IMPORT(_wfindfirst, _NtCRT__wfindfirst);

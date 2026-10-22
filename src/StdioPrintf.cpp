@@ -133,11 +133,17 @@ EXTERN_C int __cdecl _NtCRT__scprintf(const char* format, ...)
 }
 
 NTCRT_IMPORT(vfprintf, _NtCRT_vfprintf);
+NTCRT_IMPORT(__ms_vfprintf, _NtCRT_vfprintf);
 NTCRT_IMPORT(fprintf, _NtCRT_fprintf);
+NTCRT_IMPORT(__ms_fprintf, _NtCRT_fprintf);
 NTCRT_IMPORT(vprintf, _NtCRT_vprintf);
+NTCRT_IMPORT(__ms_vprintf, _NtCRT_vprintf);
 NTCRT_IMPORT(printf, _NtCRT_printf);
+NTCRT_IMPORT(__ms_printf, _NtCRT_printf);
 NTCRT_IMPORT(vsprintf, _NtCRT_vsprintf);
+NTCRT_IMPORT(__ms_vsprintf, _NtCRT_vsprintf);
 NTCRT_IMPORT(sprintf, _NtCRT_sprintf);
+NTCRT_IMPORT(__ms_sprintf, _NtCRT_sprintf);
 NTCRT_IMPORT(_vsnprintf, _NtCRT__vsnprintf);
 NTCRT_IMPORT(_snprintf, _NtCRT__snprintf);
 NTCRT_IMPORT(_vscprintf, _NtCRT__vscprintf);

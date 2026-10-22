@@ -351,9 +351,11 @@ NTCRT_IMPORT(_fstat64, _NtCRT_fstat64);
 NTCRT_IMPORT(_fstati64, _NtCRT_fstati64);
 NTCRT_IMPORT(_stati64, _NtCRT_stati64);
 NTCRT_IMPORT(_wstati64, _NtCRT_wstati64);
+#ifndef _WIN64
 NTCRT_IMPORT(_fstat32i64, _NtCRT_fstat32i64);
 NTCRT_IMPORT(_stat32i64, _NtCRT_stat32i64);
 NTCRT_IMPORT(_wstat32i64, _NtCRT_wstat32i64);
+#endif
 NTCRT_IMPORT(_fstat32, _NtCRT_fstat32);
 NTCRT_IMPORT(_stat32, _NtCRT_stat32);
 NTCRT_IMPORT(_wstat32, _NtCRT_wstat32);

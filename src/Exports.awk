@@ -2,8 +2,8 @@
 # Keeps one assembly file per name in "dir": a jump "Name" to "Impl" (unless _ONLY) and the pointer "__imp_Name".
 # On x86 ("x86" set) the assembler names have the prefix "_", and those of stdcall functions the suffix "@" and the
 # size of the arguments: "syms" lists the assembler names that nm reads in the objects, a name takes that of Impl.
-# For tcc ("elf" set, ELF objects) a function has "Name" only and a variable "_imp__Name" only, which tcc reads: "syms"
-# lists the functions.
+# For tcc ("elf" set, ELF objects) a variable has "_imp__Name" only, which tcc reads, and a function no file: "Name"
+# is a weak alias in the object of "Impl" (NtCRT.h). "syms" lists the functions.
 # A file is written only when its text changes, the files to assemble (written or without an object) are printed,
 # and the names of all files to keep are written to "keep". The sections are COMDAT, lld drops those of the names a
 # program does not use (--gc-sections).
@@ -58,7 +58,7 @@ BEGIN \
     text = ""
     if (elf && (NF == 2 || $NF in Function))
     {
-        text = sprintf("\t.text\n\t.globl\t%s\n\t.type\t%s,@function\n%s:\n\tjmp\t%s\n", name, name, name, impl)
+        next
     } else if (elf)
     {
         text = sprintf("\t.data\n\t.globl\t_imp__%s\n\t.p2align\t3\n_imp__%s:\n\t.quad\t%s\n", name, name, impl)

@@ -262,7 +262,9 @@ NTCRT_IMPORT(usleep, __wrap_usleep);
 NTCRT_IMPORT(nanosleep, _NtCRT_nanosleep);
 NTCRT_IMPORT(timespec_get, _NtCRT_timespec_get);
 NTCRT_IMPORT(_timespec64_get, _NtCRT_timespec_get);
+#ifndef _WIN64
 NTCRT_IMPORT(_timespec32_get, _NtCRT__timespec32_get);
+#endif
 NTCRT_IMPORT(clock_gettime, _NtCRT_clock_gettime);
 NTCRT_IMPORT(clock_getres, _NtCRT_clock_getres);
 NTCRT_IMPORT(clock_settime, _NtCRT_clock_settime);

@@ -194,9 +194,10 @@ for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what Nt
 `ntdll.dll` only. The startup is that of tcc (`crt1.c` of `libtcc1.a`), which calls `__getmainargs` of NtCRT.
 
 - tcc links ELF objects only: clang compiles NtCRT for the x64 of Windows into ELF (`x86_64-w64-windows-gnu-elf`,
-  `NTCRT_TCC` in `src/NtCRT.h`). The stubs give a function by its name and a variable of msvcrt by `_imp__Name`, as
-  the headers of tcc read it, or by its name as an import slot where they declare it `__declspec(dllimport)`
-  (`_timezone`, `_daylight`, `_dstbias`, `_tzname` and those without `_`).
+  `NTCRT_TCC` in `src/NtCRT.h`). A function of msvcrt is a weak alias in the object that implements it, which a
+  program may define itself; a variable is given by `_imp__Name`, as the headers of tcc read it, or by its name as
+  an import slot where they declare it `__declspec(dllimport)` (`_timezone`, `_daylight`, `_dstbias`, `_tzname` and
+  those without `_`).
 - What a GCC build takes from libmingwex, libmsvcrt, libmingw32 and libgcc of the toolchain (`exp`, `fmod`,
   `___chkstk_ms`, ...) and the C99 math of `<math.h>` (double and float: the `long double` of tcc is a `double`),
   `strnlen`, `wcsnlen`, `snprintf` and `vsnprintf`: their members, made ELF objects by `objcopy -O elf64-x86-64`
@@ -210,8 +211,9 @@ for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what Nt
   runs the `atexit` functions and flushes the streams first (msvcrt does both at its `DLL_PROCESS_DETACH`). `tcc -run`
   ends by the `exit` and `atexit` of its `runmain.o`: NtCRT flushes the streams by an `atexit` function registered
   before `main`, which runs after those of the program.
-- `-Os`, tcc links whole objects: `int main(void) { return 7; }` is 31232 bytes (36352 with GCC and NtCRT). Most
-  of the 1.7 MB of `libntcrt.a` is the ELF headers of the stubs, a member for each name (25 KB by xz).
+- `-Os`, tcc links whole objects: `int main(void) { return 7; }` is 26624 bytes (37376 with GCC and NtCRT), the
+  floating point environment that the startup of tcc sets is apart from the math (`src/FloatEnv.cpp`).
+  `libntcrt.a` is 870 KB, 1.7 MB with a member for each name.
 - No thread functions (tcc defines `__STDC_NO_THREADS__`). tcc takes `_strlwr` for `strlwr` itself, `ntdll.def`
   has no aliases.
 

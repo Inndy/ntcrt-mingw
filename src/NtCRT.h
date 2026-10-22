@@ -21,10 +21,24 @@
  * The Makefile collects these lines and emits an object for each name, so a name is only linked while it is
  * still undefined, and kernel32 or msvcrt linked explicitly by the user takes precedence instead of clashing.
  */
+#ifndef NTCRT_TCC
 #define NTCRT_IMPORT(Name, Impl) static_assert(sizeof(&Impl) != 0, #Name)
 
 /* Only "__imp_Name", for a name that the MinGW-w64 runtime defines itself, collected as above */
 #define NTCRT_IMPORT_ONLY(Name, Impl) static_assert(sizeof(&Impl) != 0, #Name)
+#else
+/*
+ * tcc links whole objects and reads no "__imp_" of a function: "Name" is a weak alias of "Impl" in its object (which
+ * must define it), a program may define its own. Exports.awk keeps "_imp__Name" of the variables.
+ */
+#define NTCRT_IMPORT(Name, Impl)                \
+    static_assert(sizeof(&Impl) != 0, #Name);   \
+    __asm__(".ifnc " #Name "," #Impl "\n\t"     \
+            ".weak " #Name "\n\t"               \
+            ".set " #Name ", " #Impl "\n\t"     \
+            ".endif")
+#define NTCRT_IMPORT_ONLY NTCRT_IMPORT
+#endif
 
 /* The prefix of the assembler names of C names ("_" on x86), the alignment and the directive of a pointer */
 #define NTCRT_STRINGIZE_(x) #x

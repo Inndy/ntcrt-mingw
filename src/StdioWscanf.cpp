@@ -101,8 +101,10 @@ EXTERN_C int __cdecl __ms_vwscanf(const wchar_t*, va_list) __attribute__((alias(
 
 NTCRT_IMPORT_ONLY(vfwscanf, _NtCRT_vfwscanf);
 NTCRT_IMPORT(fwscanf, _NtCRT_fwscanf);
+NTCRT_IMPORT(__ms_fwscanf, _NtCRT_fwscanf);
 NTCRT_IMPORT_ONLY(vwscanf, _NtCRT_vwscanf);
 NTCRT_IMPORT(wscanf, _NtCRT_wscanf);
+NTCRT_IMPORT(__ms_wscanf, _NtCRT_wscanf);
 NTCRT_IMPORT(vfwscanf_s, _NtCRT_vfwscanf_s);
 NTCRT_IMPORT(_winput_s, _NtCRT_vfwscanf_s);
 NTCRT_IMPORT(fwscanf_s, _NtCRT_fwscanf_s);
