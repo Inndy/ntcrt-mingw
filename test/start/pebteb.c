@@ -52,7 +52,7 @@ int main(void)
     SYSTEM_INFO Info;
     DWORD Session = 0, Tls[TLS_MINIMUM_AVAILABLE + 1], Fls, Code = 1;
     ULONG Guarantee = 0x4000;
-    BOOL Wow64 = FALSE;
+    BOOL Wow64 = FALSE, Win7;
     HANDLE Thread;
     int i;
 
@@ -87,12 +87,16 @@ int main(void)
     K32(WaitForSingleObject)(Thread, INFINITE);
     CHECK(K32(GetExitCodeThread)(Thread, &Code) && Code == 0);
 
-    /* The 32-bit TEB of a WOW64 process precedes the 64-bit one, which keeps the error mode of the thread */
+    /*
+     * The 32-bit TEB of a WOW64 process precedes the 64-bit one by 0x2000, which keeps the error mode of the thread.
+     * Windows 7 has the same layout but tells no WowTebOffset (0), Windows 8 and later do.
+     */
     K32(IsWow64Process)(K32(GetCurrentProcess)(), &Wow64);
-    CHECK((Teb->WowTebOffset != 0) == !!Wow64);
+    Win7 = Peb->OSMajorVersion == 6 && Peb->OSMinorVersion < 2;
+    CHECK(Teb->WowTebOffset == (Wow64 && !Win7 ? -0x2000 : 0));
     K32(SetThreadErrorMode)(SEM_FAILCRITICALERRORS, NULL);
     if (Wow64)
-        CHECK(Teb->WowTebOffset < 0 && *(PULONG)((PUCHAR)Teb + Teb->WowTebOffset + 0x16B0) != 0);
+        CHECK(*(PULONG)((PUCHAR)Teb - 0x2000 + 0x16B0) != 0);
     else
         CHECK(Teb->HardErrorMode != 0);
 
