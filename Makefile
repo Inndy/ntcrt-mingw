@@ -236,11 +236,26 @@ $(BUILD)/lib/ntdll.def: $(BUILD)/ntdll.def
 	mkdir -p $(@D)
 	cp $< $@
 
+# x86: the math functions that src/MathX87.cpp rounds (NTCRT_X87_ROUND), renamed _NtCRT_X87_<name> in the members
+# that define them, and those of libmingwex (NTCRT_X87_ROUND_WRAP) in copies of their members, all names renamed
+X87_ROUND := $(shell awk -F, '$$1 ~ /^NTCRT_X87_ROUND.[a-z]/ { print substr($$1, 17) }' src/MathX87.cpp)
+X87_WRAP := $(shell awk -F, '$$1 ~ /^NTCRT_X87_ROUND_WRAP.[a-z]/ { print substr($$1, 22) }' src/MathX87.cpp)
+define x87-rename
+cd $(BUILD)/msvcrt && ar x "$(MINGWEX_A)" $(X87_WRAP:%=lib32_libmingwex_a-%.o)
+cd $(BUILD)/msvcrt && { printf '_%s __NtCRT_X87_%s\n' $(foreach f,$(X87_ROUND),$(f) $(f)); \
+    nm -g --defined-only $(X87_WRAP:%=lib32_libmingwex_a-%.o) | \
+    awk 'NF == 3 { print $$3, "__NtCRT_X87_" substr($$3, 2) }'; } > ../x87.syms
+cd $(BUILD)/msvcrt && nm -A -g --defined-only *.o | \
+    awk 'NR == FNR { Rename[$$1] = 1; next } $$NF in Rename { sub(/:.*/, ""); print }' ../x87.syms - | sort -u | \
+    xargs -r -n 1 objcopy --redefine-syms=../x87.syms
+endef
+
 # The static (non-import) members of libmsvcrt.a, minus those defining a symbol of libntcrt.a
-$(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
+$(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms src/MathX87.cpp
 	rm -rf $(BUILD)/msvcrt
 	mkdir -p $(BUILD)/msvcrt
 	cd $(BUILD)/msvcrt && ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib$(if $(X86),32,64)_libmsvcrt_')
+	$(if $(X86),$(x87-rename))
 	for o in $(BUILD)/msvcrt/*.o; do \
 	    if nm -g --defined-only $$o | awk 'NF == 3 { print $$3 }' | grep -qxF -f $(BUILD)/ntcrt.syms; then rm $$o; fi; \
 	done
@@ -251,7 +266,8 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms
 # src/FormatWide.cpp, its scanf (and the __ms_v*scanf that call msvcrt) by src/Scanf.cpp, src/ScanfWide.cpp,
 # src/StdioScanf.cpp and src/StdioWscanf.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll,
 # wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp, ftruncate64 by
-# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp. libntcrt defines them under their names too, for lld.
+# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp, lgamma and lgammaf of x86 by src/MathX87.cpp. libntcrt defines
+# them under their names too, for lld.
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
          $(foreach f,vfscanf vscanf vsscanf fscanf scanf sscanf vfwscanf vwscanf vswscanf fwscanf wscanf swscanf, \
@@ -259,7 +275,7 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
          $(foreach f,vfscanf vscanf vsscanf vfwscanf vwscanf vswscanf,--wrap=__ms_$(f)) \
          $(foreach f,strtof strtod strtold wcstof wcstod wcstold,--wrap=__mingw_$(f)) \
          $(foreach f,strtold wcstold wcstoll wcstoull wcstoimax wcstoumax,--wrap=$(f)) \
-         --wrap=btowc --wrap=wctob --wrap=ftruncate64 --wrap=sleep --wrap=usleep
+         --wrap=btowc --wrap=wctob --wrap=ftruncate64 --wrap=sleep --wrap=usleep $(if $(X86),$(X87_WRAP:%=--wrap=%))
 
 # Replace the msvcrt and kernel32 libraries, the group resolves the cycles between them. libmingwex precedes
 # libntcrt, the math functions libntcrt calls are of ntdll. libntcrt_start replaces the pseudo relocator and _matherr
@@ -392,6 +408,14 @@ $(BUILD)/printf/printf.exe: test/printf/printf.c $(LIBS) $(DRIVER)
 	$(NTCRT_CC) -std=c17 -O2 -Wno-format -static -o $@ $<
 
 test-printf: $(BUILD)/printf/printf.exe
+	./$<
+
+# The math functions return a value of their type, the x87 ones of x86 too (src/MathX87.cpp)
+$(BUILD)/math/round.exe: test/math/round.c $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CC) -std=c17 -O2 -fno-builtin -static -o $@ $<
+
+test-math: $(BUILD)/math/round.exe
 	./$<
 
 # scanf where the fuzz cannot compare with UCRT: the examples of C11, streams, the wide, _s and _l functions, msvcrt,
@@ -686,7 +710,8 @@ $(LIBC)/src.stamp: test/libc-test/fetch.sh
 test-libc: $(LIBC)/src.stamp $(LIBS) $(DRIVER)
 	set -f; NTCRT_CC="$(NTCRT_CC)" sh test/libc-test/run.sh $(LIBC) $(LIBC_TESTS)
 
-test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start test-install test-dl
+test: test-upstream test-fuzz test-printf test-math test-scanf test-console test-cxx test-thread test-start test-install \
+      test-dl
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
 # depends on which objects of libntcrt.a a program links.
@@ -794,5 +819,5 @@ endif
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
-        test-start test-install test-dl test-libc test-wine test-pthread size compare install clean
+.PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-math test-scanf test-console \
+        test-cxx test-thread test-start test-install test-dl test-libc test-wine test-pthread size compare install clean

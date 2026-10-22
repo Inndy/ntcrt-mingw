@@ -9,7 +9,8 @@
 
 EXTERN_C double __cdecl _NtCRT_log10(double x)
 {
-    double Result;
+    /* st(0) at the precision of the x87 (x86), rounded by the return */
+    long double Result;
 
     if (x < 0)
     {
@@ -25,7 +26,7 @@ EXTERN_C double __cdecl _NtCRT_log10(double x)
             "fxch\n\t"
             "fyl2x"
             : "=t"(Result)
-            : "0"(x));
+            : "0"((long double)x));
     return Result;
 }
 

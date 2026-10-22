@@ -58,6 +58,7 @@ path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put tha
   [parse-number-fxx-test-data](https://github.com/nigeltao/parse-number-fxx-test-data), and printf `%.17g`,
   `%.9g` and `%a` read back (`make test-float-corpus FLOAT_CORPUS=<its data directory>`)
 - `test/printf/` printf against exact expected strings (`make test-printf`)
+- `test/math/` the math functions return a value of their type, the x87 ones of x86 too (`make test-math`)
 - `test/scanf/` scanf where the fuzz cannot compare with UCRT (`make test-scanf`), its link map shows no scanf of
   libmingwex
 - `test/gofloat/` `strtod`, `strtof` and `wcstod` in a DLL tested by Go (`make test-go`, `GO_FUZZTIME=d`): the
@@ -199,6 +200,11 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   `_stat32i64`, `_findfirst32i64`, `clock_gettime32`, `cnd_timedwait32`, ...), which libntcrt has.
 - `_control87`, `_controlfp`: the x87 control word with its precision and infinity control, or'ed with the control of
   SSE and `_EM_AMBIGUOUS` when the two differ, as the x86 msvcrt.
+- Math: the x87 computes at the 64-bit precision of long double, and some math functions of MinGW-w64 (`sqrt`, `pow`,
+  `atan2`, `cbrt`, `sqrtf`, ... of lib32 libmsvcrt, `lgamma` and `lgammaf` of libmingwex) return st(0) as it is, where
+  C11 F.6 wants a `double` or a `float` (GCC takes the result of a call as rounded). `src/MathX87.cpp` rounds them:
+  the Makefile renames them in `libmsvcrt_static.a` and in copies of the members of libmingwex (`--wrap` for GNU ld,
+  which reads libmingwex first), `make test-math` checks the raw st(0) of each.
 - clang: `make LLVM=<clang64>/` with the i686 GCC first in `PATH`, clang of msys2 clang64 for `i686-w64-mingw32` on
   the sysroot of mingw32 (there is no clang32). The library has the DWARF unwind tables of GCC (`-funwind-tables`), and
   the personality routine of `pthread_once` is in a section that is no COMDAT: lld keeps no section for the
