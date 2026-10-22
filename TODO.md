@@ -20,10 +20,11 @@ Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`
 The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7; of
 `libntdll_crt.a` only `atan2` is not, which libmingwex defines before it.
 
-- [ ] **`CONIN$` and `CONOUT$` on Windows 7.** CreateFile of kernel32 opens them by the console server,
+- [x] **`CONIN$` and `CONOUT$` on Windows 7.** CreateFile of kernel32 opens them by the console server,
   `NtCreateFile` does not: `_open` (`_NtCRT_CreateFile`) and `CreateFileW` (`_K32_CreateFileW`) fail. `_getwch`,
   `_getch` and the other functions of `Conio.cpp` open `CONIN$` by `_K32_CreateFileW` and always return `WEOF` there
-  (win32lab, `research/console_encoding/README.md` §10). Fixed, to verify on Windows 7: before Windows 8 the names
+  (win32lab, `research/console_encoding/README.md` §10). Fixed, verified on Windows 7 SP1 by win32lab (`open`,
+  `write` and `dbcs` of `test/console/child.c`, Conio failed before): before Windows 8 the names
   of `BaseIsThisAConsoleName` of kernel32 (`_NtCRT_IsLegacyConsoleName`: `CONIN$`, `CONOUT$`, `CON` for reading or
   writing alone) go to CreateFileW of kernel32 and give a legacy console handle; `_open` makes it inheritable by
   `SetHandleInformation`. `make test-console` opens them by name (`open`).
