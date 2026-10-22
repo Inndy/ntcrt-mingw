@@ -31,6 +31,12 @@ configure, make or CMake. They take `-ntcrt-strict` too. The specs and configura
 (`-Bstatic`, `-static`) when `-static` is not given, a program does not import `libstdc++-6.dll` or
 `libgcc_s_seh-1.dll`. The drivers are x64 only, see [x86](#x86).
 
+The path of the checkout, of the toolchain or of `PREFIX` may have spaces: the specs escape them and the
+configuration files quote them. `make test-install` installs into `build/install test` and builds with the drivers
+there, with specs or a configuration file of that directory, and for clang with a sysroot through a junction whose
+path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put that clang first in PATH and give
+`LLVM=1`.
+
 ## Layout
 
 - `src/` the runtime, `NtCRT.h` is the internal header

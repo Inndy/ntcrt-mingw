@@ -4,8 +4,6 @@ Proposals, kept here until they are taken up or dropped; those taken up say so.
 
 ## Correctness
 
-- **Paths with spaces.** The `--sysroot` line of `ntcrt.cfg` and the `-L` of `ntcrt.specs` break when the path of
-  the checkout or the toolchain contains a space.
 - **Wildcards of `__getmainargs`** (in progress, ntcrt-mingw-e1). msvcrt expands `*` and `?` of the command line
   when the program sets `_dowildcard` (`CRT_glob` of MinGW-w64, `-D_CRT_glob` or `int _dowildcard = -1`), NtCRT
   passes them as they are. Behind the flag, so that a program without it does not link the directory functions. The

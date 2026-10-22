@@ -52,6 +52,8 @@ START_OBJS := $(START_SRCS:src/start/%.cpp=$(BUILD)/start/%.o)
 HEADERS  := src/NtCRT.h $(wildcard src/*.inl) $(wildcard include/*.h) $(wildcard include/KNSoft/NDK/*) \
             $(wildcard polyfill/*.inl)
 MSVCRT_A := $(shell $(CXX) -print-file-name=libmsvcrt.a)
+# The root of the toolchain, by the shell: $(abspath) and $(dir) would split a path with spaces
+GCC_ROOT := $(shell cygpath -m "$$(realpath -s "$$(dirname "$$($(CXX) -print-libgcc-file-name)")/../../../..")")
 
 # The compilers of the runtime and of the programs on it
 ifdef LLVM
@@ -60,15 +62,14 @@ LLVM_PREFIX := $(filter %/,$(LLVM))
 # MinGW-w64 headers before 12 clashes with the one of <cpuid.h> of clang and is left out, and their <intrin.h>
 # includes <mm3dnow.h>, which clang deprecates. Thread-local variables are emulated as GCC does, libstdc++ has
 # std::call_once by them (__emutls_get_address on pthread keys).
-GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
-LLVM_FLAGS := --target=$(TARGET) --sysroot=$(GCC_ROOT) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
+LLVM_FLAGS := --target=$(TARGET) -stdlib=libstdc++ -D__INTRINSIC_DEFINED___cpuidex \
               -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -femulated-tls
 ifeq ($(X86)$(NOUNWIND),1)
 # The DWARF unwind tables of GCC on x86, which clang leaves out without exceptions: a C++ exception goes through the
 # callbacks that NtCRT calls (qsort, pthread_once of std::call_once)
 CXXFLAGS += -funwind-tables
 endif
-LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS)
+LIB_CXX  := $(LLVM_PREFIX)clang++ $(LLVM_FLAGS) "--sysroot=$(GCC_ROOT)"
 LIB_AS   := $(LLVM_PREFIX)clang --target=$(TARGET)
 NTCRT_CC := $(LLVM_PREFIX)clang --config=$(BUILD)/ntcrt-strict.cfg
 NTCRT_CXX := $(LLVM_PREFIX)clang++ --config=$(BUILD)/ntcrt-strict.cfg
@@ -94,8 +95,7 @@ ifdef TCC
 ifdef X86
 $(error TCC=1 builds for x64 only)
 endif
-GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
-TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf --sysroot=$(GCC_ROOT) -stdlib=libstdc++ \
+TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf "--sysroot=$(GCC_ROOT)" -stdlib=libstdc++ \
              -D__INTRINSIC_DEFINED___cpuidex -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -DNTCRT_TCC \
              -fno-asynchronous-unwind-tables
 LIB_CXX  := $(filter %/,$(LLVM))clang++ $(TCC_FLAGS)
@@ -200,7 +200,7 @@ $(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms src/Members.awk
 	    ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib64_libmsvcrt_')
 	{ printf '%s\n' $(TCC_SEEDS); nm -g --undefined-only $(BUILD)/libntcrt.a | awk '$$1 == "U" { print $$2 }'; } \
 	    > $(BUILD)/seeds.txt
-	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../ntcrt.syms -v seeds=../seeds.txt -f $(CURDIR)/src/Members.awk \
+	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../ntcrt.syms -v seeds=../seeds.txt -f "$(CURDIR)/src/Members.awk" \
 	    ../ntcrt.syms ../seeds.txt - > ../members.txt
 
 # objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations. The long
@@ -257,18 +257,26 @@ WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf print
 # leaves it out. -Bstatic links libstdc++ and the others statically without -static. The specs of an installation
 # (install) have no paths, its drivers pass them. A libgcc built for a shared libgcc has the unwinder in libgcc_eh
 # (that of i686 in MSYS2, DWARF).
-GCC_EH := $(if $(wildcard $(shell $(CXX) -print-file-name=libgcc_eh.a)),gcc_eh)
+GCC_EH := $(shell test -f "$$($(CXX) -print-file-name=libgcc_eh.a)" && echo gcc_eh)
 SPECS_LIBGCC := --start-group -lntcrt_start -lmingw32 -lgcc $(addprefix -l,$(GCC_EH)) -lmingwex -lntcrt -lmsvcrt_static \
                 -lntdll_crt -lntdll --end-group %{!ntcrt-strict:-lkernel32}
 
 # GNU ld drops the unused functions on x86, x64 keeps them by .pdata (README.md "Size")
 SPECS_LINK := $(if $(X86),--gc-sections )$(WRAPS)
 
+# $(call build-specs,<include dir>,<library dir>,<file>): the specs of a build. GCC splits the arguments of specs at
+# spaces, a backslash makes a space of a path part of the argument.
+empty :=
+space := $(empty) $(empty)
+define build-specs
+printf '*cpp:\n+ -isystem %s\n\n' '$(subst $(space),\ ,$(1))' > "$(3)"
+printf '*link:\n+ -L%s -Bstatic %s\n\n' '$(subst $(space),\ ,$(2))' "$(SPECS_LINK)" >> "$(3)"
+printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> "$(3)"
+printf '*lib:\n%%{pg:-lgmon}\n\n' >> "$(3)"
+endef
+
 $(BUILD)/ntcrt.specs: Makefile | $(BUILD)
-	printf '*cpp:\n+ -isystem %s\n\n' "$(CURDIR)/include" > $@
-	printf '*link:\n+ -L%s -Bstatic %s\n\n' "$(CURDIR)/$(BUILD)" "$(SPECS_LINK)" >> $@
-	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@
-	printf '*lib:\n%%{pg:-lgmon}\n\n' >> $@
+	$(call build-specs,$(CURDIR)/include,$(CURDIR)/$(BUILD),$@)
 
 $(BUILD)/install/ntcrt.specs: Makefile
 	mkdir -p $(@D)
@@ -287,20 +295,21 @@ $(BUILD)/install/ntcrt.specs: Makefile
 NTCRT_LINK := -Wl,--gc-sections \
               $(addprefix -l,ntcrt_start mingw32 stdc++ gcc $(GCC_EH) ntcrt mingwex msvcrt_static ntdll_crt ntdll)
 
+# $(call build-cfg,<sysroot>,<include dir>,<library dir>,<file>)
+define build-cfg
+printf '"%s"\n' $(LLVM_FLAGS) "--sysroot=$(1)" -fuse-ld=lld -nodefaultlibs -static "-isystem$(2)" "-L$(3)" > "$(4)"
+printf '$$%s\n' $(NTCRT_LINK) >> "$(4)"
+endef
+
 $(BUILD)/ntcrt.cfg $(BUILD)/install/ntcrt.cfg: %/ntcrt.cfg: %/ntcrt-strict.cfg
 	printf '@ntcrt-strict.cfg\n$$-lkernel32\n' > $@
 
 $(BUILD)/ntcrt-strict.cfg: Makefile | $(BUILD)
-	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs -static > $@
-	printf '"%s"\n' "-isystem$(CURDIR)/include" >> $@
-	printf '"%s"\n' "-L$(CURDIR)/$(BUILD)" >> $@
-	printf '$$%s\n' $(NTCRT_LINK) >> $@
+	$(call build-cfg,$(GCC_ROOT),$(CURDIR)/include,$(CURDIR)/$(BUILD),$@)
 
 $(BUILD)/install/ntcrt-strict.cfg: Makefile
 	mkdir -p $(@D)
-	printf '%s\n' $(LLVM_FLAGS) -fuse-ld=lld -nodefaultlibs -static > $@
-	printf '"%s"\n' "-isystem<CFGDIR>/../../include" "-L<CFGDIR>" >> $@
-	printf '$$%s\n' $(NTCRT_LINK) >> $@
+	$(call build-cfg,$(GCC_ROOT),<CFGDIR>/../../include,<CFGDIR>,$@)
 
 TEST_SRCS := $(wildcard test/upstream/*.cpp)
 
@@ -348,9 +357,9 @@ $(BUILD)/gofloat/float.dll: test/gofloat/dll/float.c $(LIBS) $(DRIVER)
 	$(NTCRT_CC) -std=c17 -O2 -shared -o $@ $<
 
 test-go: $(BUILD)/gofloat/float.dll
-	cd test/gofloat && NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -count=1 -run Test . && \
+	cd test/gofloat && NTCRT_FLOAT_DLL="$(CURDIR)/$<" $(GO) test -count=1 -run Test . && \
 	    for f in FuzzStrtod FuzzStrtodLong FuzzStrtold80 FuzzPrintfDouble FuzzPrintfLongDouble; do \
-	        NTCRT_FLOAT_DLL=$(CURDIR)/$< $(GO) test -run XXX -fuzz "^$$f\$$" -fuzztime $(GO_FUZZTIME) . || exit 1; \
+	        NTCRT_FLOAT_DLL="$(CURDIR)/$<" $(GO) test -run XXX -fuzz "^$$f\$$" -fuzztime $(GO_FUZZTIME) . || exit 1; \
 	    done
 
 # strtod, strtof and wcstod against parse-number-fxx-test-data, FLOAT_CORPUS=its data directory. Not in "test", the
@@ -629,7 +638,7 @@ else
 INSTALL_LIB := lib/gcc
 INSTALL_FILES := $(BUILD)/install/ntcrt.specs
 INSTALL_TOOLS := gcc g++ cc c++
-DRIVER_DIRS = -DNTCRT_GCC_DIR='L"$(dir $(shell cygpath -m $$($(CC) -print-libgcc-file-name)))../../../../bin/"'
+DRIVER_DIRS = -DNTCRT_GCC_DIR='L"$(shell cygpath -m "$$(dirname "$$($(CC) -print-libgcc-file-name)")")/../../../../bin/"'
 endif
 
 $(BUILD)/install/driver.exe: tools/driver.c $(LIBS) $(DRIVER)
@@ -648,20 +657,31 @@ endef
 
 ifdef TCC
 # make TCC=1 install PREFIX=<dir>: libntcrt.a and ntdll.def for tcc into <dir>/lib/tcc, beside a GCC or LLVM build
-install: $(LIBS)
-	test -n "$(PREFIX)"
-	mkdir -p "$(PREFIX)/lib/tcc"
-	cp $(LIBS) "$(PREFIX)/lib/tcc"
-else
+INSTALL_DEPS := $(LIBS)
+define install-to
+mkdir -p "$(1)/lib/tcc"
+cp $(LIBS) "$(1)/lib/tcc"
+endef
+endif
+
 install: $(INSTALL_DEPS)
 	test -n "$(PREFIX)"
 	$(call install-to,$(PREFIX))
-endif
 
 # An installation in a directory with a space: C and C++ by the drivers without -static, an argument with quotes
-# and spaces, -ntcrt-strict
+# and spaces, -ntcrt-strict. Then the specs (GCC) or the configuration (clang) of a build, made for the include/ and
+# the libraries of that directory: for clang with a sysroot of a space too, a junction to the toolchain, which rm
+# removes without what it points to. TCC=1: the files of tcc in that directory.
 INSTALL_TEST := $(BUILD)/install test
+INSTALL_FULL := $(CURDIR)/$(INSTALL_TEST)
 
+ifdef TCC
+test-install: $(INSTALL_DEPS)
+	rm -rf "$(INSTALL_TEST)"
+	$(call install-to,$(INSTALL_TEST))
+	for f in $(LIBS); do cmp "$$f" "$(INSTALL_TEST)/lib/tcc/$${f##*/}" || exit 1; done
+	@echo "install: ok"
+else
 test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
 	$(call install-to,$(INSTALL_TEST))
@@ -671,11 +691,23 @@ test-install: $(INSTALL_DEPS)
 	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(word 2,$(INSTALL_TOOLS)).exe" -O2 -ntcrt-strict -x c++ \
 	    -DTEXT='"c++"' -o "$(INSTALL_TEST)/hello++.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello++.exe" | tr -d '\r' | grep -q -x -F 'c++'
-	for t in hello hello++; do \
+ifdef LLVM
+	cmd //c mklink //J "$$(cygpath -w "$(INSTALL_TEST)/sys root")" "$$(cygpath -w "$(GCC_ROOT)")" > /dev/null
+	$(call build-cfg,$(INSTALL_FULL)/sys root,$(INSTALL_FULL)/include,$(INSTALL_FULL)/$(INSTALL_LIB),$(INSTALL_TEST)/build.cfg)
+	$(LLVM_PREFIX)clang --config="$(INSTALL_TEST)/build.cfg" -O2 -DTEXT='"build"' -o "$(INSTALL_TEST)/build.exe" \
+	    test/start/install.c; s=$$?; rm "$(INSTALL_TEST)/sys root"; exit $$s
+else
+	$(call build-specs,$(INSTALL_FULL)/include,$(INSTALL_FULL)/$(INSTALL_LIB),$(INSTALL_TEST)/build.specs)
+	$(CC) -specs="$(INSTALL_TEST)/build.specs" -static -O2 -DTEXT='"build"' -o "$(INSTALL_TEST)/build.exe" \
+	    test/start/install.c
+endif
+	"$(INSTALL_TEST)/build.exe" | tr -d '\r' | grep -q -x -F 'build'
+	for t in hello hello++ build; do \
 	    if objdump -p "$(INSTALL_TEST)/$$t.exe" | grep 'DLL Name' | grep -v -i -q ntdll.dll; then \
 	        echo "$$t.exe imports more than ntdll.dll"; exit 1; fi; \
 	done
 	@echo "install: ok"
+endif
 
 clean:
 	rm -rf $(BUILD)
