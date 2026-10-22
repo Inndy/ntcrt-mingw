@@ -77,6 +77,10 @@ path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put tha
 - `test/pthread/` the tests of pthreads4w 3.0.0 (Apache-2.0) and the thread tests of musl libc-test (MIT) on NtCRT
   (`make test-pthread`, downloads them into the build directory, see "Threads"), `skip.txt` leaves out what NtCRT
   does not support and what is of pthreads4w or Linux
+- `test/libc-test/` the other tests of musl libc-test, `functional/` and `regression/`, on NtCRT (`make test-libc`,
+  downloads them into the build directory from the clone of `test/pthread`, MIT): `libc-test.sed` cuts the parts of
+  POSIX out of tests that check more of C, `skip.txt` leaves out the tests of POSIX, GNU or BSD interfaces and of
+  processes, signals and resource limits
 - `IDEAS.md` proposals not started yet
 
 ## Size

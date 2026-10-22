@@ -1,0 +1,70 @@
+# Tests left out by run.sh: "suite test reason". They test POSIX, GNU or BSD interfaces that are in neither C nor
+# the CRT of Windows (NtCRT follows the two), or the processes, signals, memory mappings and users of POSIX.
+# The thread tests of libc-test are those of make test-pthread.
+#
+# processes, signals, IPC, sockets, shared objects
+functional dlopen dlopen and shared objects, POSIX <dlfcn.h>
+functional fcntl fcntl record locks between processes by fork
+functional inet_pton sockets, POSIX <arpa/inet.h>
+functional ipc_msg System V IPC and fork
+functional ipc_sem System V IPC and fork
+functional ipc_shm System V IPC and fork
+functional popen a SIGUSR1 sent by the shell of popen (kill -USR1), POSIX signals
+functional socket sockets, POSIX <sys/socket.h>
+functional spawn posix_spawn, POSIX <spawn.h>
+functional vfork vfork and waitpid
+regression daemon-failure daemon and fork
+regression dn_expand-empty the DNS resolver, <resolv.h>
+regression dn_expand-ptr-0 the DNS resolver, <resolv.h>
+regression execle-env execle of /bin/sh with a script of the shell
+regression fflush-exit fork and waitpid
+regression inet_ntop-v4mapped sockets, POSIX <arpa/inet.h>
+regression inet_pton-empty-last-field sockets, POSIX <arpa/inet.h>
+regression raise-race POSIX signals between threads and fork
+regression sigaltstack sigaltstack, POSIX signals
+regression sigprocmask-internal sigprocmask, POSIX signals
+regression syscall-sign-extend syscall of Linux
+#
+# memory and resource limits
+regression malloc-brk-fail brk, mmap and setrlimit
+regression malloc-oom exhausts memory under setrlimit(RLIMIT_AS); without the limit it takes all of Windows
+regression rlimit-open-files setrlimit(RLIMIT_NOFILE)
+regression setenv-oom setenv, and exhausts memory under setrlimit(RLIMIT_AS)
+#
+# users, file systems
+functional mntent the mount table of Linux, <mntent.h>
+functional stat stat of /dev/null and its st_uid against geteuid
+functional utime utimensat and futimens, POSIX 2008
+regression getpwnam_r-crash the user database, POSIX <pwd.h>
+regression getpwnam_r-errno the user database, POSIX <pwd.h>
+regression statvfs statvfs, POSIX <sys/statvfs.h>
+#
+# library functions of POSIX, GNU or BSD, not in C or the CRT of Windows
+functional crypt crypt, POSIX <crypt.h>
+functional env clearenv, setenv and unsetenv of POSIX (the CRT of Windows has _putenv)
+functional fnmatch fnmatch, POSIX <fnmatch.h>
+functional iconv_open iconv, POSIX <iconv.h>
+functional memstream open_memstream, open_wmemstream and fmemopen, POSIX 2008
+functional random random, srandom and initstate, POSIX
+functional search_hsearch hcreate and hsearch, POSIX <search.h>
+functional search_insque insque and remque, POSIX <search.h>
+functional search_lsearch lsearch and lfind of the CRT of Windows take an unsigned int *, of POSIX a size_t *: no build on x64
+functional string_memmem memmem, GNU and POSIX 2024
+functional strptime strptime, POSIX
+functional wordexp wordexp, the shell expansion of POSIX
+regression fgets-eof fmemopen, POSIX 2008
+regression flockfile-list flockfile, POSIX
+regression iconv-roundtrips iconv, POSIX <iconv.h>
+regression lrand48-signextend lrand48, POSIX
+regression memmem-oob memmem, GNU and POSIX 2024
+regression memmem-oob-read memmem, GNU and POSIX 2024
+regression mkdtemp-failure mkdtemp, POSIX 2008
+regression putenv-doublefree setenv and unsetenv, POSIX
+regression regex-backref-0 regcomp, POSIX <regex.h>
+regression regex-bracket-icase regcomp, POSIX <regex.h>
+regression regex-ere-backref regcomp, POSIX <regex.h>
+regression regex-escaped-high-byte regcomp, POSIX <regex.h>
+regression regex-negated-range regcomp, POSIX <regex.h>
+regression regexec-nosub regcomp, POSIX <regex.h>
+regression strverscmp strverscmp, GNU
+regression uselocale-0 newlocale and uselocale, POSIX 2008 (the locale objects of Windows are _locale_t)

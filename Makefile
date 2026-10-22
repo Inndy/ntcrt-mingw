@@ -639,6 +639,19 @@ $(PTHREAD)/src.stamp: test/pthread/fetch.sh
 test-pthread: $(PTHREAD)/src.stamp $(LIBS) $(DRIVER) $(PARKER_OBJ)
 	set -f; NTCRT_CC="$(NTCRT_CC)$(if $(PARKER_OBJ), $(CURDIR)/$(PARKER_OBJ))" sh test/pthread/run.sh $(PTHREAD) $(PTHREAD_TESTS)
 
+# The tests of musl libc-test (MIT) but those of threads, its functional/ and regression/, fetched at the commit of
+# test/libc-test/fetch.sh into $(BUILD)/libc-test/src, from the clone of test/pthread, on NtCRT. Not in "test", it
+# needs the network. test/libc-test/skip.txt leaves out what tests POSIX, GNU or BSD alone. LIBC_TESTS="suite/test
+# ..." (shell patterns) runs some, TIMEOUT=s.
+LIBC := $(BUILD)/libc-test
+
+$(LIBC)/src.stamp: test/libc-test/fetch.sh
+	sh $< $(LIBC)/src $(BUILD)/pthread/src/libc-test.git
+	touch $@
+
+test-libc: $(LIBC)/src.stamp $(LIBS) $(DRIVER)
+	set -f; NTCRT_CC="$(NTCRT_CC)" sh test/libc-test/run.sh $(LIBC) $(LIBC_TESTS)
+
 test: test-upstream test-fuzz test-printf test-scanf test-console test-cxx test-thread test-start test-install test-dl
 
 # Size of small programs, stripped. ld cannot drop unused functions of x64 PE (.pdata keeps them), so the size
@@ -745,4 +758,4 @@ clean:
 	rm -rf $(BUILD)
 
 .PHONY: FORCE all test test-upstream test-fuzz test-go test-float-corpus test-printf test-scanf test-console test-cxx test-thread \
-        test-start test-install test-dl test-wine test-pthread size compare install clean
+        test-start test-install test-dl test-libc test-wine test-pthread size compare install clean
