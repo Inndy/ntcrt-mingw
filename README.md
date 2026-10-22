@@ -21,6 +21,7 @@ make LLVM=1 install PREFIX=C:/ntcrt   # lib/clang and the clang drivers
 x86_64-w64-ntcrt-mingw32-gcc -o hello.exe hello.c    # with C:/ntcrt/bin in PATH
 
 make TCC=1 LLVM=<dir>/   # build-tcc/lib: libntcrt.a and ntdll.def for tcc in place of msvcrt.def, see "tcc"
+make TCC=1 LLVM=<dir>/ install PREFIX=C:/ntcrt   # those two into lib/tcc
 ```
 
 An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`, `cc`, `c++`, `clang` and `clang++`
@@ -192,6 +193,7 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
 `make TCC=1` (with `LLVM=<dir>/` for clang in `<dir>`) builds `build-tcc/lib/libntcrt.a` and `build-tcc/lib/ntdll.def`
 for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what NtCRT has), a program tcc builds imports
 `ntdll.dll` only. The startup is that of tcc (`crt1.c` of `libtcc1.a`), which calls `__getmainargs` of NtCRT.
+`make TCC=1 install PREFIX=<dir>` copies the two into `<dir>/lib/tcc`.
 
 - tcc links ELF objects only: clang compiles NtCRT for the x64 of Windows into ELF (`x86_64-w64-windows-gnu-elf`,
   `NTCRT_TCC` in `src/NtCRT.h`). A function of msvcrt is a weak alias in the object that implements it, which a

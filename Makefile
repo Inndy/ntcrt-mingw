@@ -629,9 +629,17 @@ cp $(LIBS) $(INSTALL_FILES) "$(1)/$(INSTALL_LIB)"
 for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(1)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
 endef
 
+ifdef TCC
+# make TCC=1 install PREFIX=<dir>: libntcrt.a and ntdll.def for tcc into <dir>/lib/tcc, beside a GCC or LLVM build
+install: $(LIBS)
+	test -n "$(PREFIX)"
+	mkdir -p "$(PREFIX)/lib/tcc"
+	cp $(LIBS) "$(PREFIX)/lib/tcc"
+else
 install: $(INSTALL_DEPS)
 	test -n "$(PREFIX)"
 	$(call install-to,$(PREFIX))
+endif
 
 # An installation in a directory with a space: C and C++ by the drivers without -static, an argument with quotes
 # and spaces, -ntcrt-strict
