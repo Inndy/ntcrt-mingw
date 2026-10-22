@@ -18,8 +18,6 @@ EXTERN_C int __cdecl _NtCRT_close(int fd)
         return -1;
     }
     Handle = Entry->Handle;
-    Entry->Handle = INVALID_HANDLE_VALUE;
-    Entry->Flags = 0;
     if (Entry->ConsoleText != NULL)
     {
         RtlFreeHeap(NTCRT_HEAP, 0, Entry->ConsoleText);
@@ -29,6 +27,14 @@ EXTERN_C int __cdecl _NtCRT_close(int fd)
     {
         _Inline_SetStdHandle(fd == 0 ? STD_INPUT_HANDLE : fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, NULL);
     }
+    /*
+     * The fd is free last, under the table lock, under which _open takes a free fd without its lock: the fd it took
+     * and set is not cleared after
+     */
+    RtlAcquireSRWLockExclusive(&_NtCRT_FdTableLock);
+    Entry->Handle = INVALID_HANDLE_VALUE;
+    Entry->Flags = 0;
+    RtlReleaseSRWLockExclusive(&_NtCRT_FdTableLock);
     _NtCRT_UnlockFd(Entry);
     if (Handle != NTCRT_NO_CONSOLE_HANDLE && Handle != INVALID_HANDLE_VALUE && Handle != NULL)
     {
