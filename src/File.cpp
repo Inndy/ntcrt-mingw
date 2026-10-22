@@ -301,7 +301,8 @@ _K32_GetFileAttributesW(
     Status = RtlDosPathNameToNtPathName_U_WithStatus(lpFileName, &NtPath, NULL, NULL);
     if (!NT_SUCCESS(Status))
     {
-        _Inline_BaseSetLastNTError(Status);
+        /* The directory of a DOS device name is missing (OBJECT_NAME_INVALID): ERROR_PATH_NOT_FOUND as kernel32 */
+        _Inline_BaseSetLastNTError(RtlIsDosDeviceName_U(lpFileName) != 0 ? STATUS_OBJECT_PATH_NOT_FOUND : Status);
         return INVALID_FILE_ATTRIBUTES;
     }
     InitializeObjectAttributes(&ObjectAttributes, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
@@ -309,6 +310,11 @@ _K32_GetFileAttributesW(
     RtlFreeUnicodeString(&NtPath);
     if (!NT_SUCCESS(Status))
     {
+        /* A DOS device name exists as a file, as kernel32 says, whether the device answers or not (COM9) */
+        if (RtlIsDosDeviceName_U(lpFileName) != 0)
+        {
+            return FILE_ATTRIBUTE_ARCHIVE;
+        }
         _Inline_BaseSetLastNTError(Status);
         return INVALID_FILE_ATTRIBUTES;
     }

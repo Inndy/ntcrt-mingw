@@ -77,6 +77,7 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
     IO_STATUS_BLOCK IoStatusBlock;
     FILE_BASIC_INFORMATION Basic;
     FILE_STANDARD_INFORMATION Standard;
+    BOOL Device;
     int Drive;
 
     if (path == NULL || buffer == NULL)
@@ -84,32 +85,42 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
         NTCRT_ERRNO = EINVAL;
         return -1;
     }
-    /* A name with wildcards is invalid for NtOpenFile (EINVAL), a "\\?\" prefix is taken */
+    /*
+     * A name with wildcards is invalid for NtOpenFile (EINVAL), a "\\?\" prefix is taken. A DOS device name whose
+     * directory exists (the conversion checks it) is a character device, as GetFileAttributesW says it exists: none is
+     * opened, a port may be absent and the console is no device before Windows 8.
+     */
     Status = RtlDosPathNameToNtPathName_U_WithStatus(path, &NtPath, NULL, NULL);
+    Device = RtlIsDosDeviceName_U(path) != 0;
     if (!NT_SUCCESS(Status))
     {
-        _NtCRT_SetErrnoFromNtStatus(Status);
+        _NtCRT_SetErrnoFromNtStatus(Device ? STATUS_OBJECT_PATH_NOT_FOUND : Status);
         return -1;
     }
-    InitializeObjectAttributes(&ObjectAttributes, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-    Status = NtOpenFile(&Handle,
-                        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-                        &ObjectAttributes,
-                        &IoStatusBlock,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT);
+    if (!Device)
+    {
+        InitializeObjectAttributes(&ObjectAttributes, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        Status = NtOpenFile(&Handle,
+                            FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                            &ObjectAttributes,
+                            &IoStatusBlock,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                            FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT);
+        if (NT_SUCCESS(Status))
+        {
+            Status = NtQueryInformationFile(Handle, &IoStatusBlock, &Basic, sizeof(Basic), FileBasicInformation);
+            if (NT_SUCCESS(Status))
+            {
+                Status = NtQueryInformationFile(Handle,
+                                                &IoStatusBlock,
+                                                &Standard,
+                                                sizeof(Standard),
+                                                FileStandardInformation);
+            }
+            NtClose(Handle);
+        }
+    }
     RtlFreeUnicodeString(&NtPath);
-    if (!NT_SUCCESS(Status))
-    {
-        _NtCRT_SetErrnoFromNtStatus(Status);
-        return -1;
-    }
-    Status = NtQueryInformationFile(Handle, &IoStatusBlock, &Basic, sizeof(Basic), FileBasicInformation);
-    if (NT_SUCCESS(Status))
-    {
-        Status = NtQueryInformationFile(Handle, &IoStatusBlock, &Standard, sizeof(Standard), FileStandardInformation);
-    }
-    NtClose(Handle);
     if (!NT_SUCCESS(Status))
     {
         _NtCRT_SetErrnoFromNtStatus(Status);
@@ -134,6 +145,13 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
     }
     memset(buffer, 0, sizeof(*buffer));
     buffer->st_dev = buffer->st_rdev = (_dev_t)Drive;
+    if (Device)
+    {
+        /* Read and write as _access says, no size and no times */
+        buffer->st_mode = _S_IFCHR | 0666;
+        buffer->st_nlink = 1;
+        return 0;
+    }
     buffer->st_mode = _NtCRT_ModeFromAttributes(Basic.FileAttributes, path);
     buffer->st_nlink = (short)Standard.NumberOfLinks;
     buffer->st_size = (Basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 0 : Standard.EndOfFile.QuadPart;

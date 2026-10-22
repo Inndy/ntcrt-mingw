@@ -554,6 +554,13 @@ waiters).
   UCRT): at the start of a line it is the end of the input for one read, in the middle of a line it is kept and the
   rest of the line is dropped. The `_O_U8TEXT` and `_O_U16TEXT` reads of a console do the same. The console
   functions of `<conio.h>` (`_cputs`, `_getch`, ...) use UTF-8 likewise.
+- A DOS device name (`CON`, `NUL`, `AUX`, `PRN`, `COMn`, `LPTn`, `CONIN$` and `CONOUT$` from Windows 8 on, also
+  with a directory, an extension or a colon as ntdll of the version takes them) exists as kernel32 says, whether
+  the device answers or not: `GetFileAttributesW` returns `FILE_ATTRIBUTE_ARCHIVE`, `_access` succeeds for reading
+  and writing, and `_stat` reports a character device (`_S_IFCHR`, read and write permissions, one link, no size
+  and no times). `_mkdir` of one fails with `ENOTDIR` (`NUL` succeeds as in kernel32), and with a missing directory
+  (`nosuchdir\NUL`) these fail with `ENOENT`. msvcrt reports a regular file, UCRT a character device for `NUL`,
+  `CONIN$` and `CONOUT$` only, and fails `_access` and the `_stat` of the others.
 - `_getch` and `_getwch` take Alt and keypad digits as the composition of a character, which the console
   reports with the release of Alt. A pseudo console (Windows Terminal) types a character beyond U+FFFF in this
   way, one surrogate per composition.
@@ -626,6 +633,8 @@ Beside the table above:
 - `iswprint` is 0 for a tab, which is blank and a control character, as UCRT (msvcrt says printing)
 - `_mbsncat` and `_mbsnbcat` write nothing after the terminator of a source shorter than the count, msvcrt writes
   a second null byte past it
+- `_stat` of a DOS device name reports a character device, msvcrt a regular file; `_mkdir` of one is `ENOTDIR`,
+  msvcrt `EINVAL` (see "File names, console and streams")
 - Unicode mode I/O:
   - `_O_U8TEXT` reads accept any buffer size, msvcrt reads at least 4 bytes and fails with `EINVAL` when they
     convert to more units than the buffer holds, and it drops a truncated sequence at the end of the file
@@ -704,6 +713,8 @@ Where NtCRT differs on purpose (UCRT behavior in parentheses):
 - `_atodbl` returns `_UNDERFLOW` for a denormal as msvcrt (0)
 - A name that is invalid for Win32 (`a<b`, `a|b`, wildcards `a*b`) is `EINVAL` for `_stat` too, as for `_open`
   and `fopen` in both (`ENOENT`, as msvcrt): an invalid name is not a missing file
+- Every DOS device name exists for `_access` and is a character device for `_stat` (`_access` fails, `_stat`
+  succeeds for `NUL`, `CONIN$` and `CONOUT$` only), see "File names, console and streams"
 
 ## Origin and license
 
