@@ -361,7 +361,8 @@ _K32_GetFileAttributesExW(
     Status = RtlDosPathNameToNtPathName_U_WithStatus(lpFileName, &NtPath, NULL, NULL);
     if (!NT_SUCCESS(Status))
     {
-        _Inline_BaseSetLastNTError(Status);
+        /* As GetFileAttributesW: the directory of a DOS device name is missing */
+        _Inline_BaseSetLastNTError(RtlIsDosDeviceName_U(lpFileName) != 0 ? STATUS_OBJECT_PATH_NOT_FOUND : Status);
         return FALSE;
     }
     InitializeObjectAttributes(&ObjectAttributes, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
