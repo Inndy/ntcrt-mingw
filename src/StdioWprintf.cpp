@@ -89,12 +89,18 @@ EXTERN_C int __cdecl _NtCRT_swprintf(wchar_t* buffer, const wchar_t* format, ...
     return Ret;
 }
 
-/* swprintf and vswprintf that the headers of mingw-w64 declare, of C or of msvcrt, see NTCRT_SWPRINTF_ISO */
-#if NTCRT_SWPRINTF_ISO
-EXTERN_C int __cdecl _NtCRT_vswprintf_mingw(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
+/*
+ * vswprintf of C in the conventions of msvcrt (%s wide): the size of the buffer, -1 if the output does not fit. The
+ * swprintf.inl of the headers of mingw-w64 before 13 calls it (include/swprintf.inl) in place of vsnwprintf.
+ */
+NTCRT_API int __cdecl _NtCRT_vswprintf_iso(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
 {
     return _NtCRT_FormatSwprintf(buffer, count, format, ap, NTCRT_PRINTF_LEGACY_WIDE);
 }
+
+/* swprintf and vswprintf that the headers of mingw-w64 declare, of C or of msvcrt, see NTCRT_SWPRINTF_ISO */
+#if NTCRT_SWPRINTF_ISO
+EXTERN_C __typeof__(_NtCRT_vswprintf_iso) _NtCRT_vswprintf_mingw __attribute__((alias("_NtCRT_vswprintf_iso")));
 
 EXTERN_C int __cdecl _NtCRT_swprintf_mingw(wchar_t* buffer, size_t count, const wchar_t* format, ...)
 {
@@ -102,7 +108,7 @@ EXTERN_C int __cdecl _NtCRT_swprintf_mingw(wchar_t* buffer, size_t count, const 
     int Ret;
 
     va_start(ap, format);
-    Ret = _NtCRT_vswprintf_mingw(buffer, count, format, ap);
+    Ret = _NtCRT_vswprintf_iso(buffer, count, format, ap);
     va_end(ap);
     return Ret;
 }

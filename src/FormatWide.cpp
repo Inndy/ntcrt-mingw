@@ -18,11 +18,18 @@ NTCRT_API int __cdecl __wrap___mingw_vwprintf(const wchar_t* format, va_list ap)
     return _NtCRT_FormatStreamW(&_NtCRT_iob[1], format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
 
-#if NTCRT_SWPRINTF_ISO
-NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
+/*
+ * vswprintf of C in the conventions of C: the size of the buffer, -1 if the output does not fit. The swprintf.inl of
+ * the headers of mingw-w64 before 13 calls it (include/swprintf.inl) with __USE_MINGW_ANSI_STDIO.
+ */
+NTCRT_API int __cdecl _NtCRT___mingw_vswprintf_iso(wchar_t* buffer, size_t count, const wchar_t* format, va_list ap)
 {
     return _NtCRT_FormatSwprintf(buffer, count, format, ap, NTCRT_PRINTF_LONG_DOUBLE);
 }
+
+#if NTCRT_SWPRINTF_ISO
+EXTERN_C __typeof__(_NtCRT___mingw_vswprintf_iso) __wrap___mingw_vswprintf
+    __attribute__((alias("_NtCRT___mingw_vswprintf_iso")));
 #else
 /* swprintf of mingw-w64 without a size */
 NTCRT_API int __cdecl __wrap___mingw_vswprintf(wchar_t* buffer, const wchar_t* format, va_list ap)

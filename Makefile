@@ -278,11 +278,12 @@ SPECS_LIBGCC := %{ntcrt-glob:-lntcrt_glob} --start-group -lntcrt_start -lmingw32
 SPECS_LINK := $(if $(X86),--gc-sections )$(WRAPS)
 
 # $(call build-specs,<include dir>,<library dir>,<file>): the specs of a build. GCC splits the arguments of specs at
-# spaces, a backslash makes a space of a path part of the argument.
+# spaces, a backslash makes a space of a path part of the argument. cpp is the preprocessor of C, cc1plus that of C++.
 empty :=
 space := $(empty) $(empty)
 define build-specs
 printf '*cpp:\n+ -isystem %s\n\n' '$(subst $(space),\ ,$(1))' > "$(3)"
+printf '*cc1plus:\n+ -isystem %s\n\n' '$(subst $(space),\ ,$(1))' >> "$(3)"
 printf '*link:\n+ -L%s -Bstatic %s\n\n' '$(subst $(space),\ ,$(2))' "$(SPECS_LINK)" >> "$(3)"
 printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> "$(3)"
 printf '*lib:\n%%{pg:-lgmon}\n\n' >> "$(3)"

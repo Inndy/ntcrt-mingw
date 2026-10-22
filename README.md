@@ -50,6 +50,7 @@ path has a space. Only `LLVM=<dir>/` cannot have one, as make splits it: put tha
   `GetCurrentProcessId` and `GetCurrentThreadId` (the ClientId of the TEB) as gnu_inline functions, not macros:
   `::GetLastError()` and a member named `GetLastError` stay valid, `&GetLastError` is the function of NtCRT.
   `NTCRT_NO_INLINE_WIN32` turns them off
+- `include/swprintf.inl` the `swprintf` and `vswprintf` of C for the MinGW-w64 headers before 13 (below)
 - `test/upstream/` the KNSoft.NtCRT test suite, and `Msvcrt.cpp` with what the tests of Wine found
 - `test/fuzz/` differential fuzz (`make test-fuzz`, `FUZZ_ITERATIONS=n`): the UTF-8 codec against kernel32, the
   printf and scanf families, strtod and strtol against ucrtbase.dll, strtold against the gdtoa of libmingwex
@@ -751,7 +752,9 @@ Beside the table above:
 - `swprintf` and `vswprintf` (and `__ms_swprintf`, `__mingw_swprintf`) are those of the MinGW-w64 headers NtCRT is
   built with: from MinGW-w64 13 those of C, with the size of the buffer (-1 if the output does not fit), as
   libmsvcrt.a of MinGW-w64 13 defines them; before 13 those of msvcrt.dll without a size. `_swprintf` and
-  `_vswprintf` are always those of msvcrt.dll.
+  `_vswprintf` are always those of msvcrt.dll. The headers before 13 define the `swprintf` and `vswprintf` of C as
+  inline functions that call `vsnwprintf`, which returns the length of the whole output: `include/swprintf.inl`
+  makes them call those of C of NtCRT (`%s` narrow with `__USE_MINGW_ANSI_STDIO`, wide without).
 - `_strnicmp` takes any count, msvcrt returns `_NLSCMPERROR` for one above `INT_MAX`
 
 ### Differences from UCRT

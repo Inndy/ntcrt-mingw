@@ -240,6 +240,21 @@ int main(void)
         g_Failures++;
     }
 
+    /* swprintf of C: a negative value when the output does not fit (include/swprintf.inl for the headers before 13),
+       _snwprintf of msvcrt: -1 without a terminator */
+    {
+        wchar_t Wide[8];
+
+        wmemset(Wide, L'x', 8);
+        if (swprintf(NULL, 0, L"%d", 123456) >= 0 || swprintf(Wide, 4, L"%d", 123456) >= 0 ||
+            swprintf(Wide, 8, L"%d", 123456) != 6 || wcscmp(Wide, L"123456") != 0 ||
+            _snwprintf(Wide, 4, L"%d", 123456) != -1 || wmemcmp(Wide, L"1234", 4) != 0)
+        {
+            printf("FAIL swprintf of a buffer too small\n");
+            g_Failures++;
+        }
+    }
+
     /* _sprintf_p: a position used again takes a slot every time */
     {
         static char Format[4 * 400 + 1], Out[400 + 1];
