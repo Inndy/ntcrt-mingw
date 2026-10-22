@@ -210,6 +210,8 @@ for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what Nt
   runs the `atexit` functions and flushes the streams first (msvcrt does both at its `DLL_PROCESS_DETACH`). `tcc -run`
   ends by the `exit` and `atexit` of its `runmain.o`: NtCRT flushes the streams by an `atexit` function registered
   before `main`, which runs after those of the program.
+- `-Os`, tcc links whole objects: `int main(void) { return 7; }` is 31232 bytes (36352 with GCC and NtCRT). Most
+  of the 1.7 MB of `libntcrt.a` is the ELF headers of the stubs, a member for each name (25 KB by xz).
 - No thread functions (tcc defines `__STDC_NO_THREADS__`). tcc takes `_strlwr` for `strlwr` itself, `ntdll.def`
   has no aliases.
 

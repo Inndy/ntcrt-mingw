@@ -75,7 +75,8 @@ LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(
 
 # make TCC=1: build-tcc/libntcrt.a and build-tcc/ntdll.def for tcc in place of msvcrt.def, x64 (NTCRT_TCC in NtCRT.h).
 # tcc links ELF objects, which clang makes for Windows (LLVM=<dir>/ for clang in <dir>). tcc links whole objects: a
-# section for each function would only be more sections, and it reads no unwind table of ELF.
+# section for each function would only be more sections, and it reads no unwind table of ELF. -Os: the code of NtCRT
+# is 30% smaller than by -O2, that of the programs of tcc is not optimized.
 ifdef TCC
 ifdef X86
 $(error TCC=1 builds for x64 only)
@@ -86,7 +87,7 @@ TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf --sysroot=$(GCC_ROOT) -stdlib=l
              -fno-asynchronous-unwind-tables
 LIB_CXX  := $(filter %/,$(LLVM))clang++ $(TCC_FLAGS)
 LIB_AS   := $(filter %/,$(LLVM))clang --target=x86_64-w64-windows-gnu-elf
-CXXFLAGS := $(filter-out -ffunction-sections,$(CXXFLAGS))
+CXXFLAGS := $(patsubst -O2,-Os,$(filter-out -ffunction-sections,$(CXXFLAGS)))
 LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def
 DRIVER   :=
 # What tcc-built programs get beyond msvcrt.dll, as a GCC build of NtCRT: the C99 math of <math.h> (double and float,
