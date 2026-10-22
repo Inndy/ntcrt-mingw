@@ -489,6 +489,9 @@ _NtCRT_InitProgramName(void)
     }
 }
 
+/* The count of _NtCRT_argv: __argc is that of the last of __getmainargs and __wgetmainargs, whose argv differ */
+static int g_Argc;
+
 EXTERN_C
 int
 __cdecl
@@ -510,16 +513,16 @@ _NtCRT___getmainargs(
          * the code page maps to one by best fit (U+FF02).
          */
         PWSTR CommandLine = NtCurrentPeb()->ProcessParameters->CommandLine.Buffer;
-        wchar_t** Wide = _NtCRT_BuildArgv<wchar_t>(CommandLine, &_NtCRT_argc);
+        wchar_t** Wide = _NtCRT_BuildArgv<wchar_t>(CommandLine, &g_Argc);
 
         _NtCRT_acmdln = _NtCRT_WideToAnsi(CommandLine);
         if (Wide == NULL || _NtCRT_acmdln == NULL ||
-            (_NtCRT_argv = (char**)RtlAllocateHeap(NTCRT_HEAP, 0, (_NtCRT_argc + 1) * sizeof(char*))) == NULL)
+            (_NtCRT_argv = (char**)RtlAllocateHeap(NTCRT_HEAP, 0, (g_Argc + 1) * sizeof(char*))) == NULL)
         {
             _NtCRT_amsg_exit(8); /* _RT_SPACEARG */
             return -1;
         }
-        for (int i = 0; i < _NtCRT_argc; i++)
+        for (int i = 0; i < g_Argc; i++)
         {
             if ((_NtCRT_argv[i] = _NtCRT_WideToAnsi(Wide[i])) == NULL)
             {
@@ -527,7 +530,7 @@ _NtCRT___getmainargs(
                 return -1;
             }
         }
-        _NtCRT_argv[_NtCRT_argc] = NULL;
+        _NtCRT_argv[g_Argc] = NULL;
         if (dowildcard == NTCRT_DOWILDCARD_DEFAULT)
         {
             dowildcard = _NtCRT_GlobArgv != NULL;
@@ -540,7 +543,7 @@ _NtCRT___getmainargs(
             {
                 _NtCRT_GlobMissing();
             }
-            Expanded = _NtCRT_GlobArgv(Wide, _NtCRT_argv, &_NtCRT_argc);
+            Expanded = _NtCRT_GlobArgv(Wide, _NtCRT_argv, &g_Argc);
             if (Expanded == NULL)
             {
                 _NtCRT_amsg_exit(8);
@@ -553,7 +556,7 @@ _NtCRT___getmainargs(
     }
     _NtCRT_InitEnviron();
     _NtCRT_initenv = _NtCRT_environ;
-    *argc = _NtCRT_argc;
+    *argc = _NtCRT_argc = g_Argc;
     *argv = _NtCRT_argv;
     *envp = _NtCRT_environ;
     return 0;

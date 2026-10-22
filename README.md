@@ -602,9 +602,13 @@ limitation.
   not, is replaced by the names that match it, files and directories, each after the directory part of the
   argument as written. `.` and `..` are left out, hidden files are not. The names are sorted with the ASCII letters
   folded, the narrow ones after their conversion. They match as for `FindFirstFile`: `a?.c` matches `a.c`, `*.` the
-  names without a dot, a short name matches too. An argument that nothing matches, or with a wildcard in its
-  directory part, stays as it is. The narrow `argv` is expanded from the wide one, so a name matches by its
-  characters, not by their best fit in the ANSI code page.
+  names without a dot, a short name matches too, and the trailing spaces and dots of the pattern are dropped as from
+  a Win32 path (`"*.c "` matches as `*.c`). An argument that nothing matches, or with a wildcard in its directory
+  part, stays as it is. The narrow `argv` is expanded from the wide one, so a name matches by its characters, not by
+  their best fit in the ANSI code page.
+- `argv` is built by the first call of `__getmainargs` (`__wgetmainargs` for `wargv`), the later calls return it
+  whatever wildcard argument they pass: unlike msvcrt, which parses the command line again, a second call with
+  another one does not expand it or undo its expansion. The narrow and the wide `argv` keep their own count.
 - As in MinGW-w64, the program may define `_dowildcard`, which the library follows: 0 leaves the arguments as they
   are. Unlike MinGW-w64, `_dowildcard` alone does not link the expansion: a program that defines it as not 0
   (`int _dowildcard = -1;`, `CRT_glob.o` of MinGW-w64) without the library stops at its start with

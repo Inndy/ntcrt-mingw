@@ -52,6 +52,9 @@ _NtCRT_ArgAppend(
 
 static inline char* _NtCRT_ArgFromWide(const wchar_t* Name, char*) { return _NtCRT_WideToAnsi(Name); }
 static inline wchar_t* _NtCRT_ArgFromWide(const wchar_t* Name, wchar_t*) { return (wchar_t*)Name; }
+/* An argument that its names replace: each narrow one is allocated alone (Startup.cpp), the wide ones are in one block */
+static inline void _NtCRT_ArgFree(char* Arg) { RtlFreeHeap(NTCRT_HEAP, 0, Arg); }
+static inline void _NtCRT_ArgFree(wchar_t*) {}
 static inline unsigned _NtCRT_ArgUnit(char c) { return (unsigned char)c; }
 static inline unsigned _NtCRT_ArgUnit(wchar_t c) { return c; }
 
@@ -216,6 +219,10 @@ _NtCRT_ExpandArgv(
             (List.Count == First && !_NtCRT_ArgAppend<T>(&List, Argv[i])))
         {
             return NULL;
+        }
+        if (List.Count != First && List.Items[First] != Argv[i])
+        {
+            _NtCRT_ArgFree(Argv[i]);
         }
     }
     if (!_NtCRT_ArgAppend<T>(&List, NULL))

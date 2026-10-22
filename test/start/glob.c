@@ -2,7 +2,8 @@
  * The wildcards of the arguments (_dowildcard): the program makes glob.tmp with files and runs itself there with each
  * command line, the child compares its argv with the arguments that msvcrt gives (msvcrt 7.0.26100 of Windows 11).
  * Built with -lntcrt_glob: alone, with -DDEFINE=-1 (int _dowildcard = -1), with CRT_glob.o of MinGW-w64 and -DWIDE
- * (wmain); -DNONE expects no expansion: without the library and _dowildcard, or with -DDEFINE=0.
+ * (wmain); -DNONE expects no expansion: without the library and _dowildcard, or with -DDEFINE=0, which then has
+ * __wgetmainargs expand the wide argv apart from the narrow one.
  */
 
 #include <direct.h>
@@ -58,6 +59,17 @@ static const struct
     { L"*.", { T("sdir"), T("sub") } },
     { L"*..", { T("sdir"), T("sub") } },
     { L"*.c.", { C_FILES } },
+    { L"*.c..", { C_FILES } },
+    { L"*...", { T("sdir"), T("sub") } },
+    /* A dot before a dot is no DOS_DOT */
+    { L"*..*", { T("*..*") } },
+    /* The trailing spaces and dots are dropped, a dot is kept if there was one */
+    { L"\"*.c \"", { C_FILES } },
+    { L"\"*.c .\"", { C_FILES } },
+    { L"\"*. \"", { ALL } },
+    { L"\"a?.c  \"", { T("A.c"), T("a2.c") } },
+    { L"\"sub/*.c \"", { T("sub/S0.c"), T("sub/s1.c") } },
+    { L"\" *.c\"", { T(" *.c") } },
     { L"????", { T("sdir"), T("sub") } },
     { L".\\a*", { T(".\\A.c"), T(".\\a2.c") } },
     { L"sp*", { T("sp ace.c") } },
@@ -70,10 +82,30 @@ static const struct
 static const wchar_t* Files[] = { L"b.c", L"A.c", L"a2.c", L"_x.c", L"B2.c", L".hid.c", L"x.html", L"sp ace.c",
                                   L"sub\\s1.c", L"sub\\S0.c" };
 
+#if defined(NONE) && defined(DEFINE)
+int __cdecl __getmainargs(int*, char***, char***, int, int*);
+int __cdecl __wgetmainargs(int*, wchar_t***, wchar_t***, int, int*);
+#endif
+
 static int Child(int Index, int argc, Char** argv)
 {
     const Char* const* Expected = Cases[Index].Expected;
     int Count = 0;
+
+#if defined(NONE) && defined(DEFINE)
+    /* The wide argv expanded after the narrow one (11 of "*.c "?" a*"), each keeps its count, __argc is the last one */
+    int Wargc, Nargc, Mode = 0;
+    wchar_t **Wargv, **Wenv;
+    char **Nargv, **Nenv;
+
+    __wgetmainargs(&Wargc, &Wargv, &Wenv, 1, &Mode);
+    __getmainargs(&Nargc, &Nargv, &Nenv, 0, &Mode);
+    if (Wargc != 11 || Wargv[Wargc] != NULL || Nargc != argc || Nargv != __argv || Nargv[Nargc] != NULL || __argc != argc)
+    {
+        printf("glob: __wgetmainargs gives %d, then __getmainargs %d of %d, __argc %d\n", Wargc, Nargc, argc, __argc);
+        return 1;
+    }
+#endif
 
     while (Count < 12 && Expected[Count] != NULL)
     {

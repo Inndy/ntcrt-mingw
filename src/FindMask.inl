@@ -20,8 +20,12 @@ _NtCRT_FindFileName(
     return FileName;
 }
 
-/* The file name part converted to the DOS wildcards of NtQueryDirectoryFile as FindFirstFileW does, into Mask (as long
-   as FileName), returns its length */
+/*
+ * The file name part converted to the DOS wildcards of NtQueryDirectoryFile as FindFirstFileW does, into Mask (as long
+ * as FileName), returns its length. The name is first that of a Win32 path, without its trailing spaces and dots, and a
+ * dot again if it ended with one ("*.c " is "*.c", "*. " is "*", "*.." is "*."). Then a '?' is DOS_QM, a '.' before a
+ * '?' or a '*' or at the end DOS_DOT ("*." names those without an extension), a '*' before a '.' DOS_STAR.
+ */
 static
 size_t
 _NtCRT_FindMask(
@@ -29,27 +33,35 @@ _NtCRT_FindMask(
     _Out_ PWSTR Mask)
 {
     size_t Length = wcslen(FileName);
+    bool EndsInDot = Length != 0 && FileName[Length - 1] == L'.';
 
-    if (wcscmp(FileName, L"*.*") == 0)
+    while (Length != 0 && (FileName[Length - 1] == L' ' || FileName[Length - 1] == L'.'))
     {
-        Mask[0] = L'*';
+        Length--;
+    }
+    memcpy(Mask, FileName, Length * sizeof(WCHAR));
+    if (EndsInDot)
+    {
+        Mask[Length++] = L'.';
+    }
+    if (Length == 3 && Mask[0] == L'*' && Mask[1] == L'.' && Mask[2] == L'*')
+    {
         return 1;
     }
     for (size_t i = 0; i < Length; i++)
     {
-        WCHAR c = FileName[i];
-        if (c == L'?')
+        WCHAR Next = i + 1 < Length ? Mask[i + 1] : L'\0';
+
+        if (Mask[i] == L'?')
         {
-            c = DOS_QM;
-        } else if (c == L'.' && (FileName[i + 1] == L'?' || FileName[i + 1] == L'*' || FileName[i + 1] == L'.' ||
-                                 FileName[i + 1] == L'\0'))
+            Mask[i] = DOS_QM;
+        } else if (Mask[i] == L'.' && (Next == L'?' || Next == L'*' || Next == L'\0'))
         {
-            c = DOS_DOT;
-        } else if (c == L'*' && FileName[i + 1] == L'.')
+            Mask[i] = DOS_DOT;
+        } else if (Mask[i] == L'*' && Next == L'.')
         {
-            c = DOS_STAR;
+            Mask[i] = DOS_STAR;
         }
-        Mask[i] = c;
     }
     return Length;
 }

@@ -9,6 +9,9 @@ extern "C" wchar_t** _NtCRT_wenviron;
 extern "C" wchar_t** _NtCRT_winitenv;
 extern "C" wchar_t* _NtCRT_wcmdln;
 
+/* The count of _NtCRT_wargv, see g_Argc of Startup.cpp */
+static int g_Argc;
+
 EXTERN_C
 int
 __cdecl
@@ -25,7 +28,7 @@ _NtCRT___wgetmainargs(
     if (_NtCRT_wargv == NULL)
     {
         _NtCRT_wcmdln = NtCurrentPeb()->ProcessParameters->CommandLine.Buffer;
-        _NtCRT_wargv = _NtCRT_BuildArgv<wchar_t>(_NtCRT_wcmdln, &_NtCRT_argc);
+        _NtCRT_wargv = _NtCRT_BuildArgv<wchar_t>(_NtCRT_wcmdln, &g_Argc);
         /* The expanded argv points into the block of the arguments, which stays */
         if (dowildcard == NTCRT_DOWILDCARD_DEFAULT)
         {
@@ -37,7 +40,7 @@ _NtCRT___wgetmainargs(
             {
                 _NtCRT_GlobMissing();
             }
-            _NtCRT_wargv = _NtCRT_GlobWargv(_NtCRT_wargv, &_NtCRT_argc);
+            _NtCRT_wargv = _NtCRT_GlobWargv(_NtCRT_wargv, &g_Argc);
         }
         if (_NtCRT_wargv == NULL)
         {
@@ -47,7 +50,7 @@ _NtCRT___wgetmainargs(
     }
     _NtCRT_InitEnviron();
     _NtCRT_winitenv = _NtCRT_wenviron;
-    *argc = _NtCRT_argc;
+    *argc = _NtCRT_argc = g_Argc;
     *argv = _NtCRT_wargv;
     *envp = _NtCRT_wenviron;
     return 0;
