@@ -69,6 +69,29 @@ GetKernel32Procedure(
     return ProcedureAddress;
 }
 
+/*
+ * NtCRT converts CP_UTF8 as Windows 10: kernel32 of Windows 7 rejects MB_PRECOMPOSED and WC_COMPOSITECHECK
+ * (ERROR_INVALID_FLAGS) and a lpUsedDefaultChar (ERROR_INVALID_PARAMETER), the tests compare them where it takes them
+ */
+static
+BOOL
+HostTakesUtf8Flags(
+    _In_ PFN_MULTI_BYTE_TO_WIDE_CHAR SystemMultiByteToWideChar)
+{
+    WCHAR Buffer[2];
+    return SystemMultiByteToWideChar(CP_UTF8, MB_PRECOMPOSED, "A", 1, Buffer, _countof(Buffer)) == 1;
+}
+
+static
+BOOL
+HostTakesUtf8DefaultUsed(
+    _In_ PFN_WIDE_CHAR_TO_MULTI_BYTE SystemWideCharToMultiByte)
+{
+    CHAR Buffer[2];
+    BOOL Used;
+    return SystemWideCharToMultiByte(CP_UTF8, 0, L"A", 1, Buffer, _countof(Buffer), NULL, &Used) == 1;
+}
+
 static
 BOOL
 CompareMemory(
@@ -319,7 +342,8 @@ TestMultiByteToWideCharErrors(
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 1252, 0, "A", -1, Buffer, 0) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_UTF8, 0, "A", -1, Buffer, 0) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_ACP, 0, SameBuffer, 1, (LPWSTR)SameBuffer, 1) &&
-        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_UTF8, MB_PRECOMPOSED, "A", 1, Buffer, _countof(Buffer)) &&
+        (!HostTakesUtf8Flags(SystemMultiByteToWideChar) ||
+         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, CP_UTF8, MB_PRECOMPOSED, "A", 1, Buffer, _countof(Buffer))) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, MB_ERR_INVALID_CHARS, InvalidDbcs, sizeof(InvalidDbcs), NULL, 0) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, MB_ERR_INVALID_CHARS, InvalidDbcs, sizeof(InvalidDbcs), Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 1200, 0, "A", 1, Buffer, _countof(Buffer)) &&
@@ -342,7 +366,8 @@ TestWideCharToMultiByteErrors(
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, 1252, 0, L"A", -1, Buffer, 0) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_UTF8, 0, L"A", -1, Buffer, 0) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_ACP, 0, SameBuffer, 1, (LPSTR)SameBuffer, 1) &&
-        CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_UTF8, WC_COMPOSITECHECK, L"A", 1, Buffer, _countof(Buffer)) &&
+        (SystemWideCharToMultiByte(CP_UTF8, WC_COMPOSITECHECK, L"A", 1, Buffer, _countof(Buffer), NULL, NULL) == 0 ||
+         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, CP_UTF8, WC_COMPOSITECHECK, L"A", 1, Buffer, _countof(Buffer))) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, 1200, 0, L"A", 1, Buffer, _countof(Buffer)) &&
         CompareWideCharToMultiByteCall(SystemWideCharToMultiByte, 60000, 0, L"A", 1, Buffer, _countof(Buffer));
 }
@@ -356,8 +381,9 @@ TestWideCharToMultiByteDefaultUsed(
     static const WCHAR NotRepresentable[] = { 0x4E2D, 0 };
 
     return
-        CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, CP_UTF8, Representable, 1, 4) &&
-        CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, CP_UTF8, NotRepresentable, 1, 8) &&
+        (!HostTakesUtf8DefaultUsed(SystemWideCharToMultiByte) ||
+         (CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, CP_UTF8, Representable, 1, 4) &&
+          CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, CP_UTF8, NotRepresentable, 1, 8))) &&
         CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, 1252, Representable, 1, 1) &&
         CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, 1252, NotRepresentable, 1, 1) &&
         CompareWideCharToMultiByteDefaultUsed(SystemWideCharToMultiByte, 1252, NotRepresentable, -1, 2);
