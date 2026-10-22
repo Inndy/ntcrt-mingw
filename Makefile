@@ -176,28 +176,32 @@ $(BUILD)/ntdll.def: $(BUILD)/ntdll_crt.def
 
 # The library for tcc in lib/: libntcrt.a with the members of libgcc, libmingw32, libmingwex and libmsvcrt (its static
 # members) that NtCRT and TCC_SEEDS use, those of a GCC build, made ELF objects (src/Members.awk); and ntdll.def.
+# As there, libmingwex precedes ntdll: atan2, which the ntdll of Windows 7 does not have, is of libmingwex.
 TCC_SOURCES := $(foreach l,libgcc.a libmingw32.a libmingwex.a,"$(shell $(CXX) -print-file-name=$(l))")
 
-$(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms $(BUILD)/ntdll.def src/Members.awk
+$(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms src/Members.awk
 	rm -rf $(BUILD)/coff
 	mkdir -p $(BUILD)/coff
 	cd $(BUILD)/coff && for l in $(TCC_SOURCES); do ar x "$$l"; done && \
 	    ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib64_libmsvcrt_')
-	{ cat $(BUILD)/ntcrt.syms; tail -n +3 $(BUILD)/ntdll.def; } > $(BUILD)/have.txt
 	{ printf '%s\n' $(TCC_SEEDS); nm -g --undefined-only $(BUILD)/libntcrt.a | awk '$$1 == "U" { print $$2 }'; } \
 	    > $(BUILD)/seeds.txt
-	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../have.txt -v seeds=../seeds.txt -f $(CURDIR)/src/Members.awk \
-	    ../have.txt ../seeds.txt - > ../members.txt
+	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../ntcrt.syms -v seeds=../seeds.txt -f $(CURDIR)/src/Members.awk \
+	    ../ntcrt.syms ../seeds.txt - > ../members.txt
 
-# objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations
+# objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations. The long
+# double functions of the members (exp2l that exp2 calls) take 80 bits, not the long double of tcc: they are renamed.
 $(BUILD)/coffrel.exe: tools/coffrel.c | $(BUILD)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
 
 $(BUILD)/lib/libntcrt.a: $(BUILD)/libntcrt.a $(BUILD)/members.txt $(BUILD)/coffrel.exe
 	rm -rf $(BUILD)/elf
 	mkdir -p $(BUILD)/elf $(@D)
+	cd $(BUILD)/coff && nm -g --defined-only $$(cat ../members.txt) | \
+	    awk -v seeds='$(TCC_SEEDS)' 'BEGIN { n = split(seeds, s); for (i = 1; i <= n; i++) Long[s[i] "l"] = 1 } \
+	        NF == 3 && $$3 in Long { print $$3, "__ntcrt_" $$3 }' | sort -u > ../longdouble.txt
 	cd $(BUILD)/coff && xargs -I{} objcopy -O elf64-x86-64 --strip-debug -R .pdata -R .xdata -R '.rdata$$zzz' \
-	    {} ../elf/{} < ../members.txt
+	    --redefine-syms=../longdouble.txt {} ../elf/{} < ../members.txt
 	cd $(BUILD)/elf && xargs ../coffrel.exe < ../members.txt
 	cp $(BUILD)/libntcrt.a $@
 	cd $(BUILD)/elf && xargs ar rs ../lib/libntcrt.a < ../members.txt

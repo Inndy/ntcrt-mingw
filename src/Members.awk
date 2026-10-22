@@ -1,7 +1,8 @@
 # The members of the libraries of the toolchain that the library for tcc takes (make TCC=1, see the Makefile).
-# Inputs: "have", the names that libntcrt.a and ntdll.def give; "seeds", the names to give; then the output of nm -A
-# on the members, in the order of preference. Prints the members that define the names wanted and those they use,
-# except a member that defines a name of "have" (NtCRT or ntdll gives it). A name no member gives is left to the link.
+# Inputs: "have", the names that libntcrt.a gives; "seeds", the names to give; then the output of nm -A on the
+# members, in the order of preference. Prints the members that define the names wanted and those they use, except a
+# member that defines a name of "have". A name no member gives is left to the link (ntdll.def), as a GCC build links
+# libmingwex before ntdll.
 
 FILENAME == have \
 {

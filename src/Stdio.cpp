@@ -441,25 +441,30 @@ EXTERN_C void _NtCRT_FlushAll(bool Terminating)
     _NtCRT_ForEachStream(_NtCRT_FlushCallback, Terminating ? 3 : 1);
 }
 
+#ifdef NTCRT_TCC
+/*
+ * tcc -run ends the program by its own exit (runmain.o), which runs the atexit functions it took but not exit of
+ * NtCRT: the streams are flushed by the first of them, which runs after those of the program
+ */
+static void _NtCRT_FlushAtRunExit(void)
+{
+    _NtCRT_FlushAll(false);
+}
+#endif
+
 static
 int
 __cdecl
 _NtCRT_InitFlushAtExit(void)
 {
     _NtCRT_FlushAllAtExit = _NtCRT_FlushAll;
+#ifdef NTCRT_TCC
+    atexit(_NtCRT_FlushAtRunExit);
+#endif
     return 0;
 }
 
 NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_InitFlushAtExitPtr, _NtCRT_InitFlushAtExit);
-
-#ifdef NTCRT_TCC
-/* tcc -run ends the program by its own exit, which runs the .fini_array but not exit of NtCRT */
-static void _NtCRT_FlushAtFini(void)
-{
-    _NtCRT_FlushAll(false);
-}
-static __attribute__((section(".fini_array"), used)) void (*_NtCRT_FlushAtFiniPtr)(void) = _NtCRT_FlushAtFini;
-#endif
 
 EXTERN_C FILE* __cdecl _NtCRT___iob_func(void)
 {

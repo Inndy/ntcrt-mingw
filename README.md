@@ -201,13 +201,15 @@ for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what Nt
   `___chkstk_ms`, ...) and the C99 math of `<math.h>` (double and float: the `long double` of tcc is a `double`),
   `strnlen`, `wcsnlen`, `snprintf` and `vsnprintf`: their members, made ELF objects by `objcopy -O elf64-x86-64`
   without unwind tables and debug information. `src/Members.awk` takes the members needed, except those that would
-  replace a function of NtCRT or ntdll; `tools/coffrel.c` sets the addend (-4) of the relative relocations, which
+  replace a function of NtCRT. They precede ntdll as in a GCC build (the `sin` and `atan2` of libmingwex, the ntdll
+  of Windows 7 has no `atan2`). `tools/coffrel.c` sets the addend (-4) of the relative relocations, which
   objcopy leaves at 0.
 - tcc has no sections grouped by `$`: the C initializers of NtCRT are in `.init_array`, which `crt1.c` runs after
   `__getmainargs` (and after the constructors of the program). A program of tcc has no TLS callback: the threads of
   `_beginthread`, `_beginthreadex` and `CreateThread` free the per-thread data of NtCRT when they end, `ExitProcess`
   runs the `atexit` functions and flushes the streams first (msvcrt does both at its `DLL_PROCESS_DETACH`). `tcc -run`
-  ends by its own `exit`, which runs the `.fini_array`: NtCRT flushes the streams there.
+  ends by the `exit` and `atexit` of its `runmain.o`: NtCRT flushes the streams by an `atexit` function registered
+  before `main`, which runs after those of the program.
 - No thread functions (tcc defines `__STDC_NO_THREADS__`). tcc takes `_strlwr` for `strlwr` itself, `ntdll.def`
   has no aliases.
 
