@@ -2,7 +2,7 @@
  * Console scenarios run by conpty.exe in a pseudo console, built with NtCRT. The console code pages are set to
  * 437, the "C.UTF-8" locale must not depend on them. What is read is printed in hex.
  *
- *   child.exe write | dbcs | open | u8write | read | u8read | u16read | getch | scanf
+ *   child.exe write | dbcs | open | u8write | read | ctrlz | u8read | u16read | getch | scanf
  */
 #include <conio.h>
 #include <fcntl.h>
@@ -132,6 +132,50 @@ int main(int argc, char** argv)
         hex("R2", Line, n);
         /* Ctrl+Z at the start of a line */
         printf("R3:%s\n", fgets(Line, sizeof(Line), stdin) == NULL && feof(stdin) ? "eof" : "data");
+        printf("end\n");
+    } else if (strcmp(Scenario, "ctrlz") == 0)
+    {
+        /*
+         * Each way of reading gets "ab^Zcd", "ef", "^Z" and "gh" typed: Ctrl+Z in the middle of a line is kept and
+         * the rest of the line dropped, at the start of a line it is the end of the input, once
+         */
+        char Line[32], Out[128];
+        wchar_t Wide[32];
+
+        for (int Mode = 0; Mode < 3; Mode++)
+        {
+            int Fd = Mode == 0 ? 0 : _dup(0);
+            FILE* f = stdin;
+            int n = sprintf(Out, "Z%d:", Mode);
+
+            if (Mode != 0)
+            {
+                _setmode(Fd, Mode == 1 ? _O_U8TEXT : _O_U16TEXT);
+                f = _wfdopen(Fd, L"r");
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                if (i != 0)
+                    Out[n++] = ',';
+                if (Mode == 0 ? fgets(Line, sizeof(Line), f) == NULL : fgetws(Wide, 32, f) == NULL)
+                {
+                    n += sprintf(Out + n, "%s", feof(f) ? "eof" : "error");
+                    clearerr(f);
+                } else if (Mode == 0)
+                {
+                    for (size_t j = 0; Line[j] != '\0'; j++)
+                        n += sprintf(Out + n, "%02x", (unsigned char)Line[j]);
+                } else
+                {
+                    for (size_t j = 0; Wide[j] != L'\0'; j++)
+                        n += sprintf(Out + n, "%04x", Wide[j]);
+                }
+            }
+            /* After the echo of the input */
+            printf("%s\n", Out);
+            if (Mode != 0)
+                fclose(f);
+        }
         printf("end\n");
     } else if (strcmp(Scenario, "u8read") == 0 || strcmp(Scenario, "u16read") == 0)
     {

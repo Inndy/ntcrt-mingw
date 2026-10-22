@@ -169,8 +169,64 @@ _NtCRT_ConsoleCrAtEnd(
 }
 
 /*
- * Read UTF-8 of "C.UTF-8" from a text mode console by its characters, CRLF is read as a newline and Ctrl+Z ends
- * the input. Returns the bytes stored, 0 for EOF or -1.
+ * The text of the units read from a console by ReadConsoleW, in place, as ReadFile of a console and msvcrt read it
+ * in text mode: CRLF is a newline, Ctrl+Z at the start of a line ends the input once, in the middle of a line it is
+ * kept, and the rest of that line is dropped. Returns the units kept, *Eof for the end of the input after them.
+ */
+static
+ULONG
+_NtCRT_ConsoleText(
+    _In_ PNTCRT_FD Entry,
+    _Inout_updates_(Count) PWCHAR Units,
+    _In_ ULONG Count,
+    _In_opt_ PNTCRT_READ_CONSOLE_W ReadConsoleW,
+    _Out_ PBOOL Eof)
+{
+    ULONG Kept = 0;
+
+    *Eof = FALSE;
+    /* A console returns a line by a read, what follows the line of the end is lost */
+    for (ULONG i = 0; i < Count && !(*Eof && Entry->ConsoleLine == NTCRT_LINE_START); i++)
+    {
+        WCHAR c = Units[i];
+
+        if (Entry->ConsoleLine == NTCRT_LINE_SKIP)
+        {
+            if (c == L'\n')
+            {
+                Entry->ConsoleLine = NTCRT_LINE_START;
+            }
+            continue;
+        }
+        if (c == 0x1A)
+        {
+            if (Entry->ConsoleLine == NTCRT_LINE_START)
+            {
+                *Eof = TRUE;
+            } else
+            {
+                Units[Kept++] = c;
+            }
+            Entry->ConsoleLine = NTCRT_LINE_SKIP;
+            continue;
+        }
+        if (c == L'\r' && i + 1 < Count && Units[i + 1] == L'\n')
+        {
+            continue;
+        }
+        if (c == L'\r' && i + 1 == Count)
+        {
+            c = _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW);
+        }
+        Units[Kept++] = c;
+        Entry->ConsoleLine = c == L'\n' ? NTCRT_LINE_START : NTCRT_LINE_MIDDLE;
+    }
+    return Kept;
+}
+
+/*
+ * Read UTF-8 of "C.UTF-8" from a text mode console by its characters, see _NtCRT_ConsoleText. Returns the bytes
+ * stored, 0 for EOF or -1.
  */
 static
 int
@@ -185,13 +241,14 @@ _NtCRT_ReadConsoleUtf8(
     {
         auto const ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
         WCHAR Wide[1024];
-        DWORD Units = 0, Got = 0, Kept = 0;
+        DWORD Units = 0, Got = 0, Kept;
+        BOOL Eof;
         int Size;
 
         if (Entry->ConsoleEof)
         {
+            /* Not sticky, the next read waits for the console as ReadFile does */
             Entry->ConsoleEof = FALSE;
-            Entry->Flags |= FEOFLAG;
             return 0;
         }
         if (Entry->HasPipeWide)
@@ -209,20 +266,9 @@ _NtCRT_ReadConsoleUtf8(
         {
             return 0;
         }
-        for (DWORD i = 0; i < Units; i++)
-        {
-            if (Wide[i] == 0x1A)
-            {
-                Entry->ConsoleEof = TRUE;
-                break;
-            }
-            if (Wide[i] == L'\r' && i + 1 < Units && Wide[i + 1] == L'\n')
-            {
-                continue;
-            }
-            Wide[Kept++] = Wide[i] == L'\r' && i + 1 == Units ? _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW) : Wide[i];
-        }
-        if (!Entry->ConsoleEof && Kept > 0 && IS_HIGH_SURROGATE(Wide[Kept - 1]))
+        Kept = _NtCRT_ConsoleText(Entry, Wide, Units, ReadConsoleW, &Eof);
+        Entry->ConsoleEof = (BOOLEAN)Eof;
+        if (!Eof && Kept > 0 && IS_HIGH_SURROGATE(Wide[Kept - 1]))
         {
             Entry->PipeWide = Wide[--Kept];
             Entry->HasPipeWide = TRUE;
@@ -279,43 +325,53 @@ _NtCRT_ReadUnicode(
                            : _NtCRT_SeekHandle(Entry->Handle, 0, SEEK_CUR);
     if (_NtCRT_IsConsoleFd(Entry))
     {
+        /*
+         * Ctrl+Z as in the narrow text mode (_NtCRT_ConsoleText): msvcrt and UCRT drop it and the rest of the line in
+         * _O_U16TEXT and end the input of the fd for good
+         */
         PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
-        DWORD Got = 0;
 
-        if (Entry->HasPipeWide)
+        for (;;)
         {
-            Out[Kept++] = Entry->PipeWide;
-            Entry->HasPipeWide = FALSE;
-        }
-        if (Kept < Units)
-        {
-            if (ReadConsoleW == NULL || !ReadConsoleW(Entry->Handle, Out + Kept, Units - Kept, &Got, NULL))
+            DWORD Got = 0;
+            BOOL Eof;
+
+            if (Entry->ConsoleEof)
             {
-                if (Kept != 0)
+                Entry->ConsoleEof = FALSE;
+                return 0;
+            }
+            Kept = 0;
+            if (Entry->HasPipeWide)
+            {
+                Out[Kept++] = Entry->PipeWide;
+                Entry->HasPipeWide = FALSE;
+            }
+            if (Kept < Units &&
+                (ReadConsoleW == NULL || !ReadConsoleW(Entry->Handle, Out + Kept, Units - Kept, &Got, NULL)))
+            {
+                if (Kept == 0)
                 {
-                    return (int)(Kept * sizeof(WCHAR));
+                    _NtCRT_SetErrnoFromWin32(ReadConsoleW == NULL ? ERROR_INVALID_HANDLE : _Inline_GetLastError());
+                    return -1;
                 }
-                _NtCRT_SetErrnoFromWin32(ReadConsoleW == NULL ? ERROR_INVALID_HANDLE : _Inline_GetLastError());
-                return -1;
+                Got = 0;
+            }
+            if (Kept + Got == 0)
+            {
+                return 0;
+            }
+            Kept = _NtCRT_ConsoleText(Entry, Out, Kept + Got, ReadConsoleW, &Eof);
+            if (Kept != 0)
+            {
+                Entry->ConsoleEof = (BOOLEAN)Eof;
+                return (int)(Kept * sizeof(WCHAR));
+            }
+            if (Eof)
+            {
+                return 0;
             }
         }
-        Units = Kept + Got;
-        Kept = 0;
-        for (unsigned int i = 0; i < Units; i++)
-        {
-            if (Out[i] == 0x1A)
-            {
-                /* As msvcrt, Ctrl+Z ends the console input of the fd */
-                Entry->Flags |= FEOFLAG;
-                break;
-            }
-            if (Out[i] == L'\r' && i + 1 < Units && Out[i + 1] == L'\n')
-            {
-                i++;
-            }
-            Out[Kept++] = Out[i] == L'\r' && i + 1 == Units ? _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW) : Out[i];
-        }
-        return (int)(Kept * sizeof(WCHAR));
     }
 
     if (Entry->TextMode == NTCRT_TM_UTF16LE)

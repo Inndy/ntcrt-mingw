@@ -45,9 +45,10 @@ and 59b9e70). Waiting for the user to order them with the rest.
   Fixed: a write to a console that succeeds took all the bytes (`_NtCRT_WriteBytes`, `_NtCRT_IsConsoleFd` on a
   short count only); `make test-console` writes in code page 950 (`dbcs`). The Unicode modes and "C.UTF-8" write
   by `WriteConsoleW` and are right.
-- [ ] **Ctrl+Z in the middle of a console line.** In "C" and `""` a read keeps `ab^Z` and drops the rest of the
-  line, then waits for more (as msvcrt); in "C.UTF-8" and the Unicode modes it returns `ab`, then end of file once.
-  Choose one: the second (the end of the input, as at the start of a line) unless the user wants the msvcrt one.
+- [x] **Ctrl+Z in the middle of a console line.** In "C" and `""` a read keeps `ab^Z` and drops the rest of the
+  line, then waits for more (as msvcrt); in "C.UTF-8" and the Unicode modes it returned `ab`, then end of file.
+  The user chose the first for all: `_NtCRT_ConsoleText` (`src/LowIORead.cpp`), the end of the input at the start
+  of a line is no longer sticky, `make test-console` (`ctrlz`). `_O_U16TEXT` differs from msvcrt and UCRT (README).
 - [x] Verified by win32lab: "C.UTF-8" reads a console by `ReadConsoleW`, right on Windows 7 and 11 in code pages
   950 and 65001, the only read of a C runtime that is (`ReadFile` gets 0 bytes for a line with non-ASCII in 65001
   on Windows 7).

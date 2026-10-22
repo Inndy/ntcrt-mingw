@@ -517,7 +517,9 @@ waiters).
   page 1252) ends an argument.
 - When `LC_CTYPE` is "C.UTF-8", a text mode console fd writes and reads UTF-8 through `WriteConsoleW` and
   `ReadConsoleW` whatever the console code page is: a character split between writes is kept until it is
-  complete, reads translate CRLF to LF and a Ctrl+Z at the start of a line is the end of the file. The console
+  complete, reads translate CRLF to LF. Ctrl+Z is read as in the "C" locale (`ReadFile` of a console, msvcrt and
+  UCRT): at the start of a line it is the end of the input for one read, in the middle of a line it is kept and the
+  rest of the line is dropped. The `_O_U8TEXT` and `_O_U16TEXT` reads of a console do the same. The console
   functions of `<conio.h>` (`_cputs`, `_getch`, ...) use UTF-8 likewise.
 - `_getch` and `_getwch` take Alt and keypad digits as the composition of a character, which the console
   reports with the release of Alt. A pseudo console (Windows Terminal) types a character beyond U+FFFF in this
@@ -598,6 +600,9 @@ Beside the table above:
     estimates them and `fseek` to its result can land elsewhere
   - `_O_U8TEXT`/`_O_U16TEXT` console fds read by `ReadConsoleW` and write to the handle of the fd, a surrogate
     pair split between writes is kept until it is complete
+  - Ctrl+Z in the middle of a console line read in `_O_U16TEXT` is kept and the rest of the line dropped, as cmd,
+    `ReadFile` and the other text modes read it; msvcrt and UCRT return the text before it and the fd reads no
+    more
   - a UTF-16 text file opened for reading and writing keeps its last byte, msvcrt (UCRT too) removes it as a
     Ctrl+Z when it is 0x1A, the high byte of a unit such as U+1A00
 - `_getch`, `_getwch` and `_kbhit` take the character reported with the release of Alt, msvcrt reports the

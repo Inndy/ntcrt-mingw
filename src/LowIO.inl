@@ -25,6 +25,11 @@
 #define NTCRT_TM_UTF8       1
 #define NTCRT_TM_UTF16LE    2
 
+/* The start of a console line, the middle, or the rest of the line after Ctrl+Z, dropped */
+#define NTCRT_LINE_START    0
+#define NTCRT_LINE_MIDDLE   1
+#define NTCRT_LINE_SKIP     2
+
 typedef struct _NTCRT_FD
 {
     HANDLE Handle;
@@ -46,7 +51,8 @@ typedef struct _NTCRT_FD
     WCHAR WriteHigh;        /* A high surrogate written to a console or UTF-8 fd, waiting for its low surrogate */
     UCHAR WriteCarryLength;
     UCHAR WriteCarry[4];    /* The start of a UTF-8 character written to a console in "C.UTF-8" */
-    BOOLEAN ConsoleEof;     /* Ctrl+Z was read from a console in "C.UTF-8" after ConsoleText */
+    BOOLEAN ConsoleEof;     /* Ctrl+Z at the start of a line was read from a console after the text returned */
+    UCHAR ConsoleLine;      /* Where reads by ReadConsoleW are in the line, NTCRT_LINE_* */
     char* ConsoleText;      /* UTF-8 read from a console in "C.UTF-8" and not returned yet */
     ULONG ConsoleTextLength;
     ULONG ConsoleTextPos;
@@ -92,6 +98,7 @@ _NtCRT_InitFdState(
     Entry->WriteHigh = 0;
     Entry->WriteCarryLength = 0;
     Entry->ConsoleEof = FALSE;
+    Entry->ConsoleLine = NTCRT_LINE_START;
     Entry->ConsoleTextLength = Entry->ConsoleTextPos = 0;
 }
 

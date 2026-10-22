@@ -32,7 +32,11 @@ static const SCENARIO g_Scenarios[] = {
     { "u8write", "", { "W6[\xe4\xb8\xad\xc3\xa9]", "W7[\xf0\x9f\x98\x80]", "end" } },
     { "read", "\xe4\xb8\xad\xf0\x9f\x98\x80\xc3\xa9\r" "ab\xe4\xb8\xad\r" "\x1a\r",
       { "R1:e4b8adf09f9880c3a90a", "R2:6162e4b8ad0a", "R3:eof", "end" } },
-    { "u8read", "\xe4\xb8\xad\xf0\x9f\x98\x80z\r" "a\xf0\x9f\x98\x80\xe4\xb8\xad\r" "x\r",
+    { "ctrlz", "ab\x1a" "cd\r" "ef\r" "\x1a\r" "gh\r" "ab\x1a" "cd\r" "ef\r" "\x1a\r" "gh\r" "ab\x1a" "cd\r" "ef\r"
+      "\x1a\r" "gh\r",
+      { "Z0:61621a65660a,eof,67680a", "Z1:00610062001a00650066000a,eof,00670068000a",
+        "Z2:00610062001a00650066000a,eof,00670068000a", "end" } },
+    { "u8read","\xe4\xb8\xad\xf0\x9f\x98\x80z\r" "a\xf0\x9f\x98\x80\xe4\xb8\xad\r" "x\r",
       { "R4:4e2dd83dde00007a000a", "R5:0061d83dde004e2d000a", "R8:0078000a", "end" } },
     { "u16read", "\xe4\xb8\xad\xf0\x9f\x98\x80z\r" "a\xf0\x9f\x98\x80\xe4\xb8\xad\r" "x\r",
       { "R4:4e2dd83dde00007a000a", "R5:0061d83dde004e2d000a", "R8:0078000a", "end" } },
