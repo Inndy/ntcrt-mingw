@@ -13,6 +13,10 @@ the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x
 - [x] **Size.** The specs of GCC had no `--gc-sections`, which works on x86. With it the unwind tables cost 135 KB
   in a program with GNU ld, 35 KB with lld. The user chose both: `make UNWIND=0` builds without them, the default
   keeps them (README "x86" has the sizes).
+- [ ] **`sqrt` rounds twice on x86.** The x87 computes it to 64 bits of precision (control word 0x37F) and
+  `src/MathX87.cpp` rounds that to `double`: the result is not always correctly rounded, which Annex F requires of
+  `sqrt` (found by codex on the review of fix/libc-a, not caused by it). Either set the precision control to 53 bits
+  around `fsqrt` (24 for `sqrtf`), or use `sqrtsd`/`sqrtss` of SSE2, which i686 does not require yet.
 
 ## Windows 7
 
