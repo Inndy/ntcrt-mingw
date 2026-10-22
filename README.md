@@ -551,13 +551,20 @@ of ntdll, as [dlfcn-win32](https://github.com/dlfcn-win32/dlfcn-win32) has them 
   without `RTLD_LOCAL`. The program and its modules export a symbol by `__declspec(dllexport)` (or
   `-Wl,--export-all-symbols`).
 - `dlclose` of the program does nothing, each `dlopen` of a module needs a `dlclose`.
-- `dlopen` and `dlclose` run one at a time, so that what other threads open and close does not make a local module
-  global. Not those of a `DllMain`, which holds the loader lock that the load of another thread may wait for, nor
-  `LoadLibrary`: a module that `dlopen` with `RTLD_LOCAL` loads while another thread loads it by these is global.
+- `dlopen` and `dlclose` run one at a time, and not during the searches of `dlsym` and `dladdr`, so that what other
+  threads open, close and search does not make a local module global. Not those of a `DllMain`, which holds the
+  loader lock that the load of another thread may wait for, nor `LoadLibrary`: a module that `dlopen` with
+  `RTLD_LOCAL` loads while another thread loads it by these is global. A `DllMain` (attach and detach) must not wait
+  for another thread that calls these functions, which may wait for the one that loads or unloads that module (the
+  rules of `DllMain` forbid waiting for another thread). On Windows 7 `dlsym` finds nothing in a module that is in
+  its `DllMain` for `DLL_PROCESS_DETACH`, of its handle or by a search, as `GetProcAddress` there: the loader of
+  Windows 7 takes the module out of its lookups before it calls the detach.
 - `dladdr` gives the path of the module in a buffer of the thread, and the nearest named export at or below the
   address.
 - The messages are those of FormatMessage in English for the common errors (`"name": The specified module could
-  not be found.`), `Error <n>.` for the others.
+  not be found.`), `Error <n>.` for the others. The threads that could not get their own data (no TLS slot or no
+  memory for it) share one error, which `dlerror` gives as "Not enough memory for the error.", and `dladdr` gives
+  them no path (`dli_fname` NULL).
 
 These differ from dlfcn-win32, by POSIX:
 

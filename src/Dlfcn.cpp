@@ -34,12 +34,12 @@ EXTERN_C NTSYSAPI NTSTATUS NTAPI LdrEnumerateLoadedModules(_In_ BOOLEAN Reserved
                                                            _In_opt_ PVOID Context);
 
 /*
- * dlopen and dlclose (exclusive), each with its update of g_Opens, and the searches of dlsym (shared): another thread
- * cannot load or unload a module between the call of the loader and the update, so that a module that one loads with
- * RTLD_LOCAL is not taken by another for one loaded before, nor a module loaded at the address of one just unloaded
- * for that one; a search sees no module loaded and not yet in g_Opens, and a module it references is not closed
- * meanwhile, which would keep it loaded for the next dlopen. A thread that holds the loader lock (a DllMain that
- * calls them) does not take it, as a load of a thread that holds it may wait for the loader lock.
+ * dlopen and dlclose (exclusive), each with its update of g_Opens, and the searches of dlsym and dladdr (shared):
+ * another thread cannot load or unload a module between the call of the loader and the update, so that a module that
+ * one loads with RTLD_LOCAL is not taken by another for one loaded before, nor a module loaded at the address of one
+ * just unloaded for that one; a search sees no module loaded and not yet in g_Opens, and a module it references is
+ * not closed meanwhile, which would keep it loaded for the next dlopen. A thread that holds the loader lock (a
+ * DllMain that calls them) does not take it, as a load of a thread that holds it may wait for the loader lock.
  */
 static RTL_SRWLOCK g_DlLock = RTL_SRWLOCK_INIT;
 
@@ -548,11 +548,14 @@ NTCRT_API int dladdr(const void* addr, Dl_info* info)
     PIMAGE_DATA_DIRECTORY Directory;
     PVOID Base;
     ULONG_PTR Offset;
+    int Locked;
 
-    /* Referenced so that the module stays while its exports are read after the loader lock */
+    /* Referenced so that the module stays while its exports are read after the loader lock, under g_DlLock as dlsym */
+    Locked = _NtCRT_DlLock(FALSE);
     LdrEnumerateLoadedModules(FALSE, _NtCRT_DlFindAddress, &Find);
     if ((Base = Find.Base) == NULL)
     {
+        _NtCRT_DlUnlock(Locked);
         return 0;
     }
     info->dli_fbase = Base;
@@ -597,6 +600,7 @@ NTCRT_API int dladdr(const void* addr, Dl_info* info)
     {
         LdrUnloadDll(Base);
     }
+    _NtCRT_DlUnlock(Locked);
     return 1;
 }
 
