@@ -24,6 +24,8 @@ the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x
 
 Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`, the `thread_local` destructors
 (`tl`) and `loadlib`, and tcc-ntdll runs `-run` there. The VM is reached over WinRM by the ntcrt-mingw-f2 session.
+`pebteb` of WOW64 failed there until 502958b, which this list said it ran: `TEB::WowTebOffset` is 0 on Windows 7,
+the 64-bit TEB is 0x2000 before the 32-bit one all the same (win32lab-e4). On Windows 8 and 8.1 it is not verified.
 The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7; of
 `libntdll_crt.a` only `atan2` is not, which libmingwex defines before it.
 
