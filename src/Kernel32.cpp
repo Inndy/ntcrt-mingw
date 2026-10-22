@@ -21,8 +21,13 @@ NTCRT_API VOID WINAPI _K32_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
 {
     _Inline_GetStartupInfoW(lpStartupInfo);
 }
+/* The work of msvcrt at DLL_PROCESS_DETACH, which the TLS callback of NtCRT does except under tcc */
+EXTERN_C void __cdecl _NtCRT__cexit(void);
 NTCRT_API __attribute__((noreturn)) VOID WINAPI _K32_ExitProcess(_In_ UINT uExitCode)
 {
+#ifdef NTCRT_TCC
+    _NtCRT__cexit();
+#endif
     _Inline_ExitProcess(uExitCode);
 }
 NTCRT_API BOOL WINAPI _K32_TerminateProcess(_In_ HANDLE hProcess, _In_ UINT uExitCode)
@@ -1135,7 +1140,7 @@ _NtCRT_ThreadStart(
     NTCRT_THREAD_START Start = *(PNTCRT_THREAD_START)Parameter;
 
     RtlFreeHeap(NTCRT_HEAP, 0, Parameter);
-    RtlExitUserThread((NTSTATUS)Start.StartAddress(Start.Parameter));
+    _NtCRT_ExitUserThread((NTSTATUS)Start.StartAddress(Start.Parameter));
 }
 
 NTCRT_API
@@ -1187,7 +1192,7 @@ _K32_CreateThread(
 
 NTCRT_API __attribute__((noreturn)) VOID WINAPI _K32_ExitThread(_In_ DWORD dwExitCode)
 {
-    RtlExitUserThread((NTSTATUS)dwExitCode);
+    _NtCRT_ExitUserThread((NTSTATUS)dwExitCode);
 }
 
 NTCRT_API

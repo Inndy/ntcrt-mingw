@@ -27,10 +27,11 @@ The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by n
 
 ## tcc
 
-- [ ] **R8: an ELF `libntcrt.a` for tcc**, so that the programs tcc-ntdll builds import ntdll only. clang
-  `--target=x86_64-w64-windows-gnu-elf` compiles 76 of 85 sources; the COFF assembly of the `__imp_` macro of
-  `src/NtCRT.h` blocks the rest. Without pthreads and C11 threads (tcc defines `__STDC_NO_THREADS__`), with a
-  curated `ntdll.def`. Waiting for a decision.
+- [x] **R8: an ELF `libntcrt.a` for tcc** (`make TCC=1`, README "tcc"). With tcc's own `crt1.o` and libtcc1, a
+  program imports ntdll only. tcctest.c gives the output of msvcrt but for the digits and nan/inf of NtCRT, tcc
+  builds itself on it, and that tcc builds tcctest.c and itself byte-identical.
+- [ ] **Integration into tcc-ntdll** (the ntcrt-mingw-e1 session): the SDK and the libraries tcc links by default,
+  `tcc -run` (runmain.o), Windows 7.
 
 ## kernel32
 

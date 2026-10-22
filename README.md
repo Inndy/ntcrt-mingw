@@ -19,6 +19,8 @@ clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 make install PREFIX=C:/ntcrt          # include/, lib/gcc and the drivers in bin/
 make LLVM=1 install PREFIX=C:/ntcrt   # lib/clang and the clang drivers
 x86_64-w64-ntcrt-mingw32-gcc -o hello.exe hello.c    # with C:/ntcrt/bin in PATH
+
+make TCC=1 LLVM=<dir>/   # build-tcc/lib: libntcrt.a and ntdll.def for tcc in place of msvcrt.def, see "tcc"
 ```
 
 An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`, `cc`, `c++`, `clang` and `clang++`
@@ -33,6 +35,7 @@ configure, make or CMake. They take `-ntcrt-strict` too. The specs and configura
 - `src/` the runtime, `NtCRT.h` is the internal header
 - `src/start/` replacements of libmingw32 and libgcc members in `libntcrt_start.a`, linked before them
 - `polyfill/` code page and console helpers built on ntdll
+- `tools/` the drivers of an installation (`driver.c`) and the relocations of the members for tcc (`coffrel.c`)
 - `include/KNSoft/NDK/` the part of KNSoft.NDK used by the sources, on top of MinGW-w64 headers
 - `include/threads.h` C11 threads, the drivers add `include/` to the system include path of programs
 - `include/errhandlingapi.h`, `include/processthreadsapi.h` include those of MinGW-w64 and inline `GetLastError`,
@@ -183,6 +186,30 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
 - `_control87`, `_controlfp`: the x87 control word with its precision and infinity control, or'ed with the control of
   SSE and `_EM_AMBIGUOUS` when the two differ, as the x86 msvcrt.
 - Not yet: `make test` (`test-thread` and `test-start` pass) and clang.
+
+## tcc
+
+`make TCC=1` (with `LLVM=<dir>/` for clang in `<dir>`) builds `build-tcc/lib/libntcrt.a` and `build-tcc/lib/ntdll.def`
+for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what NtCRT has), a program tcc builds imports
+`ntdll.dll` only. The startup is that of tcc (`crt1.c` of `libtcc1.a`), which calls `__getmainargs` of NtCRT.
+
+- tcc links ELF objects only: clang compiles NtCRT for the x64 of Windows into ELF (`x86_64-w64-windows-gnu-elf`,
+  `NTCRT_TCC` in `src/NtCRT.h`). The stubs give a function by its name and a variable of msvcrt by `_imp__Name`, as
+  the headers of tcc read it, or by its name as an import slot where they declare it `__declspec(dllimport)`
+  (`_timezone`, `_daylight`, `_dstbias`, `_tzname` and those without `_`).
+- What a GCC build takes from libmingwex, libmsvcrt, libmingw32 and libgcc of the toolchain (`exp`, `fmod`,
+  `___chkstk_ms`, ...) and the C99 math of `<math.h>` (double and float: the `long double` of tcc is a `double`),
+  `strnlen`, `wcsnlen`, `snprintf` and `vsnprintf`: their members, made ELF objects by `objcopy -O elf64-x86-64`
+  without unwind tables and debug information. `src/Members.awk` takes the members needed, except those that would
+  replace a function of NtCRT or ntdll; `tools/coffrel.c` sets the addend (-4) of the relative relocations, which
+  objcopy leaves at 0.
+- tcc has no sections grouped by `$`: the C initializers of NtCRT are in `.init_array`, which `crt1.c` runs after
+  `__getmainargs` (and after the constructors of the program). A program of tcc has no TLS callback: the threads of
+  `_beginthread`, `_beginthreadex` and `CreateThread` free the per-thread data of NtCRT when they end, `ExitProcess`
+  runs the `atexit` functions and flushes the streams first (msvcrt does both at its `DLL_PROCESS_DETACH`). `tcc -run`
+  ends by its own `exit`, which runs the `.fini_array`: NtCRT flushes the streams there.
+- No thread functions (tcc defines `__STDC_NO_THREADS__`). tcc takes `_strlwr` for `strlwr` itself, `ntdll.def`
+  has no aliases.
 
 ## Behavior
 

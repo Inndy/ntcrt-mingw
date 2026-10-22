@@ -210,6 +210,8 @@ EXTERN_C void _NtCRT_ThreadDetach(void)
 #define EXIT_PROCESS_END 2
 static LONG g_ExitState;
 
+/* Under tcc a program has no TLS callback: the threads of NtCRT free their data, ExitProcess calls _cexit */
+#ifndef NTCRT_TCC
 static
 VOID
 NTAPI
@@ -240,6 +242,7 @@ extern "C" __attribute__((section(".CRT$XLF"), used)) const PIMAGE_TLS_CALLBACK 
 extern "C" const IMAGE_TLS_DIRECTORY _tls_used;
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 static __attribute__((used)) const void* const IncludeTlsUsed = &_tls_used;
+#endif
 
 EXTERN_C unsigned long* __cdecl _NtCRT___doserrno(void)
 {
@@ -649,6 +652,7 @@ _NtCRT_DoExit(
     }
 }
 
+#ifndef NTCRT_TCC
 /*
  * The process ends without exit: by the end of its last thread, ExitProcess or RtlExitUserProcess, which ended the
  * other threads (DLL_PROCESS_DETACH while ntdll shuts the process down, ShutdownInProgress is what
@@ -710,6 +714,7 @@ EXTERN_C void _NtCRT_ProcessAttach(void)
         (*Callback)(&__ImageBase, DLL_PROCESS_ATTACH, NULL);
     }
 }
+#endif
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT_exit(int code)
 {
@@ -923,8 +928,7 @@ static int __cdecl _NtCRT_InitRuntimeEntry(void)
     _NtCRT_InitRuntime();
     return 0;
 }
-extern "C" __attribute__((section(".CRT$XIB"), used)) int(__cdecl* const _NtCRT_InitRuntimeEntryPtr)(void) =
-    _NtCRT_InitRuntimeEntry;
+NTCRT_INITIALIZER(".CRT$XIB", _NtCRT_InitRuntimeEntryPtr, _NtCRT_InitRuntimeEntry);
 
 NTCRT_IMPORT(_errno, _NtCRT_errno);
 NTCRT_IMPORT(__doserrno, _NtCRT___doserrno);

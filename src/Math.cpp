@@ -131,7 +131,9 @@ EXTERN_C double __cdecl _NtCRT__hypot(double x, double y)
     {
         return HUGE_VAL;
     }
-    Result = sqrtl((long double)x * x + (long double)y * y);
+    /* fsqrt, not sqrtl of libmingwex: the long double of tcc is a double (NTCRT_TCC) */
+    Result = (long double)x * x + (long double)y * y;
+    __asm__("fsqrt" : "+t"(Result));
     if (Result > DBL_MAX)
     {
         NTCRT_ERRNO = ERANGE;

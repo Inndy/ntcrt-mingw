@@ -46,7 +46,7 @@ _NtCRT_ThreadStartEx(
         _NtCRT__endthread();
     }
     /* The TLS callback frees the per-thread data after the thread_local destructors of C++ */
-    RtlExitUserThread((NTSTATUS)Result);
+    _NtCRT_ExitUserThread((NTSTATUS)Result);
 }
 
 static
@@ -147,7 +147,7 @@ _NtCRT__beginthread(
 
 EXTERN_C __attribute__((noreturn)) void __cdecl _NtCRT__endthreadex(unsigned retval)
 {
-    RtlExitUserThread((NTSTATUS)retval);
+    _NtCRT_ExitUserThread((NTSTATUS)retval);
 }
 
 /* Closes the handle of a thread of _beginthread, which then may be that of another object */

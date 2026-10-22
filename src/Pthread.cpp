@@ -139,8 +139,7 @@ static int __cdecl ThreadExitHook(void)
     _NtCRT_WaitSlot = WaitSlot;
     return 0;
 }
-extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_ThreadExitHookPtr)(void) =
-    ThreadExitHook;
+NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_ThreadExitHookPtr, ThreadExitHook);
 
 static PNTCRT_PTHREAD CurrentThread(void)
 {

@@ -25,7 +25,9 @@ X86      := 1
 CXXFLAGS += -D_TIME_BITS=64
 endif
 
-ifdef LLVM
+ifdef TCC
+BUILD    ?= build-tcc
+else ifdef LLVM
 # A section for each variable, which lld drops unused. GCC would put the zero data in .data$ sections, which take
 # space in the file unlike .bss, and ld links whole objects anyway.
 CXXFLAGS += -fdata-sections
@@ -33,7 +35,8 @@ BUILD    ?= build-llvm$(if $(X86),-i686)
 else
 BUILD    ?= build$(if $(X86),-i686)
 endif
-SRCS     := $(wildcard src/*.cpp)
+# tcc defines __STDC_NO_THREADS__, its library has no thread functions
+SRCS     := $(filter-out $(if $(TCC),$(filter-out src/PthreadTime.cpp,$(wildcard src/Pthread*.cpp)) src/C11%.cpp),$(wildcard src/*.cpp))
 OBJS     := $(SRCS:src/%.cpp=$(BUILD)/%.o)
 # Replacements of libmingw32 and libgcc members, linked before them
 START_SRCS := $(wildcard src/start/*.cpp)
@@ -70,6 +73,34 @@ endif
 LIBS := $(BUILD)/libntcrt.a $(BUILD)/libntcrt_start.a $(BUILD)/libntdll_crt.a $(BUILD)/libmsvcrt_static.a \
         $(BUILD)/libpthread.a $(BUILD)/libwinpthread.a
 
+# make TCC=1: build-tcc/libntcrt.a and build-tcc/ntdll.def for tcc in place of msvcrt.def, x64 (NTCRT_TCC in NtCRT.h).
+# tcc links ELF objects, which clang makes for Windows (LLVM=<dir>/ for clang in <dir>). tcc links whole objects: a
+# section for each function would only be more sections, and it reads no unwind table of ELF.
+ifdef TCC
+ifdef X86
+$(error TCC=1 builds for x64 only)
+endif
+GCC_ROOT := $(abspath $(dir $(shell $(CXX) -print-libgcc-file-name))../../../..)
+TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf --sysroot=$(GCC_ROOT) -stdlib=libstdc++ \
+             -D__INTRINSIC_DEFINED___cpuidex -D_CLANG_DISABLE_CRT_DEPRECATION_WARNINGS -DNTCRT_TCC \
+             -fno-asynchronous-unwind-tables
+LIB_CXX  := $(filter %/,$(LLVM))clang++ $(TCC_FLAGS)
+LIB_AS   := $(filter %/,$(LLVM))clang --target=x86_64-w64-windows-gnu-elf
+CXXFLAGS := $(filter-out -ffunction-sections,$(CXXFLAGS))
+LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def
+DRIVER   :=
+# What tcc-built programs get beyond msvcrt.dll, as a GCC build of NtCRT: the C99 math of <math.h> (double and float,
+# the long double of tcc is a double), strnlen, wcsnlen, snprintf, vsnprintf
+TCC_SEEDS := __fpclassify __fpclassifyf __signbit __signbitf acos acosf asin asinf atan atan2 atan2f atanf cbrt cbrtf \
+             ceil ceilf copysign copysignf cos cosf cosh coshf erf erfc erfcf erff exp exp2 exp2f expf expm1 expm1f \
+             fabs fabsf fdim fdimf floor floorf fma fmaf fmax fmaxf fmin fminf fmod fmodf frexp hypot hypotf ilogb \
+             ilogbf ldexp ldexpf lgamma lgammaf llrint llrintf llround llroundf log log10 log10f log1p log1pf log2 \
+             log2f logb logbf logf lrint lrintf lround lroundf modf modff nan nanf nearbyint nearbyintf nextafter \
+             nextafterf pow powf remainder remainderf remquo remquof rint rintf round roundf scalbln scalblnf scalbn \
+             scalbnf sin sinf sinh sinhf sqrt sqrtf tan tanf tanh tanhf tgamma tgammaf trunc truncf \
+             strnlen wcsnlen snprintf vsnprintf
+endif
+
 all: $(LIBS) $(DRIVER)
 
 $(BUILD):
@@ -94,11 +125,12 @@ $(BUILD)/exports.txt: FORCE | $(BUILD)
 
 # An object for each name, see NtCRT.h. Only the stubs that Exports.awk writes are assembled, those of names that are
 # gone are removed. The stubs written are removed when they fail to assemble, so that the next make writes them again.
-# On x86 the stubs of stdcall functions take the size of the arguments from the names in the objects.
-$(BUILD)/exports.stamp: $(BUILD)/exports.txt src/Exports.awk $(if $(X86),$(BUILD)/objects.syms)
+# On x86 the stubs of stdcall functions take the size of the arguments from the names in the objects, for tcc the
+# stubs of NTCRT_IMPORT_ONLY whether the name is of a function.
+$(BUILD)/exports.stamp: $(BUILD)/exports.txt src/Exports.awk $(if $(X86)$(TCC),$(BUILD)/objects.syms)
 	rm -f $@
 	mkdir -p $(BUILD)/exports
-	awk -v dir=$(BUILD)/exports -v keep=$(BUILD)/exports.keep -v x86=$(X86) -v syms=$(BUILD)/objects.syms \
+	awk -v dir=$(BUILD)/exports -v keep=$(BUILD)/exports.keep -v x86=$(X86) -v elf=$(TCC) -v syms=$(BUILD)/objects.syms \
 	    -f src/Exports.awk $< > $(BUILD)/exports.new
 	cd $(BUILD)/exports && ls | grep -v -x -F -f ../exports.keep | xargs -r rm -f
 	cd $(BUILD)/exports && xargs -r -P 8 -n 64 $(LIB_AS) -c < ../exports.new || { xargs rm -f < ../exports.new; exit 1; }
@@ -127,12 +159,52 @@ $(BUILD)/objects.syms: $(OBJS)
 # ntdll of x86 has neither the SEH of x64 nor setjmp.
 NTDLL_X64 := __C_specific_handler _local_unwind _setjmp _setjmpex longjmp setjmp
 
-$(BUILD)/libntdll_crt.a: src/ntdll_crt.txt $(BUILD)/ntcrt.syms
-	printf 'LIBRARY ntdll.dll\nEXPORTS\n' > $(BUILD)/ntdll_crt.def
+$(BUILD)/ntdll_crt.def: src/ntdll_crt.txt $(BUILD)/ntcrt.syms
+	printf 'LIBRARY ntdll.dll\nEXPORTS\n' > $@
 	awk -v x86=$(X86) -v x64='$(NTDLL_X64)' 'BEGIN { split(x64, a); for (i in a) X64[a[i]] = 1 } \
 	    NR == FNR { n = $$1; if (x86) sub(/^_/, "", n); Defined[n] = 1; next } \
-	    !($$1 in Defined) && !(x86 && $$1 in X64)' $(BUILD)/ntcrt.syms src/ntdll_crt.txt >> $(BUILD)/ntdll_crt.def
-	dlltool -d $(BUILD)/ntdll_crt.def -l $@
+	    !($$1 in Defined) && !(x86 && $$1 in X64)' $(BUILD)/ntcrt.syms src/ntdll_crt.txt >> $@
+
+$(BUILD)/libntdll_crt.a: $(BUILD)/ntdll_crt.def
+	dlltool -d $< -l $@
+
+# ntdll for tcc: its C runtime as above, and the functions of libntdll.a of MinGW-w64. The .def of tcc has no aliases
+# ("strlwr == _strlwr") and no comments, tcc takes "_strlwr" for "strlwr" itself.
+$(BUILD)/ntdll.def: $(BUILD)/ntdll_crt.def
+	{ grep -v -e '==' -e '^;' $<; nm -g "$(shell $(CXX) -print-file-name=libntdll.a)" | sed -n 's/.* I __imp_//p'; } \
+	    > $@
+
+# The library for tcc in lib/: libntcrt.a with the members of libgcc, libmingw32, libmingwex and libmsvcrt (its static
+# members) that NtCRT and TCC_SEEDS use, those of a GCC build, made ELF objects (src/Members.awk); and ntdll.def.
+TCC_SOURCES := $(foreach l,libgcc.a libmingw32.a libmingwex.a,"$(shell $(CXX) -print-file-name=$(l))")
+
+$(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms $(BUILD)/ntdll.def src/Members.awk
+	rm -rf $(BUILD)/coff
+	mkdir -p $(BUILD)/coff
+	cd $(BUILD)/coff && for l in $(TCC_SOURCES); do ar x "$$l"; done && \
+	    ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib64_libmsvcrt_')
+	{ cat $(BUILD)/ntcrt.syms; tail -n +3 $(BUILD)/ntdll.def; } > $(BUILD)/have.txt
+	{ printf '%s\n' $(TCC_SEEDS); nm -g --undefined-only $(BUILD)/libntcrt.a | awk '$$1 == "U" { print $$2 }'; } \
+	    > $(BUILD)/seeds.txt
+	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../have.txt -v seeds=../seeds.txt -f $(CURDIR)/src/Members.awk \
+	    ../have.txt ../seeds.txt - > ../members.txt
+
+# objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations
+$(BUILD)/coffrel.exe: tools/coffrel.c | $(BUILD)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
+
+$(BUILD)/lib/libntcrt.a: $(BUILD)/libntcrt.a $(BUILD)/members.txt $(BUILD)/coffrel.exe
+	rm -rf $(BUILD)/elf
+	mkdir -p $(BUILD)/elf $(@D)
+	cd $(BUILD)/coff && xargs -I{} objcopy -O elf64-x86-64 --strip-debug -R .pdata -R .xdata -R '.rdata$$zzz' \
+	    {} ../elf/{} < ../members.txt
+	cd $(BUILD)/elf && xargs ../coffrel.exe < ../members.txt
+	cp $(BUILD)/libntcrt.a $@
+	cd $(BUILD)/elf && xargs ar rs ../lib/libntcrt.a < ../members.txt
+
+$(BUILD)/lib/ntdll.def: $(BUILD)/ntdll.def
+	mkdir -p $(@D)
+	cp $< $@
 
 # The static (non-import) members of libmsvcrt.a, minus those defining a symbol of libntcrt.a
 $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms

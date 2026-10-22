@@ -450,8 +450,16 @@ _NtCRT_InitFlushAtExit(void)
     return 0;
 }
 
-extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_InitFlushAtExitPtr)(void) =
-    _NtCRT_InitFlushAtExit;
+NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_InitFlushAtExitPtr, _NtCRT_InitFlushAtExit);
+
+#ifdef NTCRT_TCC
+/* tcc -run ends the program by its own exit, which runs the .fini_array but not exit of NtCRT */
+static void _NtCRT_FlushAtFini(void)
+{
+    _NtCRT_FlushAll(false);
+}
+static __attribute__((section(".fini_array"), used)) void (*_NtCRT_FlushAtFiniPtr)(void) = _NtCRT_FlushAtFini;
+#endif
 
 EXTERN_C FILE* __cdecl _NtCRT___iob_func(void)
 {

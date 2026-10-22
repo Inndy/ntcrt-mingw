@@ -342,7 +342,7 @@ static int __cdecl _NtCRT_InitMbcs(void)
     _NtCRT__setmbcp(_MB_CP_ANSI);
     return 0;
 }
-extern "C" __attribute__((section(".CRT$XIC"), used)) int(__cdecl* const _NtCRT_InitMbcsPtr)(void) = _NtCRT_InitMbcs;
+NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_InitMbcsPtr, _NtCRT_InitMbcs);
 
 #pragma endregion
 

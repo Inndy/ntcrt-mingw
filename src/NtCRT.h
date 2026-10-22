@@ -46,6 +46,32 @@
     EXTERN_C __typeof__(NTCRT_X86_X64(X86, X64)) Name \
         __attribute__((nothrow, alias(NTCRT_STRINGIZE(NTCRT_X86_X64(X86, X64)))))
 
+/*
+ * NTCRT_TCC: the ELF objects of the library for tcc (make TCC=1), see README.md. tcc reads the variables of msvcrt by
+ * "_imp__Name", or by "Name" as an import slot where its headers declare them __declspec(dllimport)
+ * (NTCRT_IMPORT_DATA_SLOT). It sorts no section by "$": the C initializers are in .init_array, which the startup of tcc
+ * runs after __getmainargs, and the program has no TLS callback.
+ */
+#ifdef NTCRT_TCC
+#define NTCRT_IMPORT_DATA(Name, Impl) \
+    __asm__(".globl " #Name "\n\t" \
+            ".set " #Name ", " #Impl "\n\t" \
+            ".pushsection .data\n\t" \
+            ".globl _imp__" #Name "\n\t" \
+            ".p2align 3\n" \
+            "_imp__" #Name ":\n\t" \
+            ".quad " #Impl "\n\t" \
+            ".popsection")
+#define NTCRT_IMPORT_DATA_SLOT(Name, Impl) \
+    __asm__(".pushsection .data\n\t" \
+            ".globl " #Name "\n\t" \
+            ".p2align 3\n" \
+            #Name ":\n\t" \
+            ".quad " #Impl "\n\t" \
+            ".popsection")
+#define NTCRT_INITIALIZER(Section, Name, Function) \
+    static __attribute__((section(".init_array"), used)) int(__cdecl* Name)(void) = Function
+#else
 /* A variable cannot be forwarded by a jump, "Name" and "__imp_Name" are defined in the object of "Impl" */
 #define NTCRT_IMPORT_DATA(Name, Impl) \
     __asm__(".globl " NTCRT_ASM_PREFIX #Name "\n\t" \
@@ -57,11 +83,25 @@
             "__imp_" NTCRT_ASM_PREFIX #Name ":\n\t" \
             NTCRT_ASM_PTR NTCRT_ASM_PREFIX #Impl "\n\t" \
             ".text")
+#define NTCRT_IMPORT_DATA_SLOT NTCRT_IMPORT_DATA
+/* A C initializer, run by the startup of MinGW-w64 in the order of Section (".CRT$XIB" to ".CRT$XIZ") */
+#define NTCRT_INITIALIZER(Section, Name, Function) \
+    extern "C" __attribute__((section(Section), used)) int(__cdecl* const Name)(void) = Function
+#endif
 
 #define NTCRT_API extern "C" __attribute__((used))
 
 /* Thread exit notification, called by the TLS callback with DLL_THREAD_DETACH / DLL_PROCESS_DETACH */
 extern "C" void _NtCRT_ThreadDetach(void);
+
+/* The end of a thread NtCRT started, under tcc (no TLS callback) after the end of its per-thread data */
+static inline __attribute__((noreturn)) void _NtCRT_ExitUserThread(NTSTATUS Status)
+{
+#ifdef NTCRT_TCC
+    _NtCRT_ThreadDetach();
+#endif
+    RtlExitUserThread(Status);
+}
 
 /* The DLL_PROCESS_ATTACH of the TLS callbacks that Windows 7 may not send, see Startup.cpp */
 extern "C" void _NtCRT_ProcessAttach(void);
