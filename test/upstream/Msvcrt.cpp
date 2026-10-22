@@ -321,6 +321,8 @@ static void TestPathNames(void)
                   St.st_mtime == 0 && St.st_atime == 0 && St.st_ctime == 0,
               Device);
     }
+    /* A device by its path is one as for fstat, though kernel32 has no attributes for it */
+    CHECK(_stat64("\\\\.\\NUL", &St) == 0 && St.st_mode == (_S_IFCHR | 0666) && St.st_size == 0);
 
     File = fopen(Name, "w");
     CHECK(File != NULL);

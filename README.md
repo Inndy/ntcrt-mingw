@@ -559,7 +559,8 @@ waiters).
   the device answers or not: `GetFileAttributesW` returns `FILE_ATTRIBUTE_ARCHIVE`, `_access` succeeds for reading
   and writing, and `_stat` reports a character device (`_S_IFCHR`, read and write permissions, one link, no size
   and no times). `_mkdir` of one fails with `ENOTDIR` (`NUL` succeeds as in kernel32), and with a missing directory
-  (`nosuchdir\NUL`) these fail with `ENOENT`. msvcrt reports a regular file, UCRT a character device for `NUL`,
+  (`nosuchdir\NUL`) these fail with `ENOENT`. A device by its path (`\\.\NUL`) is a character device for `_stat`
+  as for `fstat`, a named pipe a FIFO (kernel32 has no attributes for them). msvcrt reports a regular file, UCRT a character device for `NUL`,
   `CONIN$` and `CONOUT$` only, and fails `_access` and the `_stat` of the others.
 - `_getch` and `_getwch` take Alt and keypad digits as the composition of a character, which the console
   reports with the release of Alt. A pseudo console (Windows Terminal) types a character beyond U+FFFF in this

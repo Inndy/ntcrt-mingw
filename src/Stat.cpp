@@ -78,6 +78,7 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
     FILE_BASIC_INFORMATION Basic;
     FILE_STANDARD_INFORMATION Standard;
     BOOL Device;
+    UCHAR Kind = 0;
     int Drive;
 
     if (path == NULL || buffer == NULL)
@@ -108,14 +109,19 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
                             FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT);
         if (NT_SUCCESS(Status))
         {
-            Status = NtQueryInformationFile(Handle, &IoStatusBlock, &Basic, sizeof(Basic), FileBasicInformation);
-            if (NT_SUCCESS(Status))
+            /* A device by its path (\\.\NUL) is one as for fstat, it has no file information */
+            Kind = _NtCRT_DeviceFlags(Handle);
+            if (Kind == 0)
             {
-                Status = NtQueryInformationFile(Handle,
-                                                &IoStatusBlock,
-                                                &Standard,
-                                                sizeof(Standard),
-                                                FileStandardInformation);
+                Status = NtQueryInformationFile(Handle, &IoStatusBlock, &Basic, sizeof(Basic), FileBasicInformation);
+                if (NT_SUCCESS(Status))
+                {
+                    Status = NtQueryInformationFile(Handle,
+                                                    &IoStatusBlock,
+                                                    &Standard,
+                                                    sizeof(Standard),
+                                                    FileStandardInformation);
+                }
             }
             NtClose(Handle);
         }
@@ -145,10 +151,10 @@ EXTERN_C int __cdecl _NtCRT_wstat64(const wchar_t* path, struct _stat64* buffer)
     }
     memset(buffer, 0, sizeof(*buffer));
     buffer->st_dev = buffer->st_rdev = (_dev_t)Drive;
-    if (Device)
+    if (Device || Kind != 0)
     {
-        /* Read and write as _access says, no size and no times */
-        buffer->st_mode = _S_IFCHR | 0666;
+        /* Read and write as _access says, no size and no times; a pipe has no permissions as for fstat */
+        buffer->st_mode = Kind == FPIPE ? _S_IFIFO : _S_IFCHR | 0666;
         buffer->st_nlink = 1;
         return 0;
     }
