@@ -64,8 +64,3 @@ and 59b9e70). Waiting for the user to order them with the rest.
 
 - Out of scope: a kernel32 polyfill library (`GetSystemDirectoryA`, `SearchPathA`, `SetConsoleMode`, ...) is not
   the work of a C runtime. kernel32 is linked after NtCRT by default, `-ntcrt-strict` leaves it out.
-
-## Housekeeping
-
-- [ ] Squash a6ed296 into 740db45 (both count the Unicode text mode positions), before the push.
-- [ ] Push main (63 commits ahead of `fojo/main` at 3f871d1).
