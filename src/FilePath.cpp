@@ -85,9 +85,12 @@ _NtCRT_CreateFile(
     IO_STATUS_BLOCK IoStatusBlock;
 
     *FileHandle = INVALID_HANDLE_VALUE;
-    if (_NtCRT_IsLegacyConsoleName(FileName, DesiredAccess))
+    if (!(CreateOptions & FILE_DIRECTORY_FILE) && _NtCRT_IsLegacyConsoleName(FileName, DesiredAccess))
     {
-        /* Not inheritable, the console server takes only the generic rights and opens what exists */
+        /*
+         * A file, as CreateFileW of kernel32 (CreateDirectoryW goes to NtCreateFile): not inheritable, the console
+         * server takes only the generic rights and opens what exists
+         */
         auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function("CreateFileW");
 
         if (CreateFileW != NULL)
