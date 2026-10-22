@@ -260,19 +260,17 @@ EXTERN_C errno_t __cdecl _NtCRT___wcserror_s(wchar_t* buffer, size_t count, cons
 
 EXTERN_C wchar_t* __cdecl _NtCRT___wcserror(const wchar_t* str)
 {
-    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
+    wchar_t* Buffer = (wchar_t*)_NtCRT_PtdBuffer((void**)&_NtCRT_GetPtd()->WcserrorBuffer,
+                                                 NTCRT_WCSERROR_SIZE * sizeof(wchar_t),
+                                                 0);
 
-    if (Ptd->WcserrorBuffer == NULL)
+    if (Buffer == NULL)
     {
-        Ptd->WcserrorBuffer = (wchar_t*)RtlAllocateHeap(NTCRT_HEAP, 0, NTCRT_WCSERROR_SIZE * sizeof(wchar_t));
-        if (Ptd->WcserrorBuffer == NULL)
-        {
-            NTCRT_ERRNO = ENOMEM;
-            return NULL;
-        }
+        NTCRT_ERRNO = ENOMEM;
+        return NULL;
     }
-    _NtCRT_FormatStrerror(Ptd->WcserrorBuffer, NTCRT_WCSERROR_SIZE, str, true);
-    return Ptd->WcserrorBuffer;
+    _NtCRT_FormatStrerror(Buffer, NTCRT_WCSERROR_SIZE, str, true);
+    return Buffer;
 }
 
 /* Tokenizers */

@@ -465,13 +465,7 @@ static
 struct tm*
 _NtCRT_TmBuffer(void)
 {
-    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
-
-    if (Ptd->TmBuffer == NULL)
-    {
-        Ptd->TmBuffer = (struct tm*)RtlAllocateHeap(NTCRT_HEAP, HEAP_ZERO_MEMORY, sizeof(struct tm));
-    }
-    return Ptd->TmBuffer;
+    return (struct tm*)_NtCRT_PtdBuffer((void**)&_NtCRT_GetPtd()->TmBuffer, sizeof(struct tm), HEAP_ZERO_MEMORY);
 }
 
 EXTERN_C int __cdecl _NtCRT__gmtime64_s(struct tm* tm, const __time64_t* t)
@@ -716,13 +710,7 @@ static
 char*
 _NtCRT_AsctimeBuffer(void)
 {
-    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
-
-    if (Ptd->AsctimeBuffer == NULL)
-    {
-        Ptd->AsctimeBuffer = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, 26 * sizeof(wchar_t));
-    }
-    return Ptd->AsctimeBuffer;
+    return (char*)_NtCRT_PtdBuffer((void**)&_NtCRT_GetPtd()->AsctimeBuffer, 26 * sizeof(wchar_t), 0);
 }
 
 /* As msvcrt, only an invalid field of tm resets the buffer */

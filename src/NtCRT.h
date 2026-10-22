@@ -149,7 +149,11 @@ typedef struct _NTCRT_PTD
 #endif
 } NTCRT_PTD, *PNTCRT_PTD;
 
-/* _NtCRT_FallbackPtd is shared by the threads that could not get their own, _NtCRT_PtdSlot is its TLS slot */
+/*
+ * _NtCRT_FallbackPtd is shared by the threads that could not get their own, _NtCRT_PtdSlot is its TLS slot. A heap
+ * buffer of the data is allocated once by _NtCRT_PtdBuffer and freed at the end of the thread only, never for the
+ * fallback: the threads that share it share its buffers, none frees or replaces one another may use.
+ */
 extern "C" PNTCRT_PTD _NtCRT_GetPtd(void);
 extern "C" NTCRT_PTD _NtCRT_FallbackPtd;
 extern "C" DWORD _NtCRT_PtdSlot(void);
@@ -270,6 +274,28 @@ extern "C" int _NtCRT_InvalidParameter(int Errno);
 
 /* Heap */
 #define NTCRT_HEAP RtlProcessHeap()
+
+/* The buffer of Field of the per-thread data, allocated at the first use, NULL when out of memory */
+static inline
+void*
+_NtCRT_PtdBuffer(
+    _Inout_ void** Field,
+    _In_ SIZE_T Size,
+    _In_ ULONG HeapFlags)
+{
+    void* Buffer = __atomic_load_n(Field, __ATOMIC_ACQUIRE);
+    void* Expected = NULL;
+
+    if (Buffer == NULL && (Buffer = RtlAllocateHeap(NTCRT_HEAP, HeapFlags, Size)) != NULL &&
+        !__atomic_compare_exchange_n(Field, &Expected, Buffer, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+    {
+        /* Another thread of the fallback set it first */
+        RtlFreeHeap(NTCRT_HEAP, 0, Buffer);
+        Buffer = Expected;
+    }
+    return Buffer;
+}
+
 /* malloc, calloc, free and realloc of msvcrt, see Heap.cpp */
 extern "C" void* __cdecl _NtCRT_malloc(size_t size);
 extern "C" void* __cdecl _NtCRT_calloc(size_t count, size_t size);

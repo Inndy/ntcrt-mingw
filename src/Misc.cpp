@@ -284,13 +284,7 @@ static
 char*
 _NtCRT_CvtBuffer(void)
 {
-    PNTCRT_PTD Ptd = _NtCRT_GetPtd();
-
-    if (Ptd->CvtBuffer == NULL)
-    {
-        Ptd->CvtBuffer = (char*)RtlAllocateHeap(NTCRT_HEAP, 0, NTCRT_CVTBUFSIZE);
-    }
-    return Ptd->CvtBuffer;
+    return (char*)_NtCRT_PtdBuffer((void**)&_NtCRT_GetPtd()->CvtBuffer, NTCRT_CVTBUFSIZE, 0);
 }
 
 static
