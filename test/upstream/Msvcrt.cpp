@@ -284,6 +284,9 @@ static void TestPathNames(void)
     static const char* const Devices[] = {"CON", "AUX", "COM1", "LPT1"};
     static const char* const Existing[] = {"CON", "NUL", "AUX", "COM1", "COM9", "LPT1", "nul:", "C:\\NUL"};
     static const char Name[] = "ntcrt_path.tmp";
+    typedef DWORD(WINAPI* PGET_FILE_ATTRIBUTES_A)(LPCSTR);
+    auto const SystemGetFileAttributesA = (PGET_FILE_ATTRIBUTES_A)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),
+                                                                                 "GetFileAttributesA");
     struct _stat64 St;
     char Full[MAX_PATH], Long[MAX_PATH + 4];
     FILE* File;
@@ -316,7 +319,9 @@ static void TestPathNames(void)
     for (const char* Device : Existing)
     {
         memset(&St, 0x55, sizeof(St));
-        Check(GetFileAttributesA(Device) == FILE_ATTRIBUTE_ARCHIVE && _access(Device, 6) == 0, Device);
+        Check(GetFileAttributesA(Device) == FILE_ATTRIBUTE_ARCHIVE &&
+                  SystemGetFileAttributesA(Device) == FILE_ATTRIBUTE_ARCHIVE && _access(Device, 6) == 0,
+              Device);
         Check(_stat64(Device, &St) == 0 && St.st_mode == (_S_IFCHR | 0666) && St.st_nlink == 1 && St.st_size == 0 &&
                   St.st_mtime == 0 && St.st_atime == 0 && St.st_ctime == 0,
               Device);

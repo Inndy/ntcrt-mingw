@@ -2,7 +2,8 @@
  * The narrow argv: each argument of the wide command line converted to the ANSI code page. No byte of a converted
  * character is a quote or a backslash for the parser: the trail byte 0x5C of a double-byte character (950, 932, 936)
  * and a character that the code page maps to a quote by best fit (U+FF02 in 1252). The program runs itself with
- * "a<character>" x for each.
+ * "a<character>" x for each. The bytes expected are those of WideCharToMultiByte of kernel32, whose import NtCRT
+ * replaces.
  */
 
 #include <process.h>
@@ -12,6 +13,9 @@
 #include <wchar.h>
 #include <windows.h>
 
+typedef int(WINAPI* PWIDE_CHAR_TO_MULTI_BYTE)(UINT, DWORD, LPCWCH, int, LPSTR, int, LPCCH, LPBOOL);
+static PWIDE_CHAR_TO_MULTI_BYTE SystemWideCharToMultiByte;
+
 /* A CJK character of the ANSI code page whose second byte is 0x5C, or 0 */
 static wchar_t TrailBackslash(void)
 {
@@ -19,7 +23,7 @@ static wchar_t TrailBackslash(void)
 
     for (wchar_t c = 0x4E00; c <= 0x9FA5; c++)
     {
-        if (WideCharToMultiByte(CP_ACP, 0, &c, 1, Bytes, sizeof(Bytes), NULL, NULL) == 2 && Bytes[1] == 0x5C)
+        if (SystemWideCharToMultiByte(CP_ACP, 0, &c, 1, Bytes, sizeof(Bytes), NULL, NULL) == 2 && Bytes[1] == 0x5C)
         {
             return c;
         }
@@ -48,13 +52,15 @@ int main(int argc, char** argv)
     int Failures = 0;
     wchar_t c;
 
+    SystemWideCharToMultiByte = (PWIDE_CHAR_TO_MULTI_BYTE)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),
+                                                                         "WideCharToMultiByte");
     if (argc > 1 && strcmp(argv[1], "child") == 0)
     {
         wchar_t Wide[3] = { L'a', 0, 0 };
         char Expected[8];
 
         Wide[1] = argc > 2 ? (wchar_t)strtoul(argv[2], NULL, 16) : 0;
-        WideCharToMultiByte(CP_ACP, 0, Wide, -1, Expected, sizeof(Expected), NULL, NULL);
+        SystemWideCharToMultiByte(CP_ACP, 0, Wide, -1, Expected, sizeof(Expected), NULL, NULL);
         if (argc != 5 || strcmp(argv[3], Expected) != 0 || strcmp(argv[4], "x") != 0)
         {
             printf("argv: %d arguments, %s\n", argc, argc > 3 ? argv[3] : "");

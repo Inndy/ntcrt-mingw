@@ -1,13 +1,31 @@
 /*
  * The PEB and TEB of NDK.h against what kernel32 tells: the offsets that NDK.h checks at compile time are the ones
- * the system uses, on x64 and on x86 (WOW64). The kernel32 functions are not the inline ones of NtCRT.
+ * the system uses, on x64 and on x86 (WOW64). NtCRT replaces the imports of the kernel32 functions it has, which read
+ * the same fields: the ones of kernel32 come from its exports.
  */
 
 #define NTCRT_NO_INLINE_WIN32
-#include <KNSoft/NDK/NDK.h>
+#include <KNSoft/NDK/NDK.inl>
 #include <stdio.h>
+#include <stdlib.h>
 
 static int Failed;
+
+static PVOID Kernel32(PCSTR Name)
+{
+    ANSI_STRING ProcedureName;
+    PVOID Address;
+
+    _Inline_RtlInitAnsiString(&ProcedureName, Name);
+    if (!NT_SUCCESS(LdrGetProcedureAddress(_Inline_GetModuleHandleW(L"kernel32.dll"), &ProcedureName, 0, &Address)))
+    {
+        printf("FAIL kernel32 exports no %s\n", Name);
+        exit(1);
+    }
+    return Address;
+}
+
+#define K32(Name) ((__typeof__(&Name))Kernel32(#Name))
 
 #define CHECK(Cond) \
     do \
@@ -39,22 +57,22 @@ int main(void)
     int i;
 
     CHECK(Teb->NtTib.Self == &Teb->NtTib);
-    CHECK(Teb->ClientId.UniqueProcess == (HANDLE)(ULONG_PTR)GetCurrentProcessId());
-    CHECK(Teb->ClientId.UniqueThread == (HANDLE)(ULONG_PTR)GetCurrentThreadId());
-    SetLastError(0x1234);
+    CHECK(Teb->ClientId.UniqueProcess == (HANDLE)(ULONG_PTR)K32(GetCurrentProcessId)());
+    CHECK(Teb->ClientId.UniqueThread == (HANDLE)(ULONG_PTR)K32(GetCurrentThreadId)());
+    K32(SetLastError)(0x1234);
     CHECK(Teb->LastErrorValue == 0x1234);
-    CHECK(Teb->CurrentLocale == GetThreadLocale());
+    CHECK(Teb->CurrentLocale == K32(GetThreadLocale)());
     CHECK(RtlNtStatusToDosError(STATUS_ACCESS_DENIED) == ERROR_ACCESS_DENIED &&
           Teb->LastStatusValue == STATUS_ACCESS_DENIED);
     CHECK(Teb->StaticUnicodeString.Buffer == Teb->StaticUnicodeBuffer);
-    CHECK(VirtualQuery(&Mbi, &Mbi, sizeof(Mbi)) && Teb->DeallocationStack == Mbi.AllocationBase);
-    CHECK(SetThreadStackGuarantee(&Guarantee) && Teb->GuaranteedStackBytes == 0x4000);
+    CHECK(K32(VirtualQuery)(&Mbi, &Mbi, sizeof(Mbi)) && Teb->DeallocationStack == Mbi.AllocationBase);
+    CHECK(K32(SetThreadStackGuarantee)(&Guarantee) && Teb->GuaranteedStackBytes == 0x4000);
 
     /* The last one is in TlsExpansionSlots */
     for (i = 0; i <= TLS_MINIMUM_AVAILABLE; i++)
     {
-        Tls[i] = TlsAlloc();
-        TlsSetValue(Tls[i], (LPVOID)(ULONG_PTR)(0x100 + i));
+        Tls[i] = K32(TlsAlloc)();
+        K32(TlsSetValue)(Tls[i], (LPVOID)(ULONG_PTR)(0x100 + i));
     }
     CHECK(Tls[0] < TLS_MINIMUM_AVAILABLE && Teb->TlsSlots[Tls[0]] == (PVOID)0x100);
     i = TLS_MINIMUM_AVAILABLE;
@@ -62,41 +80,41 @@ int main(void)
           Teb->TlsExpansionSlots[Tls[i] - TLS_MINIMUM_AVAILABLE] == (PVOID)(ULONG_PTR)(0x100 + i));
     CHECK(Peb->TlsBitmap && Peb->TlsBitmap->Buffer == Peb->TlsBitmapBits);
     CHECK(Peb->TlsExpansionBitmap && Peb->TlsExpansionBitmap->Buffer == Peb->TlsExpansionBitmapBits);
-    Fls = FlsAlloc(NULL);
-    CHECK(FlsSetValue(Fls, (PVOID)1) && Teb->FlsData != NULL);
+    Fls = K32(FlsAlloc)(NULL);
+    CHECK(K32(FlsSetValue)(Fls, (PVOID)1) && Teb->FlsData != NULL);
     CHECK(Teb->InitialThread);
-    Thread = CreateThread(NULL, 0, Worker, NULL, 0, NULL);
-    WaitForSingleObject(Thread, INFINITE);
-    CHECK(GetExitCodeThread(Thread, &Code) && Code == 0);
+    Thread = K32(CreateThread)(NULL, 0, Worker, NULL, 0, NULL);
+    K32(WaitForSingleObject)(Thread, INFINITE);
+    CHECK(K32(GetExitCodeThread)(Thread, &Code) && Code == 0);
 
     /* The 32-bit TEB of a WOW64 process precedes the 64-bit one, which keeps the error mode of the thread */
-    IsWow64Process(GetCurrentProcess(), &Wow64);
+    K32(IsWow64Process)(K32(GetCurrentProcess)(), &Wow64);
     CHECK((Teb->WowTebOffset != 0) == !!Wow64);
-    SetThreadErrorMode(SEM_FAILCRITICALERRORS, NULL);
+    K32(SetThreadErrorMode)(SEM_FAILCRITICALERRORS, NULL);
     if (Wow64)
         CHECK(Teb->WowTebOffset < 0 && *(PULONG)((PUCHAR)Teb + Teb->WowTebOffset + 0x16B0) != 0);
     else
         CHECK(Teb->HardErrorMode != 0);
 
-    CHECK(Peb->ImageBaseAddress == GetModuleHandleW(NULL));
-    CHECK(Peb->ProcessHeap == GetProcessHeap());
+    CHECK(Peb->ImageBaseAddress == K32(GetModuleHandleW)(NULL));
+    CHECK(Peb->ProcessHeap == K32(GetProcessHeap)());
     CHECK(Peb->ProcessParameters->ImagePathName.Length != 0);
     CHECK(Peb->Ldr->InLoadOrderModuleList.Flink != NULL);
     CHECK(Peb->FastPebLock && Peb->LoaderLock && Peb->FastPebLock != Peb->LoaderLock);
-    CHECK(Peb->BeingDebugged == IsDebuggerPresent());
-    GetSystemInfo(&Info);
+    CHECK(Peb->BeingDebugged == K32(IsDebuggerPresent)());
+    K32(GetSystemInfo)(&Info);
     CHECK(Peb->NumberOfProcessors == Info.dwNumberOfProcessors);
     CHECK(Peb->OSMajorVersion >= 6 && Peb->OSBuildNumber >= 7600);
     CHECK(Peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI);
-    CHECK(ProcessIdToSessionId(GetCurrentProcessId(), &Session) && Peb->SessionId == Session);
+    CHECK(K32(ProcessIdToSessionId)(K32(GetCurrentProcessId)(), &Session) && Peb->SessionId == Session);
     /* The code pages: in the header of the .nls data when there is one, in the PEB since Windows 10 */
     if (Peb->OSMajorVersion >= 10)
     {
-        CHECK(Peb->ActiveCodePage == GetACP());
-        CHECK(Peb->OemCodePage == GetOEMCP());
+        CHECK(Peb->ActiveCodePage == K32(GetACP)());
+        CHECK(Peb->OemCodePage == K32(GetOEMCP)());
     }
-    CHECK(Peb->AnsiCodePageData == NULL || ((PUSHORT)Peb->AnsiCodePageData)[1] == GetACP());
-    CHECK(Peb->OemCodePageData == NULL || ((PUSHORT)Peb->OemCodePageData)[1] == GetOEMCP());
+    CHECK(Peb->AnsiCodePageData == NULL || ((PUSHORT)Peb->AnsiCodePageData)[1] == K32(GetACP)());
+    CHECK(Peb->OemCodePageData == NULL || ((PUSHORT)Peb->OemCodePageData)[1] == K32(GetOEMCP)());
 
     if (Failed)
         return 1;
