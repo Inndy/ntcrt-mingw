@@ -137,17 +137,19 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 
 | Program | Before UTF-8 | Before split | Now | lld | msvcrt.dll |
 |---|---:|---:|---:|---:|---:|
-| `return 0` | 248832 | 445440 | 37888 | 25600 | 14336 |
-| `puts` | 248832 | 445440 | 48640 | 36352 | 14336 |
-| `printf("%d")` | 248832 | 445440 | 82432 | 67072 | 41984 |
-| `wprintf` | 248832 | 445440 | 83456 | 70144 | 41472 |
-| `sscanf("%d %lf %s")` | | | 97280 | 62976 | 56320 |
-| `std::cout` | 1257472 | 1420800 | 1160704 | 724480 | 1035776 |
-| `std::thread` | | | 191488 | 104448 | 135168 |
+| `return 0` | 248832 | 445440 | 37888 | 26112 | 14336 |
+| `puts` | 248832 | 445440 | 48128 | 36352 | 14336 |
+| `printf("%d")` | 248832 | 445440 | 82432 | 66560 | 41984 |
+| `wprintf` | 248832 | 445440 | 83456 | 69632 | 41472 |
+| `sscanf("%d %lf %s")` | | | 96768 | 64000 | 56320 |
+| `std::cout` | 1257472 | 1420800 | 1164288 | 726016 | 1035776 |
+| `std::thread` | | | 192512 | 103936 | 135168 |
 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
-`src/Float.cpp`, with ld all of them. What ld links beyond lld is the unused functions of these objects, most of all
+`src/Float.cpp`, with ld all of them; the 128-bit powers of 10 of `src/FloatPow10.inl` are 11136 bytes of them,
+a sixth of `printf` with lld. A file grows by 512 bytes (the file alignment) at a time: a change of a few bytes
+moves a program a step up or down, with ld and lld apart. What ld links beyond lld is the unused functions of these objects, most of all
 the code page conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of
 `argv`, one object of the shared sources). A program with sscanf links the narrow scanf engine (`src/Scanf.cpp`)
 and the parser of `src/FloatParse.cpp`. With the scanf of libmingwex behind a format rewrite, the narrow and wide
