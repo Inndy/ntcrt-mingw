@@ -316,9 +316,10 @@ TEST_SRCS := $(wildcard test/upstream/*.cpp)
 $(BUILD)/Test.exe: $(TEST_SRCS) $(LIBS) $(DRIVER)
 	$(NTCRT_CXX) -std=c++23 -O2 -Iinclude -static -o $@ $(TEST_SRCS)
 
+# Runs in the build directory: the tests write files by fixed names in the current directory
 test-upstream: $(BUILD)/Test.exe
 	objdump -p $< | grep 'DLL Name'
-	./$<
+	cd $(BUILD) && ./Test.exe
 
 # Differential fuzz of the UTF-8 codec against kernel32 and of printf, scanf, strtod and strtol against
 # ucrtbase.dll, FUZZ_ITERATIONS=n for a longer run
