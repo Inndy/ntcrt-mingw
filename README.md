@@ -538,6 +538,10 @@ waiters).
   argument by argument, msvcrt parses the converted command line: there the trail byte 0x5C of a double-byte
   character (A5 5C in code page 950) is a backslash and a character converted to a quote by best fit (U+FF02 in code
   page 1252) ends an argument.
+- As in UCRT, `argv` is not converted again by `setlocale`: after `setlocale(LC_ALL, ".UTF-8")` a narrow name of
+  `argv` with non-ASCII characters is read as UTF-8 by `fopen` and not found (a Big5 name with the ANSI code page
+  950). A program in "C.UTF-8" takes its arguments in UTF-8 with the `activeCodePage` manifest setting (UTF-8 is
+  then the ANSI code page and the names of every code page work), or by `wmain` and `_wfopen`.
 - When `LC_CTYPE` is "C.UTF-8", a text mode console fd writes and reads UTF-8 through `WriteConsoleW` and
   `ReadConsoleW` whatever the console code page is: a character split between writes is kept until it is
   complete, reads translate CRLF to LF. Ctrl+Z is read as in the "C" locale (`ReadFile` of a console, msvcrt and
