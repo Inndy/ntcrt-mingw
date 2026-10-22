@@ -20,10 +20,36 @@ Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`
 The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7; of
 `libntdll_crt.a` only `atan2` is not, which libmingwex defines before it.
 
-- [ ] **`_open("CONOUT$")` and `"CONIN$"` on Windows 7.** CreateFile of kernel32 opens them by the console
-  server, `NtCreateFile` does not.
+- [ ] **`CONIN$` and `CONOUT$` on Windows 7.** CreateFile of kernel32 opens them by the console server,
+  `NtCreateFile` does not: `_open` (`_NtCRT_CreateFile`) and `CreateFileW` (`_K32_CreateFileW`) fail. `_getwch`,
+  `_getch` and the other functions of `Conio.cpp` open `CONIN$` by `_K32_CreateFileW` and always return `WEOF` there
+  (win32lab, `research/console_encoding/README.md` §10). Fix: before Windows 8, `CON`, `CONIN$` and `CONOUT$` go to
+  CreateFileW of kernel32, the handle is a legacy console handle (`_NtCRT_IsLegacyConsoleHandle`); `Conio.cpp`
+  closes a handle it lost the race for by `_NtCRT_CloseHandle`, not `NtClose`.
 - [ ] **The whole test suite on Windows 7.** Only the programs above ran there. The event parker of
   `PthreadWait.cpp` (no `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
+
+## Console
+
+Found by win32lab on NtCRT 0f359eb (`research/console_encoding/README.md` §9 and §10 of win32lab, commits 5e424df
+and 59b9e70). Waiting for the user to order them with the rest.
+
+- [ ] **The bytes written that conhost reports in a DBCS code page.** conhost of Windows 10 and later reports the
+  length of the text converted back to the code page (`GetALengthFromW`, `src/host/_stream.cpp:629` of
+  microsoft/terminal), less than the bytes it took when a character is not in the code page; Windows 7 reports the
+  bytes taken. `_NtCRT_write` (`src/LowIO.cpp`) trusts the count:
+  - binary mode writes the rest again, the console shows the end twice;
+  - ANSI text mode takes a short chunk (1023 bytes) as the end and writes no more: 70 of 1093 bytes are lost while
+    `fwrite` and `printf` return the whole count.
+  Fix: a write to a console that succeeds took all the bytes (a console write is not partial), one helper for both
+  paths checks `_NtCRT_IsConsoleFd` on a short count only. The Unicode modes and "C.UTF-8" write by `WriteConsoleW`
+  and are right.
+- [ ] **Ctrl+Z in the middle of a console line.** In "C" and `""` a read keeps `ab^Z` and drops the rest of the
+  line, then waits for more (as msvcrt); in "C.UTF-8" and the Unicode modes it returns `ab`, then end of file once.
+  Choose one: the second (the end of the input, as at the start of a line) unless the user wants the msvcrt one.
+- [x] Verified by win32lab: "C.UTF-8" reads a console by `ReadConsoleW`, right on Windows 7 and 11 in code pages
+  950 and 65001, the only read of a C runtime that is (`ReadFile` gets 0 bytes for a line with non-ASCII in 65001
+  on Windows 7).
 
 ## tcc
 
