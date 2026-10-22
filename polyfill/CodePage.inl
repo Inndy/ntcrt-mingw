@@ -279,30 +279,65 @@ _CRT_IsLeadByte(
     return FALSE;
 }
 
-FORCEINLINE
-ULONG
-WINAPI
-_CRT_GetCustomUnicodeSize(
+/*
+ * RtlCustomCPToUnicodeN, but a lead byte alone at the end or before a null byte is the Unicode default character as
+ * kernel32 converts it, and the null byte stays (RtlCustomCPToUnicodeN converts the first to U+0000 and takes the null
+ * byte as its trail byte: a string converted with its terminator lost it)
+ */
+static __attribute__((noinline))
+NTSTATUS
+_CRT_CustomCPToUnicode(
     _In_ PCPTABLEINFO CodePageTable,
+    _Out_writes_bytes_to_(MaxBytesInUnicodeString, *BytesInUnicodeString) PWCH UnicodeString,
+    _In_ ULONG MaxBytesInUnicodeString,
+    _Out_ PULONG BytesInUnicodeString,
     _In_reads_bytes_(BytesInCustomCPString) LPCCH CustomCPString,
     _In_ ULONG BytesInCustomCPString)
 {
-    ULONG i;
-    ULONG Characters;
+    PCUCHAR String = (PCUCHAR)CustomCPString;
+    ULONG i, Characters;
 
-    Characters = 0;
-    for (i = 0; i < BytesInCustomCPString; ++i)
+    if (CodePageTable->MaximumCharacterSize == 1)
     {
-        ++Characters;
-        if (CodePageTable->MaximumCharacterSize > 1 &&
-            _CRT_IsLeadByte(CodePageTable->LeadByte, (BYTE)CustomCPString[i]) &&
-            i + 1 < BytesInCustomCPString)
+        if (UnicodeString == NULL)
         {
-            ++i;
+            *BytesInUnicodeString = BytesInCustomCPString * sizeof(WCHAR);
+            return STATUS_SUCCESS;
+        }
+        return RtlCustomCPToUnicodeN(CodePageTable,
+                                     UnicodeString,
+                                     MaxBytesInUnicodeString,
+                                     BytesInUnicodeString,
+                                     (PCH)CustomCPString,
+                                     BytesInCustomCPString);
+    }
+    for (i = 0, Characters = 0; i < BytesInCustomCPString; ++Characters)
+    {
+        USHORT Offset = CodePageTable->DBCSOffsets[String[i++]];
+        WCHAR Char;
+
+        if (Offset == 0)
+        {
+            Char = CodePageTable->MultiByteTable[String[i - 1]];
+        } else if (i < BytesInCustomCPString && String[i] != 0)
+        {
+            Char = CodePageTable->DBCSOffsets[Offset + String[i++]];
+        } else
+        {
+            Char = CodePageTable->UniDefaultChar;
+        }
+        if (UnicodeString != NULL)
+        {
+            if (Characters == MaxBytesInUnicodeString / sizeof(WCHAR))
+            {
+                *BytesInUnicodeString = Characters * sizeof(WCHAR);
+                return STATUS_BUFFER_OVERFLOW;
+            }
+            UnicodeString[Characters] = Char;
         }
     }
-
-    return Characters * sizeof(WCHAR);
+    *BytesInUnicodeString = Characters * sizeof(WCHAR);
+    return STATUS_SUCCESS;
 }
 
 FORCEINLINE
@@ -344,7 +379,7 @@ _CRT_IsCustomMultiByteInvalid(
         if (CodePageTable->MaximumCharacterSize > 1 &&
             _CRT_IsLeadByte(CodePageTable->LeadByte, (BYTE)CustomCPString[i]))
         {
-            if (i + 1 == BytesInCustomCPString)
+            if (i + 1 == BytesInCustomCPString || CustomCPString[i + 1] == 0)
             {
                 return TRUE;
             }
@@ -524,60 +559,13 @@ __acrt_MultiByteToWideChar(
             return 0;
         }
 
-        if (cchWideChar == 0)
-        {
-            if ((dwFlags & MB_ERR_INVALID_CHARS) != 0)
-            {
-                if ((ULONG)cbMultiByte > MAXULONG / sizeof(WCHAR))
-                {
-                    _Inline_SetLastError(ERROR_INVALID_PARAMETER);
-                    return 0;
-                }
-
-                MaxBytesInUnicodeString = (ULONG)cbMultiByte * sizeof(WCHAR);
-                lpWideCharStr = (LPWSTR)RtlAllocateHeap(NtCurrentPeb()->ProcessHeap,
-                                                        0,
-                                                        MaxBytesInUnicodeString);
-                if (lpWideCharStr == NULL)
-                {
-                    _Inline_SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-                    return 0;
-                }
-
-                Status = RtlCustomCPToUnicodeN(&CodePageTable,
-                                               lpWideCharStr,
-                                               MaxBytesInUnicodeString,
-                                               &BytesInUnicodeString,
-                                               (PCH)lpMultiByteStr,
-                                               (ULONG)cbMultiByte);
-                RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, lpWideCharStr);
-            } else
-            {
-                Status = STATUS_SUCCESS;
-                BytesInUnicodeString = _CRT_GetCustomUnicodeSize(&CodePageTable,
-                                                                 lpMultiByteStr,
-                                                                 (ULONG)cbMultiByte);
-            }
-        } else
-        {
-            Status = RtlCustomCPToUnicodeN(&CodePageTable,
-                                           lpWideCharStr,
-                                           MaxBytesInUnicodeString,
-                                           &BytesInUnicodeString,
-                                           (PCH)lpMultiByteStr,
-                                           (ULONG)cbMultiByte);
-            /*
-             * A lead byte alone at the end is the default character, as kernel32 converts it: it is U+0000 at the end,
-             * which no pair gives and byte 0 is no lead byte
-             */
-            if (NT_SUCCESS(Status) && BytesInUnicodeString != 0 &&
-                lpWideCharStr[BytesInUnicodeString / sizeof(WCHAR) - 1] == UNICODE_NULL &&
-                CodePageTable.MaximumCharacterSize > 1 &&
-                _CRT_IsLeadByte(CodePageTable.LeadByte, (BYTE)lpMultiByteStr[cbMultiByte - 1]))
-            {
-                lpWideCharStr[BytesInUnicodeString / sizeof(WCHAR) - 1] = CodePageTable.UniDefaultChar;
-            }
-        }
+        /* A size query (cchWideChar 0) has no buffer, MB_ERR_INVALID_CHARS was checked above */
+        Status = _CRT_CustomCPToUnicode(&CodePageTable,
+                                        lpWideCharStr,
+                                        MaxBytesInUnicodeString,
+                                        &BytesInUnicodeString,
+                                        lpMultiByteStr,
+                                        (ULONG)cbMultiByte);
     }
 
     if (!NT_SUCCESS(Status) || ((dwFlags & MB_ERR_INVALID_CHARS) != 0 && Status == STATUS_SOME_NOT_MAPPED))

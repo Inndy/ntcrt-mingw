@@ -352,6 +352,11 @@ TestMultiByteToWideCharErrors(
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, 0, "\x81", 1, Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 936, 0, "\x81\x40\x81", 3, Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 950, 0, "A\x81", 2, Buffer, 1) &&
+        /* A null byte is no trail byte: the terminator of a string ending with a lead byte stays */
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 950, 0, "A\x81", -1, Buffer, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 950, 0, "A\x81", -1, NULL, 0) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 932, 0, "\x81\0B", 3, Buffer, _countof(Buffer)) &&
+        CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 936, MB_ERR_INVALID_CHARS, "\x81\0B", 3, Buffer, _countof(Buffer)) &&
         CompareMultiByteToWideCharCall(SystemMultiByteToWideChar, 60000, 0, "A", 1, Buffer, _countof(Buffer));
 }
 
