@@ -204,7 +204,12 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   `atan2`, `cbrt`, `sqrtf`, ... of lib32 libmsvcrt, `lgamma` and `lgammaf` of libmingwex) return st(0) as it is, where
   C11 F.6 wants a `double` or a `float` (GCC takes the result of a call as rounded). `src/MathX87.cpp` rounds them:
   the Makefile renames them in `libmsvcrt_static.a` and in copies of the members of libmingwex (`--wrap` for GNU ld,
-  which reads libmingwex first), `make test-math` checks the raw st(0) of each.
+  which reads libmingwex first), `make test-math` checks the raw st(0) of each. `sqrt` and `fdim`, one `fsqrt` or
+  `fsub` that C wants correctly rounded, run at the precision control of 53 bits: rounded to 64 bits and then to 53,
+  the result may round twice (for `float`, 64 bits are enough). The `sqrt` of libmingwex on x64 is an `fsqrt` too,
+  wrapped the same way, in the library for tcc as well. The wrappers fix the errors of mingw-w64 too (x86 and x64):
+  `sqrt` of a negative number raises the invalid operation (F.10.4.5), of a NaN sets no `EDOM`; `fdim` sets `ERANGE`
+  on an overflow (on x86 the x87 had none), not on the exact infinity of an infinite argument.
 - clang: `make LLVM=<clang64>/` with the i686 GCC first in `PATH`, clang of msys2 clang64 for `i686-w64-mingw32` on
   the sysroot of mingw32 (there is no clang32). The library has the DWARF unwind tables of GCC (`-funwind-tables`), and
   the personality routine of `pthread_once` is in a section that is no COMDAT: lld keeps no section for the
