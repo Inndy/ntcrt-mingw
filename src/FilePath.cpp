@@ -88,13 +88,18 @@ _NtCRT_CreateFile(
     if (_NtCRT_IsLegacyConsoleName(FileName, DesiredAccess))
     {
         /* Not inheritable, the console server takes only the generic rights and opens what exists */
-        if (Information != NULL)
+        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function("CreateFileW");
+
+        if (CreateFileW != NULL)
         {
-            *Information = FILE_OPENED;
+            if (Information != NULL)
+            {
+                *Information = FILE_OPENED;
+            }
+            *FileHandle = CreateFileW(
+                FileName, DesiredAccess & (GENERIC_READ | GENERIC_WRITE), ShareAccess, NULL, OPEN_EXISTING, 0, NULL);
+            return *FileHandle != INVALID_HANDLE_VALUE ? ERROR_SUCCESS : _Inline_GetLastError();
         }
-        *FileHandle = _K32_CreateFileW(
-            FileName, DesiredAccess & (GENERIC_READ | GENERIC_WRITE), ShareAccess, NULL, OPEN_EXISTING, 0, NULL);
-        return *FileHandle != INVALID_HANDLE_VALUE ? ERROR_SUCCESS : _Inline_GetLastError();
     }
     Status = RtlDosPathNameToNtPathName_U_WithStatus(FileName, &NtPath, NULL, NULL);
     if (!NT_SUCCESS(Status))
