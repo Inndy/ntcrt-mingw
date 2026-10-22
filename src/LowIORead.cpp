@@ -142,8 +142,9 @@ _NtCRT_CrAtEnd(
 typedef BOOL(WINAPI* PNTCRT_READ_CONSOLE_W)(HANDLE, PVOID, DWORD, LPDWORD, PVOID);
 
 /*
- * The character for a CR that ends the units read from a console. In line input mode the console has the rest of
- * the line: the peeked unit makes CRLF one LF, another unit is kept for the next read.
+ * The character for a CR that ends the units read from a console. In line input mode with processed input the
+ * console ends a line by CRLF and has the rest of it: the peeked unit makes CRLF one LF, another unit is kept for
+ * the next read. Without processed input a line ends by CR alone.
  */
 static
 WCHAR
@@ -154,7 +155,8 @@ _NtCRT_ConsoleCrAtEnd(
     DWORD Mode, Got = 0;
     WCHAR Peek;
 
-    if (ReadConsoleW == NULL || !_CRT_GetConsoleMode(Entry->Handle, &Mode) || !(Mode & ENABLE_LINE_INPUT) ||
+    if (ReadConsoleW == NULL || !_CRT_GetConsoleMode(Entry->Handle, &Mode) ||
+        (Mode & (ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT)) != (ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT) ||
         !ReadConsoleW(Entry->Handle, &Peek, 1, &Got, NULL) || Got == 0)
     {
         return L'\r';
@@ -192,7 +194,13 @@ _NtCRT_ConsoleText(
 
         if (Entry->ConsoleLine == NTCRT_LINE_SKIP)
         {
-            if (c == L'\n')
+            /* The line ends by LF, or by CR alone without processed input */
+            if (c == L'\r' && i + 1 == Count)
+            {
+                /* Takes the LF that follows, if any */
+                _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW);
+                Entry->ConsoleLine = NTCRT_LINE_START;
+            } else if (c == L'\n' || (c == L'\r' && Units[i + 1] != L'\n'))
             {
                 Entry->ConsoleLine = NTCRT_LINE_START;
             }
@@ -219,7 +227,7 @@ _NtCRT_ConsoleText(
             c = _NtCRT_ConsoleCrAtEnd(Entry, ReadConsoleW);
         }
         Units[Kept++] = c;
-        Entry->ConsoleLine = c == L'\n' ? NTCRT_LINE_START : NTCRT_LINE_MIDDLE;
+        Entry->ConsoleLine = c == L'\n' || c == L'\r' ? NTCRT_LINE_START : NTCRT_LINE_MIDDLE;
     }
     return Kept;
 }

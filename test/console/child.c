@@ -177,6 +177,24 @@ int main(int argc, char** argv)
                 fclose(f);
         }
         printf("end\n");
+    } else if (strcmp(Scenario, "ctrlzraw") == 0)
+    {
+        /* Without ENABLE_PROCESSED_INPUT a line ends by CR alone: "ab^Zcd", "EF" and "gh" */
+        char Buffer[32], Out[128];
+        int n = 0, r;
+
+        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+        n = sprintf(Out, "Z3:");
+        for (int i = 0; i < 3; i++)
+        {
+            r = _read(0, Buffer, sizeof(Buffer));
+            if (i != 0)
+                Out[n++] = ',';
+            for (int j = 0; j < r; j++)
+                n += sprintf(Out + n, "%02x", (unsigned char)Buffer[j]);
+        }
+        printf("%s\n", Out);
+        printf("end\n");
     } else if (strcmp(Scenario, "u8read") == 0 || strcmp(Scenario, "u16read") == 0)
     {
         wchar_t Line[64];
