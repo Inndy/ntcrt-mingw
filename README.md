@@ -214,7 +214,11 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   the result may round twice (for `float`, 64 bits are enough). The `sqrt` of libmingwex on x64 is an `fsqrt` too,
   wrapped the same way, in the library for tcc as well. The wrappers fix the errors of mingw-w64 too (x86 and x64):
   `sqrt` of a negative number raises the invalid operation (F.10.4.5), of a NaN sets no `EDOM`; `fdim` sets `ERANGE`
-  on an overflow (on x86 the x87 had none), not on the exact infinity of an infinite argument.
+  on an overflow (on x86 the x87 had none), not on the exact infinity of an infinite argument. The functions that
+  leave out an `errno` of C are wrapped the same way (x86 and x64; `math_errhandling` is `MATH_ERRNO |
+  MATH_ERREXCEPT` in the headers of MinGW-w64 15, 11 has none): `log1p` and `log2` set `EDOM` below -1 and 0 and
+  `ERANGE` at them (a pole), `exp2`, `tgamma` and `nexttoward` `ERANGE` on an overflow, as `exp` and `nextafter`
+  do, `lgamma` `ERANGE` at a pole (0 and the negative integers, `EDOM` by mingw-w64), those of `float` the same.
 - clang: `make LLVM=<clang64>/` with the i686 GCC first in `PATH`, clang of msys2 clang64 for `i686-w64-mingw32` on
   the sysroot of mingw32 (there is no clang32). The library has the DWARF unwind tables of GCC (`-funwind-tables`), and
   the personality routine of `pthread_once` is in a section that is no COMDAT: lld keeps no section for the

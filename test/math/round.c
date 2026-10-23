@@ -92,6 +92,53 @@ int main(void)
         }
     }
 
+    /* errno where the functions of mingw-w64 set none or EDOM for a pole (math_errhandling: errno) */
+    {
+        static const struct
+        {
+            const char* Name;
+            double (*F)(double);
+            float (*Ff)(float);
+            double x;
+            int Errno;
+        } Cases[] = {
+            { "log1p", log1p, log1pf, -1, ERANGE },      { "log1p", log1p, log1pf, -2, EDOM },
+            { "log1p", log1p, log1pf, 0.5, 0 },          { "log2", log2, log2f, 0, ERANGE },
+            { "log2", log2, log2f, -1, EDOM },           { "log2", log2, log2f, 8, 0 },
+            { "exp2", exp2, exp2f, 2000, ERANGE },       { "exp2", exp2, exp2f, -INFINITY, 0 },
+            { "exp2", exp2, exp2f, INFINITY, 0 },        { "tgamma", tgamma, tgammaf, 200, ERANGE },
+            { "tgamma", tgamma, tgammaf, INFINITY, 0 },  { "tgamma", tgamma, tgammaf, 3, 0 },
+            { "lgamma", lgamma, lgammaf, 0, ERANGE },    { "lgamma", lgamma, lgammaf, -3, ERANGE },
+            { "lgamma", lgamma, lgammaf, INFINITY, 0 },  { "lgamma", lgamma, lgammaf, 3, 0 },
+        };
+
+        for (size_t i = 0; i < sizeof(Cases) / sizeof(Cases[0]); i++)
+        {
+            errno = 0;
+            Cases[i].F(Cases[i].x);
+            if (errno != Cases[i].Errno)
+            {
+                printf("FAIL %s(%g): errno %d want %d\n", Cases[i].Name, Cases[i].x, errno, Cases[i].Errno);
+                g_Failures++;
+            }
+            errno = 0;
+            Cases[i].Ff((float)Cases[i].x);
+            if (errno != Cases[i].Errno)
+            {
+                printf("FAIL %sf(%g): errno %d want %d\n", Cases[i].Name, Cases[i].x, errno, Cases[i].Errno);
+                g_Failures++;
+            }
+        }
+        errno = 0;
+        if (!isinf(nexttoward(DBL_MAX, INFINITY)) || errno != ERANGE ||
+            (errno = 0, !isinf(nexttowardf(FLT_MAX, INFINITY))) || errno != ERANGE ||
+            (errno = 0, nexttoward(1.0, 2.0L) <= 1.0) || errno != 0)
+        {
+            printf("FAIL nexttoward of an overflow: errno %d\n", errno);
+            g_Failures++;
+        }
+    }
+
 #ifdef __i386__
     CHECK_RAW1(acos, double, 0.3);
     CHECK_RAW1(acosh, double, 3.3);

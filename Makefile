@@ -249,8 +249,8 @@ $(BUILD)/lib/ntdll.def: $(BUILD)/ntdll.def
 	cp $< $@
 
 # The math functions that src/MathX87.cpp rounds (src/MathX87.awk), renamed _NtCRT_X87_<name> in the members of
-# libmsvcrt that define them, and those of libmingwex (the _WRAP lines) in copies of their members, all names renamed.
-# The assembler names of x86 have the prefix "_".
+# libmsvcrt that define them, and those of libmingwex (the _WRAP lines) in copies of their members, all names renamed
+# (once: the .refptr.signgam of lgamma and lgammaf is in both). The assembler names of x86 have the prefix "_".
 X87_ROUND := $(shell awk -v x86=$(X86) -f src/MathX87.awk src/MathX87.cpp)
 X87_WRAP := $(shell awk -v x86=$(X86) -v wrap=1 -f src/MathX87.awk src/MathX87.cpp)
 X87_MINGWEX := $(X87_WRAP:%=lib$(if $(X86),32,64)_libmingwex_a-%.o)
@@ -258,7 +258,7 @@ define x87-rename
 cd $(BUILD)/msvcrt && ar x "$(MINGWEX_A)" $(X87_MINGWEX)
 cd $(BUILD)/msvcrt && { $(foreach f,$(X87_ROUND),echo $(if $(X86),_)$(f) $(if $(X86),_)_NtCRT_X87_$(f);) \
     nm -g --defined-only $(X87_MINGWEX) | \
-    awk -v p=$(if $(X86),_) 'NF == 3 { print $$3, p "_NtCRT_X87_" substr($$3, length(p) + 1) }'; } > ../x87.syms
+    awk -v p=$(if $(X86),_) 'NF == 3 { print $$3, p "_NtCRT_X87_" substr($$3, length(p) + 1) }'; } | sort -u > ../x87.syms
 cd $(BUILD)/msvcrt && nm -A -g --defined-only *.o | \
     awk 'NR == FNR { Rename[$$1] = 1; next } $$NF in Rename { sub(/:.*/, ""); print }' ../x87.syms - | sort -u | \
     xargs -r -n 1 objcopy --redefine-syms=../x87.syms
@@ -280,8 +280,8 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms src/MathX87.cpp src/MathX87.awk
 # src/FormatWide.cpp, its scanf (and the __ms_v*scanf that call msvcrt) by src/Scanf.cpp, src/ScanfWide.cpp,
 # src/StdioScanf.cpp and src/StdioWscanf.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll,
 # wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp, ftruncate64 by
-# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp, lgamma and lgammaf of x86, fdim and sqrt of x64 by
-# src/MathX87.cpp. libntcrt defines them under their names too, for lld.
+# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp, lgamma and lgammaf, fdim, sqrt and the functions that set
+# no errno (exp2, log1p, log2, nexttoward, tgamma and those of float) of x64 by src/MathX87.cpp. libntcrt defines them under their names too, for lld.
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
          $(foreach f,vfscanf vscanf vsscanf fscanf scanf sscanf vfwscanf vwscanf vswscanf fwscanf wscanf swscanf, \
