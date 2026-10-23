@@ -89,6 +89,7 @@ _NtCRT_InitFdState(
     Entry->Handle = Handle;
     Entry->Flags = Flags | FOPEN;
     Entry->HasPipeChar = FALSE;
+    Entry->CrBehind = FALSE;
     Entry->TextMode = NTCRT_TM_ANSI;
     Entry->WideOnly = FALSE;
     Entry->HasPipeWide = FALSE;

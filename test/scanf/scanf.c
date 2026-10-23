@@ -254,7 +254,10 @@ static void streams(void)
         EXPECT(ungetc('x', f) == 'x' && fgetc(f) == 'x', "CRLF across fills: ungetc");
         EXPECT(ftell(f) == 0, "CRLF across fills: ftell %ld", ftell(f));
         EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetc(f) == 'a', "CRLF across fills: fseek(SEEK_CUR), a");
-        EXPECT(fgetc(f) == '\n' && fgetc(f) == 'b' && fgetc(f) == EOF, "CRLF across fills: the rest");
+        EXPECT(fgetc(f) == '\n', "CRLF across fills: the LF");
+        /* b is unread in the fill "\nb", which left out no CR */
+        EXPECT(ftell(f) == 3, "CRLF across fills: ftell after the LF %ld", ftell(f));
+        EXPECT(fgetc(f) == 'b' && fgetc(f) == EOF, "CRLF across fills: the rest");
         fclose(f);
     }
     /* A Unicode text mode keeps the units of the buffer as read: no room is made, the position stays right */
