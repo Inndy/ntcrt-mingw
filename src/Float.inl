@@ -16,7 +16,7 @@ typedef struct _NTCRT_POW10
 
 /*
  * 1e-348 to 1e347, see FloatPow10.inl. NTCRT_POW10_SMALL (make POW10_SMALL=1): computed by _NtCRT_GetPow10 from every
- * 27th (FloatPow10Small.cpp), 584 bytes for 11136 and a conversion slower.
+ * 27th (FloatPow10Small.cpp), 808 bytes for 11136 and a conversion slower.
  */
 #define NTCRT_POW10_MIN (-348)
 #define NTCRT_POW10_MAX 347

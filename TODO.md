@@ -22,7 +22,7 @@ the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x
 
 ## Size
 
-- [x] **The powers of 10 of the float conversions from every 27th** (`make POW10_SMALL=1`, README "Size"). 584
+- [x] **The powers of 10 of the float conversions from every 27th** (`make POW10_SMALL=1`, README "Size"). 808
   bytes in place of the 11136 of the table of Go, 10 KB less in every program with printf or scanf, for a conversion
   about 4.5 ns slower on x64 and 17 to 20 ns on x86. The user kept the table by default, for the speed the conversions of Go are taken for; `test/float/pow10.cpp`
   checks the computed powers in every build.

@@ -35,10 +35,10 @@ endif
 
 # POW10_SMALL=1: the powers of 10 of the floating point conversions computed from every 27th (NTCRT_POW10_SMALL,
 # src/FloatPow10Small.cpp), into build-...-pow10small: about 10 KB less in a program with printf or scanf, a slower
-# conversion. See README.md "Size".
+# conversion. See README.md "Size". The define is in LIB_DEFS, which a CXXFLAGS of the command line does not replace.
 ifeq ($(POW10_SMALL),1)
 POW10S   := -pow10small
-CXXFLAGS += -DNTCRT_POW10_SMALL
+LIB_DEFS += -DNTCRT_POW10_SMALL
 endif
 
 ifdef TCC
@@ -131,11 +131,11 @@ $(BUILD):
 	mkdir -p $@
 
 $(BUILD)/%.o: src/%.cpp $(HEADERS) | $(BUILD)
-	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
+	$(LIB_CXX) $(CXXFLAGS) $(LIB_DEFS) -c -o $@ $<
 
 $(BUILD)/start/%.o: src/start/%.cpp $(HEADERS) | $(BUILD)
 	mkdir -p $(@D)
-	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
+	$(LIB_CXX) $(CXXFLAGS) $(LIB_DEFS) -c -o $@ $<
 
 $(BUILD)/libntcrt_start.a: $(START_OBJS)
 	rm -f $@
@@ -143,7 +143,7 @@ $(BUILD)/libntcrt_start.a: $(START_OBJS)
 
 $(BUILD)/glob/%.o: src/glob/%.cpp $(HEADERS) | $(BUILD)
 	mkdir -p $(@D)
-	$(LIB_CXX) $(CXXFLAGS) -c -o $@ $<
+	$(LIB_CXX) $(CXXFLAGS) $(LIB_DEFS) -c -o $@ $<
 
 $(BUILD)/libntcrt_glob.a $(BUILD)/lib/libntcrt_glob.a: $(GLOB_OBJS)
 	mkdir -p $(@D)

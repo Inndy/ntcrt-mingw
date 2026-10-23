@@ -1,6 +1,6 @@
 /*
  * NTCRT_POW10_SMALL (make POW10_SMALL=1): the 128-bit powers of 10 of the floating point conversions computed from
- * every 27th (FloatPow10Small.inl), 584 bytes in place of the 11136 of the table of FloatPow10.inl, for a conversion
+ * every 27th (FloatPow10Small.inl), 808 bytes in place of the 11136 of the table of FloatPow10.inl, for a conversion
  * slower by a product and a shift (README.md). In every library, linked by _NtCRT_Prescale of that build only and by
  * test/float/pow10.cpp, which checks it against the table. Ported from internal/strconv of Go 1.27, see Float.cpp for
  * its license.
