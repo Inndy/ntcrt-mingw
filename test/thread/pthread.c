@@ -1466,18 +1466,16 @@ static void* BlockedEnd(void* Gate)
 
 static volatile long long g_JoinCancelledNs;
 
-/* Whether a thread waits in NtWaitForMultipleObjects (its instruction pointer is in the stub of ntdll), x64 */
-static bool InMultipleWait(pthread_t Thread)
+/*
+ * Whether a thread waits in NtWaitForMultipleObjects (its instruction pointer is in the stub of ntdll at Stub). The
+ * caller takes Stub before BlockDetach holds the loader lock: GetModuleHandleW takes it on Windows 7.
+ */
+static bool InMultipleWait(pthread_t Thread, uintptr_t Stub)
 {
-    static uintptr_t Stub;
     HANDLE Handle = pthread_gethandle(Thread);
     CONTEXT Context;
     bool In;
 
-    if (Stub == 0)
-    {
-        Stub = (uintptr_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtWaitForMultipleObjects");
-    }
     memset(&Context, 0, sizeof(Context));
     Context.ContextFlags = CONTEXT_CONTROL;
     if (SuspendThread(Handle) == (DWORD)-1)
@@ -1690,6 +1688,7 @@ static void TestThreads(void)
         pthread_t Ended, Joiner;
         long long Start;
         void* Result;
+        uintptr_t Stub = (uintptr_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtWaitForMultipleObjects");
 
         g_BlockEntered = CreateEventW(NULL, FALSE, FALSE, NULL);
         g_BlockRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -1714,11 +1713,11 @@ static void TestThreads(void)
         CHECK(sem_post(&Gate) == 0);
         CHECK(WaitForSingleObject(g_BlockEntered, 10000) == WAIT_OBJECT_0);
         Start = NowNs();
-        while (!InMultipleWait(Joiner) && NowNs() - Start < 5000000000LL)
+        while (!InMultipleWait(Joiner, Stub) && NowNs() - Start < 5000000000LL)
         {
             SleepMs(1);
         }
-        CHECK(InMultipleWait(Joiner));
+        CHECK(InMultipleWait(Joiner, Stub));
         Start = NowNs();
         CHECK(pthread_cancel(Joiner) == 0);
         while (g_JoinCancelledNs == 0 && NowNs() - Start < 5000000000LL)
