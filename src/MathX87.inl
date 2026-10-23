@@ -91,8 +91,9 @@ static inline void _NtCRT_MathRangeErrno(double Result, double x)
 }
 
 /*
- * An overflow known by the argument, in every rounding mode: a finite x at or above Limit, the first value of its
- * type whose mathematical result is beyond DBL_MAX (FLT_MAX), test/math/thresholds.py
+ * An overflow known by the argument: a finite x at or above Limit, the first value of its type whose mathematical
+ * result is beyond DBL_MAX (FLT_MAX), the threshold of the overflow when rounded to nearest (test/math/thresholds.py).
+ * The other rounding modes take the same errno.
  */
 static inline BOOL _NtCRT_MathAbove(double x, double Limit)
 {
