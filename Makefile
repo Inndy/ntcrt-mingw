@@ -111,7 +111,7 @@ TCC_FLAGS := --target=x86_64-w64-windows-gnu-elf "--sysroot=$(GCC_ROOT)" -stdlib
 LIB_CXX  := $(filter %/,$(LLVM))clang++ $(TCC_FLAGS)
 LIB_AS   := $(filter %/,$(LLVM))clang --target=x86_64-w64-windows-gnu-elf
 CXXFLAGS := $(patsubst -O2,-Os,$(filter-out -ffunction-sections,$(CXXFLAGS)))
-LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def $(BUILD)/lib/libntcrt_glob.a
+LIBS     := $(BUILD)/lib/libntcrt.a $(BUILD)/lib/ntdll.def $(BUILD)/lib/libntcrt_glob.a $(BUILD)/lib/ntcrt-version
 DRIVER   :=
 # What tcc-built programs get beyond msvcrt.dll, as a GCC build of NtCRT: the C99 math of <math.h> (double and float,
 # the long double of tcc is a double), strnlen, wcsnlen, snprintf, vsnprintf
@@ -126,6 +126,16 @@ TCC_SEEDS := __fpclassify __fpclassifyf __signbit __signbitf acos acosf asin asi
 endif
 
 all: $(LIBS) $(DRIVER)
+
+# The commit of the checkout (git describe), "unknown" without git: ntcrt-version beside the libraries of an
+# installation, which keeps its own when builds of GCC, clang and tcc of other commits share a prefix
+NTCRT_DESCRIBE := { git -C "$(CURDIR)" describe --always --dirty --abbrev=7 2>/dev/null || echo unknown; }
+
+# build-tcc/lib/ntcrt-version, written again when the commit changes
+$(BUILD)/lib/ntcrt-version: FORCE
+	mkdir -p $(@D)
+	$(NTCRT_DESCRIBE) > $@.tmp
+	if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 $(BUILD):
 	mkdir -p $@
@@ -785,6 +795,7 @@ define install-to
 mkdir -p "$(1)/bin" "$(1)/$(INSTALL_LIB)" "$(1)/include" "$(1)/share/doc/ntcrt"
 cp -r include/. "$(1)/include"
 cp $(LIBS) $(INSTALL_FILES) "$(1)/$(INSTALL_LIB)"
+$(NTCRT_DESCRIBE) > "$(1)/$(INSTALL_LIB)/ntcrt-version"
 cp $(LICENSE_FILES) "$(1)/share/doc/ntcrt"
 for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(1)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
 endef
@@ -815,6 +826,7 @@ test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
 	$(call install-to,$(INSTALL_TEST))
 	for f in $(LIBS); do cmp "$$f" "$(INSTALL_TEST)/lib/tcc/$${f##*/}" || exit 1; done
+	$(NTCRT_DESCRIBE) | cmp - "$(INSTALL_TEST)/lib/tcc/ntcrt-version"
 	for f in $(LICENSE_FILES); do cmp "$$f" "$(INSTALL_TEST)/share/doc/ntcrt/$$f" || exit 1; done
 	@echo "install: ok"
 else
@@ -822,6 +834,7 @@ test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
 	$(call install-to,$(INSTALL_TEST))
 	for f in $(LICENSE_FILES); do cmp "$$f" "$(INSTALL_TEST)/share/doc/ntcrt/$$f" || exit 1; done
+	$(NTCRT_DESCRIBE) | cmp - "$(INSTALL_TEST)/$(INSTALL_LIB)/ntcrt-version"
 	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(firstword $(INSTALL_TOOLS)).exe" -O2 '-DTEXT="a \"b\" c\\"' \
 	    -o "$(INSTALL_TEST)/hello.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello.exe" | tr -d '\r' | grep -q -x -F 'a "b" c\'

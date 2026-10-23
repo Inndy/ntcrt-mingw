@@ -29,7 +29,9 @@ An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`,
 directory and libraries found relative to themselves, so that `CC=x86_64-w64-ntcrt-mingw32-gcc` is one word for
 configure, make or CMake. They take `-ntcrt-strict` too. The specs and configuration files link statically
 (`-Bstatic`, `-static`) when `-static` is not given, a program does not import `libstdc++-6.dll` or
-`libgcc_s_seh-1.dll`. The drivers are x64 only, see [x86](#x86).
+`libgcc_s_seh-1.dll`. The drivers are x64 only, see [x86](#x86). `ntcrt-version` beside the libraries (`lib/gcc`,
+`lib/clang`, `lib/tcc`, and `build-tcc/lib`) is the commit they were built from, `git describe --always --dirty
+--abbrev=7` (`unknown` without git).
 
 The path of the checkout, of the toolchain or of `PREFIX` may have spaces: the specs escape them and the
 configuration files quote them. `make test-install` installs into `build/install test` and builds with the drivers
