@@ -470,6 +470,7 @@ extern "C" int __cdecl _NtCRT_isatty(int fd);
 extern "C" int __cdecl _NtCRT_fd_textmode(int fd);
 extern "C" int __cdecl _NtCRT_fd_narrow_invalid(int fd);
 extern "C" int __cdecl _NtCRT_fd_crlf(int fd);
+extern "C" int __cdecl _NtCRT_fd_crbehind(int fd);
 extern "C" void _NtCRT_InitLowIO(void);
 extern "C" BOOL _NtCRT_ConsoleWriteW(_In_reads_(Count) const wchar_t* Buffer, _In_ DWORD Count);
 

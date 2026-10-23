@@ -140,10 +140,17 @@ _NtCRT_ftell_nolock(
         }
     } else if (Stream->_flag & _IOREAD)
     {
-        /* Unread data, a text mode newline is assumed to be CRLF in the file */
+        /*
+         * Unread data, a text mode newline is assumed to be CRLF in the file. The CR at the end of a fill that the
+         * read left out is behind the unread characters too (msvcrt: FCRLF).
+         */
         Position -= Stream->_cnt;
         if (_NtCRT_fd_textmode(Stream->_file))
         {
+            if (Stream->_cnt > 0 && _NtCRT_fd_crbehind(Stream->_file))
+            {
+                Position--;
+            }
             for (char* p = Stream->_ptr; p < Stream->_ptr + Stream->_cnt; p++)
             {
                 if (*p == '\n')

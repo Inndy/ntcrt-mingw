@@ -665,6 +665,7 @@ EXTERN_C int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count)
         {
             Entry->Flags &= ~FCRLF;
         }
+        Entry->CrBehind = FALSE;
         while (Src < End)
         {
             if (*Src == 0x1A)
@@ -714,11 +715,14 @@ EXTERN_C int __cdecl _NtCRT_read(int fd, void* buffer, unsigned int count)
                         Entry->HasPipeChar = TRUE;
                     } else
                     {
-                        /* As msvcrt, a file seeks back and the LF is read next time */
+                        /* As msvcrt, a file seeks back and the LF is read next time, after the CR left out */
                         _NtCRT_SeekHandle(Entry->Handle, -1, SEEK_CUR);
                         if (Peek != '\n')
                         {
                             *Dst++ = '\r';
+                        } else
+                        {
+                            Entry->CrBehind = TRUE;
                         }
                     }
                 } else

@@ -361,6 +361,13 @@ EXTERN_C int __cdecl _NtCRT_fd_textmode(int fd)
            Entry->TextMode == NTCRT_TM_UTF16LE ? NTCRT_FD_UTF16 : NTCRT_FD_ANSI;
 }
 
+/* The last read of a text mode file left out the CR at its end: the position of the fd is beyond what it returned */
+EXTERN_C int __cdecl _NtCRT_fd_crbehind(int fd)
+{
+    PNTCRT_FD Entry = _NtCRT_FdEntry(fd);
+    return Entry != NULL && (Entry->Flags & FOPEN) && Entry->CrBehind;
+}
+
 /* The last read of a text mode fd started with a newline, which was CRLF */
 EXTERN_C int __cdecl _NtCRT_fd_crlf(int fd)
 {

@@ -216,28 +216,64 @@ static void streams(void)
     EXPECT(Ret == 0 && fgetc(f) == 'x' && fgetc(f) == EOF, "1e+x: %d", Ret);
     fclose(f);
 
-    /* ungetc after the pushback of scanf at the start of the buffer: the rest moves up, a full buffer has no room */
+    /*
+     * ungetc after the pushback of scanf at the start of the buffer: the rest moves up, a full buffer has no room.
+     * Once the character pushed back is read, the position is that before the pushback, and a seek to it reads on.
+     */
     f = file_of("hello", "rb");
-    Ret = fscanf(f, "%[x]", s);
-    EXPECT(Ret == 0 && ungetc('x', f) == 'x' && fgetc(f) == 'x' && fgetc(f) == 'h' && ftell(f) == 1,
-           "ungetc after a pushback: %d", Ret);
+    EXPECT(fscanf(f, "%[x]", s) == 0, "pushback: fscanf");
+    EXPECT(ungetc('x', f) == 'x', "ungetc after a pushback");
+    EXPECT(fgetc(f) == 'x', "ungetc after a pushback: the character pushed back");
+    EXPECT(ftell(f) == 0, "ungetc after a pushback: ftell %ld", ftell(f));
+    EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetc(f) == 'h', "ungetc after a pushback: fseek(SEEK_CUR)");
+    EXPECT(ftell(f) == 1, "ungetc after a pushback: ftell after h %ld", ftell(f));
     fclose(f);
     f = file_of("hello", "rb");
     setvbuf(f, NULL, _IOFBF, 5);
-    Ret = fscanf(f, "%[x]", s);
-    EXPECT(Ret == 0 && ungetc('x', f) == EOF && fgetc(f) == 'h', "ungetc in a full buffer: %d", Ret);
+    EXPECT(fscanf(f, "%[x]", s) == 0, "full buffer: fscanf");
+    EXPECT(ungetc('x', f) == EOF, "ungetc in a full buffer");
+    EXPECT(fgetc(f) == 'h', "ungetc in a full buffer: next");
     fclose(f);
-    /* Text mode: the position counts CRLF after the characters pushed back are read */
+    /* Text mode: CRLF counts 2 in the position */
     f = file_of("a\r\nb", "r");
-    Ret = fscanf(f, "%[x]", s);
-    EXPECT(Ret == 0 && ungetc('x', f) == 'x' && fgetc(f) == 'x' && fgetc(f) == 'a' && ftell(f) == 1 &&
-           fgetc(f) == '\n' && ftell(f) == 3 && fgetc(f) == 'b', "ungetc after a pushback, text mode: %d", Ret);
+    EXPECT(fscanf(f, "%[x]", s) == 0, "text mode: fscanf");
+    EXPECT(ungetc('x', f) == 'x' && fgetc(f) == 'x', "text mode: ungetc after a pushback");
+    EXPECT(ftell(f) == 0, "text mode: ftell %ld", ftell(f));
+    EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetc(f) == 'a' && ftell(f) == 1, "text mode: fseek(SEEK_CUR), a");
+    EXPECT(fgetc(f) == '\n' && ftell(f) == 3, "text mode: CRLF");
+    EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetc(f) == 'b', "text mode: fseek(SEEK_CUR), b");
     fclose(f);
+    /* Text mode, CRLF across two fills of 2 bytes: the read leaves out the CR at the end of "a\r" */
+    {
+        char Small[2];
+
+        f = file_of("a\r\nb", "r");
+        setvbuf(f, Small, _IOFBF, sizeof(Small));
+        EXPECT(fscanf(f, "%[x]", s) == 0, "CRLF across fills: fscanf");
+        EXPECT(ftell(f) == 0, "CRLF across fills: ftell after the pushback %ld", ftell(f));
+        EXPECT(ungetc('x', f) == 'x' && fgetc(f) == 'x', "CRLF across fills: ungetc");
+        EXPECT(ftell(f) == 0, "CRLF across fills: ftell %ld", ftell(f));
+        EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetc(f) == 'a', "CRLF across fills: fseek(SEEK_CUR), a");
+        EXPECT(fgetc(f) == '\n' && fgetc(f) == 'b' && fgetc(f) == EOF, "CRLF across fills: the rest");
+        fclose(f);
+    }
     /* A Unicode text mode keeps the units of the buffer as read: no room is made, the position stays right */
     f = file_of("x12", "r, ccs=UTF-8");
-    Ret = fwscanf(f, L"%d", &i);
-    EXPECT(Ret == 0 && ungetwc(L'y', f) == WEOF && fgetwc(f) == L'x' && fgetwc(f) == L'1' && ftell(f) == 2 &&
-           fseek(f, 0, SEEK_CUR) == 0 && fgetwc(f) == L'2', "ungetwc after a pushback, UTF-8: %d", Ret);
+    EXPECT(fwscanf(f, L"%d", &i) == 0, "UTF-8: fwscanf");
+    EXPECT(ungetwc(L'y', f) == WEOF, "UTF-8: ungetwc after a pushback");
+    EXPECT(fgetwc(f) == L'x' && fgetwc(f) == L'1', "UTF-8: x1");
+    EXPECT(ftell(f) == 2, "UTF-8: ftell %ld", ftell(f));
+    EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetwc(f) == L'2', "UTF-8: fseek(SEEK_CUR)");
+    fclose(f);
+    f = fopen(g_Path, "wb");
+    fwrite("x\0" "1\0" "2\0", 1, 6, f);
+    fclose(f);
+    f = fopen(g_Path, "r, ccs=UTF-16LE");
+    EXPECT(fwscanf(f, L"%d", &i) == 0, "UTF-16LE: fwscanf");
+    EXPECT(ungetwc(L'y', f) == WEOF, "UTF-16LE: ungetwc after a pushback");
+    EXPECT(fgetwc(f) == L'x' && fgetwc(f) == L'1', "UTF-16LE: x1");
+    EXPECT(ftell(f) == 4, "UTF-16LE: ftell %ld", ftell(f));
+    EXPECT(fseek(f, 0, SEEK_CUR) == 0 && fgetwc(f) == L'2', "UTF-16LE: fseek(SEEK_CUR)");
     fclose(f);
 
     /* Text mode: CRLF is LF */

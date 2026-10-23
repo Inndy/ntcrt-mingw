@@ -36,6 +36,7 @@ typedef struct _NTCRT_FD
     UCHAR Flags;
     UCHAR PipeChar;
     BOOLEAN HasPipeChar;
+    BOOLEAN CrBehind;       /* The last read of a text mode file left out the CR at its end, its LF is read next */
     UCHAR TextMode;
     BOOLEAN WideOnly;       /* Opened with _O_WTEXT, narrow stream I/O is rejected */
     BOOLEAN HasPipeWide;
