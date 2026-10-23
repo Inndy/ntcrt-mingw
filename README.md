@@ -247,11 +247,10 @@ for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what Nt
   those without `_`).
 - What a GCC build takes from libmingwex, libmsvcrt, libmingw32 and libgcc of the toolchain (`exp`, `fmod`,
   `___chkstk_ms`, ...) and the C99 math of `<math.h>` (double and float: the `long double` of tcc is a `double`),
-  `strnlen`, `wcsnlen`, `snprintf` and `vsnprintf`: their members, made ELF objects by `objcopy -O elf64-x86-64`
-  without unwind tables and debug information. `src/Members.awk` takes the members needed, except those that would
-  replace a function of NtCRT. They precede ntdll as in a GCC build (the `sin` and `atan2` of libmingwex, the ntdll
-  of Windows 7 has no `atan2`). `tools/coffrel.c` sets the addend (-4) of the relative relocations, which
-  objcopy leaves at 0.
+  `strnlen`, `wcsnlen`, `snprintf` and `vsnprintf`: their members, made ELF objects by `objcopy -O elf64-x86-64` without
+  unwind tables and debug information. `src/Members.awk` takes the members needed, except those that would replace a
+  function of NtCRT. They precede ntdll as in a GCC build (the `sin` of libmingwex). `tools/coffrel.c` sets the addend
+  (-4) of the relative relocations, which objcopy leaves at 0.
 - tcc has no sections grouped by `$`: the C initializers of NtCRT are in `.init_array`, which `crt1.c` runs after
   `__getmainargs` (and after the constructors of the program). A program of tcc has no TLS callback: the threads of
   `_beginthread`, `_beginthreadex` and `CreateThread` free the per-thread data of NtCRT when they end, `ExitProcess`

@@ -43,7 +43,6 @@ _wtoi64
 _wtol
 abs
 atan
-atan2
 atoi
 atol
 bsearch

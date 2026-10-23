@@ -26,8 +26,10 @@ Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`
 (`tl`) and `loadlib`, and tcc-ntdll runs `-run` there. The VM is reached over WinRM by the ntcrt-mingw-f2 session.
 `pebteb` of WOW64 failed there until 502958b, which this list said it ran: `TEB::WowTebOffset` is 0 on Windows 7,
 the 64-bit TEB is 0x2000 before the 32-bit one all the same (win32lab-e4). On Windows 8 and 8.1 it is not verified.
-The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7; of
-`libntdll_crt.a` only `atan2` is not, which libmingwex defines before it.
+The ntdll functions NtCRT imports (145 on x64, 144 on x86) are all exported by ntdll of Windows 7, and those of
+`libntdll_crt.a` by their names (`itoa` is `_itoa`, ...). `atan2`, which ntdll of Windows 7 x64 does not export, was in
+it until the whole suite ran on Windows 7: libmingwex defines it before ntdll for a program that calls it, but `asin`
+and `acos` of `Math.cpp` took it from ntdll, and a program calling them did not load there (0xC0000139, win32lab-e4).
 
 - [x] **`CONIN$` and `CONOUT$` on Windows 7.** CreateFile of kernel32 opens them by the console server,
   `NtCreateFile` does not: `_open` (`_NtCRT_CreateFile`) and `CreateFileW` (`_K32_CreateFileW`) fail. `_getwch`,

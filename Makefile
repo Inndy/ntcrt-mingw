@@ -202,8 +202,8 @@ $(BUILD)/ntdll.def: $(BUILD)/ntdll_crt.def
 
 # The library for tcc in lib/: libntcrt.a with the members of libgcc, libmingw32, libmingwex and libmsvcrt (its static
 # members) that NtCRT and TCC_SEEDS use, those of a GCC build, made ELF objects (src/Members.awk); and ntdll.def.
-# As there, libmingwex precedes ntdll: atan2, which the ntdll of Windows 7 does not have, is of libmingwex. The
-# members of libmingwex that src/MathX87.cpp wraps (fdim and sqrt) give their names as _NtCRT_X87_<name>.
+# As there, libmingwex precedes ntdll. The members of libmingwex that src/MathX87.cpp wraps (fdim and sqrt) give their
+# names as _NtCRT_X87_<name>.
 TCC_SOURCES := $(foreach l,libgcc.a libmingw32.a libmingwex.a,"$(shell $(CXX) -print-file-name=$(l))")
 
 $(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms src/Members.awk
