@@ -43,6 +43,12 @@ static long long NowNs(void)
     return Time.tv_sec * 1000000000LL + Time.tv_nsec;
 }
 
+/*
+ * CLOCK_REALTIME of Windows 7 moves by the tick of 15.625 ms: a deadline taken from it may come up to a tick early by
+ * CLOCK_MONOTONIC
+ */
+#define REALTIME_TICK 16
+
 static struct timespec RealtimeIn(long Ms)
 {
     struct timespec Time;
@@ -189,7 +195,7 @@ static void TestMutex(void)
 
         CHECK(pthread_mutex_timedlock(&Mutex, &Bad) == EINVAL);
         CHECK(pthread_mutex_timedlock(&Mutex, &Time) == ETIMEDOUT);
-        CHECK(NowMs() - Start >= 40);
+        CHECK(NowMs() - Start >= 50 - REALTIME_TICK);
         Time = RealtimeIn(5000);
         CHECK(pthread_mutex_timedlock(&Mutex, &Time) == 0);
         CHECK(NowMs() - Start < 4000);
@@ -271,7 +277,8 @@ static void* FarSignal(void* Arg)
 
 /*
  * POSIX lets a thread destroy a condition once no thread is blocked on it: the first waiter that a broadcast woke
- * destroys it and decommits its page while the others may still be in pthread_cond_wait
+ * destroys it and decommits its page while the others may still be in pthread_cond_wait. The threads wait for each
+ * other by sched_yield: 7 threads spinning on 4 processors of Windows 7 let a woken one run only after a quantum.
  */
 #define FREED_WAITERS 6
 #define FREED_ROUNDS  4000
@@ -288,7 +295,7 @@ static void* FreedWaiter(void* Arg)
 
         while (g_FreedRound < Round)
         {
-            YieldProcessor();
+            sched_yield();
         }
         Cond = g_FreedCond;
         pthread_mutex_lock(&g_Mutex);
@@ -348,7 +355,7 @@ static void TestCondFreed(void)
                 break;
             }
             pthread_mutex_unlock(&g_Mutex);
-            YieldProcessor();
+            sched_yield();
         }
         g_FreedWaiting = 0;
         g_FreedDone = Round;
@@ -356,7 +363,7 @@ static void TestCondFreed(void)
         pthread_mutex_unlock(&g_Mutex);
         while (g_FreedArrived != FREED_WAITERS)
         {
-            YieldProcessor();
+            sched_yield();
         }
     }
     for (int i = 0; i < FREED_WAITERS; i++)
@@ -436,7 +443,7 @@ static void TestCond(void)
         while (pthread_cond_timedwait(&g_NotEmpty, &g_Mutex, &Time) == 0)
         {
         }
-        CHECK(NowMs() - Start >= 50);
+        CHECK(NowMs() - Start >= 60 - REALTIME_TICK);
         CHECK(pthread_mutex_trylock(&g_Mutex) == EBUSY); /* Held again */
 
         CHECK(pthread_condattr_init(&Attr) == 0);
@@ -898,7 +905,7 @@ static void TestSync(void)
         long long Start = NowMs();
 
         CHECK(sem_timedwait(&g_Sem, &Time) == -1 && errno == ETIMEDOUT);
-        CHECK(NowMs() - Start >= 40);
+        CHECK(NowMs() - Start >= 50 - REALTIME_TICK);
     }
     for (int i = 0; i < THREADS; i++)
     {
@@ -1774,7 +1781,7 @@ static void TestClocks(void)
     Time = RealtimeIn(30);
     Start = NowMs();
     CHECK(clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &Time, NULL) == 0);
-    CHECK(NowMs() - Start >= 15);
+    CHECK(NowMs() - Start >= 30 - REALTIME_TICK);
     CHECK(clock_nanosleep(CLOCK_THREAD_CPUTIME_ID, 0, &Time, NULL) == ENOTSUP);
 
     /*

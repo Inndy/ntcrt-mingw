@@ -387,6 +387,10 @@ fuzz does not report, where UCRT is the one off:
   the bytes 0x80..0xFF of the "C" locale (`"\xe9"` is U+FFE9)
 - UCRT `strtol` of "0x" without a hex digit converts nothing (C: 0, the end after "0")
 
+The reference is the ucrtbase.dll of the system. That of Windows 7 (10.0.14393, Windows 10 1607) has no UTF-8
+locale, pads infinity of `%0f` with zeros, rounds the last digit of some `%a`, and returns EOF for a format that
+ends in `%`: `fuzz format` reports such differences there (30 of 2459 checks on Windows 7 SP1, win32lab-e4).
+
 `btowc` and `wctob` of libmingwex are replaced by NtCRT the same way, and `ftruncate64` (used by
 `std::filesystem::resize_file`), which checks the free space of the volume by kernel32 functions NtCRT does not
 have.

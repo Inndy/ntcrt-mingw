@@ -18,6 +18,12 @@
 
 using namespace std::chrono_literals;
 
+/*
+ * libstdc++ of MinGW-w64 has no pthread_cond_clockwait: try_lock_for and wait_for wait to a deadline of system_clock,
+ * which on Windows 7 moves by the tick of 15.625 ms and may come a tick early by steady_clock
+ */
+constexpr auto RealtimeTick = 16ms;
+
 static int g_Failures;
 
 static void check(bool Ok, const char* What)
@@ -70,7 +76,7 @@ static void Mutexes()
     Timed.lock();
     auto Start = std::chrono::steady_clock::now();
     std::thread([&] { check(!Timed.try_lock_for(50ms), "std::timed_mutex::try_lock_for times out"); }).join();
-    check(std::chrono::steady_clock::now() - Start >= 40ms, "std::timed_mutex waits");
+    check(std::chrono::steady_clock::now() - Start >= 50ms - RealtimeTick, "std::timed_mutex waits");
     Timed.unlock();
     std::thread([&] { check(Timed.try_lock_for(50ms), "std::timed_mutex::try_lock_for"); Timed.unlock(); }).join();
 }
@@ -181,7 +187,7 @@ static void Conditions()
     std::unique_lock<std::mutex> Lock(Mutex);
     auto Start = std::chrono::steady_clock::now();
     check(Cond.wait_for(Lock, 50ms) == std::cv_status::timeout, "std::condition_variable::wait_for");
-    check(std::chrono::steady_clock::now() - Start >= 40ms, "std::condition_variable::wait_for waits");
+    check(std::chrono::steady_clock::now() - Start >= 50ms - RealtimeTick, "std::condition_variable::wait_for waits");
     check(!CondAny.wait_for(Lock, 10ms, [] { return false; }), "std::condition_variable_any::wait_for");
 }
 
