@@ -758,6 +758,7 @@ NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 hea
 | scanf `%2$d`, `%ms` | POSIX | a matching failure | a matching failure | POSIX |
 | scanf `%hhd` | a `char` | stores an `int` | as C | as C |
 | `ungetc` after scanf pushed back the first character of a fill | one character of pushback; whether scanf's takes it is unclear | fails | fails | succeeds unless the buffer is full (a fill of all `_bufsiz`, an unbuffered stream that read 2 bytes), a string or a Unicode text mode (`ccs=`, whose position maps the units read) (glibc, musl: always) |
+| `fgetwc`, `fputwc`, `fwscanf`, ... of a binary stream (`"rb"`, `tmpfile`, `_O_BINARY`) | multibyte characters of the locale | UTF-16 units, 2 bytes each, unconverted (documented) | as msvcrt | as msvcrt, a text stream converts by the locale |
 | `fopen` mode `x` | C11, `EEXIST` | `EINVAL` | as C | as C |
 | `tmpnam` | a name of up to `L_tmpnam` - 1 | `\s<pid>.<n>`, the root of the current drive | the temporary directory, `L_tmpnam` 260 in the headers of the SDK | as msvcrt, `L_tmpnam` 14 in the MinGW-w64 headers |
 | `tmpfile` | impl. | the root of the current drive, fails without write access to it | the temporary directory | the temporary directory |

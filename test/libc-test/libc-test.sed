@@ -14,6 +14,10 @@ s/setenv("TZ", "UTC0", 1);/_putenv("TZ=UTC0");/
 s/), 4, "failed to accept U+10FFF\([EF]\)");/), 3, "failed to accept U+10FFF\1");/
 s/), 4, "wrong length");/), 3, "wrong length");/
 s/), 0x10000, "wrong char");/), 0xd800, "wrong char");/
+# fwscanf and fgetwc-buffering: the wide functions read a binary stream (tmpfile, the pipe of compat.h) as UTF-16
+# units on Windows (README.md "C, msvcrt and UCRT"), multibyte characters of the locale in a text stream
+/^#include <wchar\.h>/,/= tmpfile();/s/tmpfile()/fopen("fwscanf.tmp", "w+D")/
+s/^\tA(pipe(p) == 0);/\tA(_pipe(p, 4096, _O_TEXT) == 0);/
 # fpclassify-invalid-ld80: the invalid encodings of the x87 are undefined in C. fpclassify is the inline of the
 # <math.h> of MinGW-w64, not NtCRT's; %La writes the 4 high bits before the point (0x8p-16385, as glibc), the same
 # value as 0x1p-16382. What NtCRT is tested for: an unnormal and a pseudo-infinity are "nan".
