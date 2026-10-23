@@ -14,9 +14,25 @@
 
 /* Win7 fallbacks used by PolyFill/Console.inl, kernel32 is always loaded in a Win32 process */
 
-EXTERN_C
+/*
+ * The functions of kernel32 that NtCRT calls, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS: on all):
+ * LdrGetDllHandleEx of Windows 7 takes the loader lock. Looked up later, a call (WriteConsoleW of a stream) would
+ * wait for a thread that holds it in its DLL_THREAD_DETACH while that one waits for the caller (the stream lock).
+ */
+static const PCSTR g_Kernel32Names[] = {
+    "Beep", "CloseHandle", "CompareStringW", "CreateFileW", "CreatePipe", "CreateProcessW", "DuplicateHandle",
+    "FlushFileBuffers", "GetConsoleCP", "GetConsoleMode", "GetConsoleOutputCP", "GetFileInformationByHandle",
+    "GetFileSizeEx", "GetHandleInformation", "GetLocaleInfoW", "GetNumberOfConsoleInputEvents", "LCMapStringW",
+    "PeekConsoleInputW", "ReadConsoleInputW", "ReadConsoleW", "ReadFile", "SetConsoleCtrlHandler", "SetConsoleMode",
+    "SetEndOfFile", "SetHandleInformation", "UnhandledExceptionFilter", "VerifyConsoleIoHandle", "WriteConsoleW",
+    "WriteFile",
+};
+static PVOID g_Kernel32Functions[ARRAYSIZE(g_Kernel32Names)];
+static LONG g_Kernel32Resolved;
+
+static
 PVOID
-_NtCRT_GetKernel32Function(
+Kernel32Lookup(
     _In_z_ PCSTR Name)
 {
     static WCHAR Kernel32Name[] = L"kernel32.dll";
@@ -30,6 +46,41 @@ _NtCRT_GetKernel32Function(
     }
     _Inline_RtlInitAnsiString(&ProcName, Name);
     return NT_SUCCESS(LdrGetProcedureAddress(DllHandle, &ProcName, 0, &Address)) ? Address : NULL;
+}
+
+static int __cdecl ResolveKernel32(void)
+{
+#ifndef NTCRT_K32_EAGER_ALWAYS
+    if (IS_NT_VERSION_GE(NT_VERSION_WIN8))
+    {
+        return 0;
+    }
+#endif
+    for (ULONG i = 0; i < ARRAYSIZE(g_Kernel32Names); i++)
+    {
+        g_Kernel32Functions[i] = Kernel32Lookup(g_Kernel32Names[i]);
+    }
+    __atomic_store_n(&g_Kernel32Resolved, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_ResolveKernel32Ptr, ResolveKernel32);
+
+EXTERN_C
+PVOID
+_NtCRT_GetKernel32Function(
+    _In_z_ PCSTR Name)
+{
+    if (__atomic_load_n(&g_Kernel32Resolved, __ATOMIC_ACQUIRE))
+    {
+        for (ULONG i = 0; i < ARRAYSIZE(g_Kernel32Names); i++)
+        {
+            if (strcmp(g_Kernel32Names[i], Name) == 0)
+            {
+                return g_Kernel32Functions[i];
+            }
+        }
+    }
+    return Kernel32Lookup(Name);
 }
 
 static

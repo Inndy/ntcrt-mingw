@@ -168,6 +168,22 @@ static LONG ParkerMode(void)
     return Mode;
 }
 
+/*
+ * Chosen at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS: on all), after a test chose (.CRT$XIB): LdrGetDllHandleEx
+ * of Windows 7 takes the loader lock, which the first wait of a thread would wait for (see _NtCRT_GetKernel32Function)
+ */
+static int __cdecl InitParkerMode(void)
+{
+#ifndef NTCRT_K32_EAGER_ALWAYS
+    if (!IS_NT_VERSION_GE(NT_VERSION_WIN8))
+#endif
+    {
+        ParkerMode();
+    }
+    return 0;
+}
+NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_InitParkerModePtr, InitParkerMode);
+
 /* The event of a thread is in its per-thread data, PARKER_NONE if it could not be created */
 #define PARKER_NONE ((PNTCRT_PARKER)1)
 

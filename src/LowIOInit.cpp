@@ -130,19 +130,7 @@ PNTCRT_RW_FILE
 _NtCRT_GetLegacyConsoleIo(
     _In_ BOOL Write)
 {
-    static PVOID Functions[2];
-
-    if (Functions[Write] == NULL)
-    {
-        ANSI_STRING Name;
-        PVOID Kernel32 = _Inline_GetModuleHandleW(L"kernel32.dll");
-        if (Kernel32 != NULL)
-        {
-            _Inline_RtlInitAnsiString(&Name, Write ? "WriteFile" : "ReadFile");
-            LdrGetProcedureAddress(Kernel32, &Name, 0, &Functions[Write]);
-        }
-    }
-    return (PNTCRT_RW_FILE)Functions[Write];
+    return (PNTCRT_RW_FILE)_NtCRT_GetKernel32Function(Write ? "WriteFile" : "ReadFile");
 }
 
 EXTERN_C
