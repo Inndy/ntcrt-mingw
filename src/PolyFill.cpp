@@ -18,8 +18,9 @@
  * NTCRT_K32_FUNCTIONS and the module of the system messages, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS:
  * on all), whose LdrGetDllHandleEx and LdrGetProcedureAddress take the loader lock: looked up later, a call would
  * wait for a thread that holds it in its DLL_THREAD_DETACH while that one waits for the caller (a lock it holds).
- * Before the other initializers (.CRT$XIAA, _NtCRT_InitLowIO is in .CRT$XIB), under tcc with them after the
- * constructors of the program. An export kernel32 lacks stays NULL: kernel32 is always loaded in a Win32 process.
+ * Before the other initializers (.CRT$XIAA, _NtCRT_InitLowIO is in .CRT$XIB), under tcc with them after
+ * __getmainargs and the constructors of the program. An export kernel32 lacks stays NULL: kernel32 is always loaded
+ * in a Win32 process.
  */
 #define NTCRT_K32_NAME(Name) #Name,
 static const PCSTR g_Kernel32Names[NTCRT_K32_COUNT] = { NTCRT_K32_FUNCTIONS(NTCRT_K32_NAME) };
