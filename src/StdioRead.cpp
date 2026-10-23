@@ -57,11 +57,13 @@ _NtCRT_ungetc_nolock(
     {
         /*
          * A character pushed back at the start of the buffer, by scanf at the first of a fill: the unread characters
-         * move up when the buffer has room, of a string (sscanf) they cannot
+         * move up when the buffer has room. Not those of a string (sscanf), nor of a Unicode text mode, whose
+         * position takes the units of the buffer as those read (_NtCRT_UnitPosition)
          */
         if (Stream->_cnt > 0)
         {
-            if ((Stream->_flag & _IOSTRG) || Stream->_cnt >= Stream->_bufsiz)
+            if ((Stream->_flag & _IOSTRG) || Stream->_cnt >= Stream->_bufsiz ||
+                _NtCRT_fd_textmode(Stream->_file) >= NTCRT_FD_UTF8)
             {
                 return EOF;
             }

@@ -227,6 +227,18 @@ static void streams(void)
     Ret = fscanf(f, "%[x]", s);
     EXPECT(Ret == 0 && ungetc('x', f) == EOF && fgetc(f) == 'h', "ungetc in a full buffer: %d", Ret);
     fclose(f);
+    /* Text mode: the position counts CRLF after the characters pushed back are read */
+    f = file_of("a\r\nb", "r");
+    Ret = fscanf(f, "%[x]", s);
+    EXPECT(Ret == 0 && ungetc('x', f) == 'x' && fgetc(f) == 'x' && fgetc(f) == 'a' && ftell(f) == 1 &&
+           fgetc(f) == '\n' && ftell(f) == 3 && fgetc(f) == 'b', "ungetc after a pushback, text mode: %d", Ret);
+    fclose(f);
+    /* A Unicode text mode keeps the units of the buffer as read: no room is made, the position stays right */
+    f = file_of("x12", "r, ccs=UTF-8");
+    Ret = fwscanf(f, L"%d", &i);
+    EXPECT(Ret == 0 && ungetwc(L'y', f) == WEOF && fgetwc(f) == L'x' && fgetwc(f) == L'1' && ftell(f) == 2 &&
+           fseek(f, 0, SEEK_CUR) == 0 && fgetwc(f) == L'2', "ungetwc after a pushback, UTF-8: %d", Ret);
+    fclose(f);
 
     /* Text mode: CRLF is LF */
     f = file_of("1\r\n2\r\nend", "r");
