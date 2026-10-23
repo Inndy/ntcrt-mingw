@@ -81,7 +81,7 @@ static inline void _NtCRT_MathLogErrno(double x, double Pole)
     }
 }
 
-/* An infinity of a finite argument: an overflow or a pole, ERANGE either */
+/* An infinity of a finite argument: an overflow or a pole, ERANGE either (nexttoward, whose DBL_MAX is exact) */
 static inline void _NtCRT_MathRangeErrno(double Result, double x)
 {
     if (__builtin_isinf(Result) && __builtin_isfinite(x))
@@ -91,15 +91,12 @@ static inline void _NtCRT_MathRangeErrno(double Result, double x)
 }
 
 /*
- * The same, or Max (DBL_MAX, FLT_MAX), which a rounding toward zero or downward gives for an overflow and exp2, tgamma
- * and lgamma give for no argument that does not overflow
+ * An overflow known by the argument, in every rounding mode: a finite x at or above Limit, the first value of its
+ * type whose mathematical result is beyond DBL_MAX (FLT_MAX), test/math/thresholds.py
  */
-static inline void _NtCRT_MathOverflowErrno(double Result, double x, double Max)
+static inline BOOL _NtCRT_MathAbove(double x, double Limit)
 {
-    if (__builtin_isfinite(x) && (__builtin_isinf(Result) || __builtin_fabs(Result) == Max))
-    {
-        NTCRT_ERRNO = ERANGE;
-    }
+    return __builtin_isgreaterequal(x, Limit) && __builtin_isfinite(x);
 }
 
 #define NTCRT_MATH_ERRNO_AS(Function, Name, Type, Params, Args, Check) \

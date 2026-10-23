@@ -165,6 +165,58 @@ int main(void)
             }
         }
         fesetround(FE_TONEAREST);
+
+        /*
+         * The overflow by the argument, at the thresholds of test/math/thresholds.py and the value below. lgamma of
+         * mingw-w64 overflows before its threshold (an infinity and ERANGE of its own, which stay).
+         */
+        static const struct
+        {
+            const char* Name;
+            double (*F)(double);
+            double x;
+            int Errno;
+        } Edges[] = {
+            { "tgamma", tgamma, 0x1.573fae561f648p+7, ERANGE },  { "tgamma", tgamma, 0x1.573fae561f647p+7, 0 },
+            { "tgamma", tgamma, 0x1p-1024, ERANGE },             { "tgamma", tgamma, 0x1.0000000000004p-1024, 0 },
+            { "tgamma", tgamma, -0x1p-1024, ERANGE },            { "tgamma", tgamma, 0, ERANGE },
+            { "lgamma", lgamma, 0x1.754d9278b51a8p+1014, ERANGE },
+            { "lgamma", lgamma, -0x1p53, ERANGE },               { "lgamma", lgamma, -2.5, 0 },
+            { "lgamma", lgamma, -INFINITY, 0 },                  { "exp2", exp2, 0x1.fffffffffffffp+9, 0 },
+        };
+        static const struct
+        {
+            const char* Name;
+            float (*F)(float);
+            float x;
+            int Errno;
+        } EdgesF[] = {
+            { "tgammaf", tgammaf, 0x1.18522p+5f, ERANGE },       { "tgammaf", tgammaf, 0x1.18521ep+5f, 0 },
+            { "tgammaf", tgammaf, 0x1p-128f, ERANGE },           { "tgammaf", tgammaf, 0x1.000008p-128f, 0 },
+            { "lgammaf", lgammaf, 0x1.895f1cp+121f, ERANGE },
+            { "exp2f", exp2f, 0x1.fffffep+6f, 0 },
+        };
+
+        for (size_t i = 0; i < sizeof(Edges) / sizeof(Edges[0]); i++)
+        {
+            errno = 0;
+            Edges[i].F(Edges[i].x);
+            if (errno != Edges[i].Errno)
+            {
+                printf("FAIL %s(%a): errno %d want %d\n", Edges[i].Name, Edges[i].x, errno, Edges[i].Errno);
+                g_Failures++;
+            }
+        }
+        for (size_t i = 0; i < sizeof(EdgesF) / sizeof(EdgesF[0]); i++)
+        {
+            errno = 0;
+            EdgesF[i].F(EdgesF[i].x);
+            if (errno != EdgesF[i].Errno)
+            {
+                printf("FAIL %s(%a): errno %d want %d\n", EdgesF[i].Name, EdgesF[i].x, errno, EdgesF[i].Errno);
+                g_Failures++;
+            }
+        }
     }
 
 #ifdef __i386__
