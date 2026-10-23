@@ -216,6 +216,18 @@ static void streams(void)
     EXPECT(Ret == 0 && fgetc(f) == 'x' && fgetc(f) == EOF, "1e+x: %d", Ret);
     fclose(f);
 
+    /* ungetc after the pushback of scanf at the start of the buffer: the rest moves up, a full buffer has no room */
+    f = file_of("hello", "rb");
+    Ret = fscanf(f, "%[x]", s);
+    EXPECT(Ret == 0 && ungetc('x', f) == 'x' && fgetc(f) == 'x' && fgetc(f) == 'h' && ftell(f) == 1,
+           "ungetc after a pushback: %d", Ret);
+    fclose(f);
+    f = file_of("hello", "rb");
+    setvbuf(f, NULL, _IOFBF, 5);
+    Ret = fscanf(f, "%[x]", s);
+    EXPECT(Ret == 0 && ungetc('x', f) == EOF && fgetc(f) == 'h', "ungetc in a full buffer: %d", Ret);
+    fclose(f);
+
     /* Text mode: CRLF is LF */
     f = file_of("1\r\n2\r\nend", "r");
     Ret = fscanf(f, "%d%c%d", &i, &c, &j);

@@ -337,8 +337,9 @@ _NtCRT_UnpackLongDouble(
     e = SignExp & 0x7FFF;
     f->Neg = SignExp >> 15;
     f->Long = TRUE;
-    f->Inf = e == 0x7FFF && (f->Mant << 1) == 0;
-    f->NaN = e == 0x7FFF && (f->Mant << 1) != 0;
+    /* An unnormal, pseudo-infinity or pseudo-NaN (an exponent not 0, the integer bit clear) is a NaN to the x87 */
+    f->Inf = e == 0x7FFF && f->Mant == 1ull << 63;
+    f->NaN = e != 0 && ((f->Mant >> 63) == 0 || (e == 0x7FFF && !f->Inf));
     f->Exp = (e == 0 ? 1 : e) - 16383 - 63;
 }
 

@@ -107,6 +107,9 @@ int main(void)
     CHECK("1.189731e+4932", "%Le", make_ld(~0ull, 0x7FFE));
     CHECK("0.667 1.5 -inf nan", "%.3Lg %Lg %Lf %Lf", 2.0L / 3, 1.5L, make_ld(1ull << 63, 0xFFFF),
           make_ld(3ull << 62, 0x7FFF));
+    /* Invalid to the x87: an unnormal, a pseudo-infinity and a pseudo-NaN are NaN, a pseudo-denormal a number */
+    CHECK("nan nan -nan nan 0x8p-16385", "%Lf %Le %La %Lg %La", make_ld(0, 0x3FFF), make_ld(0, 0x7FFF),
+          make_ld(1, 0xFFFF), make_ld(1ull << 62, 0x7FFF), make_ld(1ull << 63, 0));
 
     /* %a */
     CHECK("0x1p+0 0x1.8p+1 -0x1.cp+1 0x0p+0 0x1.000p+0 0x1.p+0", "%a %a %a %a %.3a %#.0a", 1.0, 3.0, -3.5, 0.0, 1.0,

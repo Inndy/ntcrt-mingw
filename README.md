@@ -288,7 +288,9 @@ Two locales: "C" and "C.UTF-8". Each category of `setlocale` is one of them.
   surrogate and return 0, the low surrogate writes the 4 bytes. A lone surrogate is `EILSEQ`. `mbstowcs` and
   `wcstombs` never stop in the middle of a character or a pair.
 - `mbrtoc16`, `c16rtomb`, `mbrtoc32` and `c32rtomb` use the encoding of the locale as the C standard requires,
-  bytes in the "C" locale. The `<uchar.h>` of MinGW-w64 declares them for UCRT only.
+  bytes in the "C" locale. The `<uchar.h>` of MinGW-w64 declares them for UCRT only, `include/uchar.h` for msvcrt
+  too. Code that needs a code point in one call, as the 32-bit `wchar_t` of Linux gives, uses `mbrtoc32` and
+  `c32rtomb`.
 - `towupper`, `towlower`, `_wcsupr`, `_wcslwr`, `_wcsicmp` and `_wcsnicmp` map wide characters by Unicode simple
   case mapping in "C.UTF-8", ASCII only in "C". Narrow case mapping (`toupper`, `_strupr`, `_stricmp`) is ASCII
   only and collation (`strcoll`, `wcscoll`) is code point order in both locales.
@@ -316,7 +318,8 @@ takes the conventions of msvcrt beside:
   msvcrt). scanf stores a `double` for `%Lf` and `%llf` of the functions of msvcrt. A program built with
   `__USE_MINGW_ANSI_STDIO=0` that passes a GCC long double to `printf` prints 0, as with msvcrt and UCRT. `L` of an
   integer conversion (`%Lx`) and of `%Ln` is ignored by the functions of msvcrt, as by msvcrt, and is `ll` for
-  `__mingw_*printf` and `__mingw_*scanf`, as by mingw-w64.
+  `__mingw_*printf` and `__mingw_*scanf`, as by mingw-w64. An unnormal, pseudo-infinity or pseudo-NaN (an 80-bit
+  encoding with the integer bit clear that the x87 rejects, undefined in C) prints as `nan`, as by glibc 2.33.
 - msvcrt: the length modifiers `I`, `I32`, `I64` and `w` (`z`, `t` and `I` the size of a pointer), `%S`/`%C` (the other
   width than the function), `%Z` (`ANSI_STRING`, `%wZ` `UNICODE_STRING`), `%p` as uppercase digits (16 on x64, 8 on
   x86), and in the wide functions of msvcrt (`swprintf`, `_snwprintf`, `fwprintf`, ...) `%s`/`%c` wide and `%S`/`%C`
@@ -745,6 +748,7 @@ NtCRT follows C where msvcrt and UCRT disagree with it, unless the MinGW-w64 hea
 | scanf `%P`, `%h02d` (a width after `h`), `%"` | undefined | `%p`, width 2, matches `"` | a matching failure | as msvcrt |
 | scanf `%2$d`, `%ms` | POSIX | a matching failure | a matching failure | POSIX |
 | scanf `%hhd` | a `char` | stores an `int` | as C | as C |
+| `ungetc` after scanf pushed back the first character of a fill | one character of pushback; whether scanf's takes it is unclear | fails | fails | succeeds unless the buffer is full (a fill of all `_bufsiz`, an unbuffered stream that read 2 bytes) or a string (glibc, musl: always) |
 | `fopen` mode `x` | C11, `EEXIST` | `EINVAL` | as C | as C |
 | `tmpnam` | a name of up to `L_tmpnam` - 1 | `\s<pid>.<n>`, the root of the current drive | the temporary directory, `L_tmpnam` 260 in the headers of the SDK | as msvcrt, `L_tmpnam` 14 in the MinGW-w64 headers |
 | `tmpfile` | impl. | the root of the current drive, fails without write access to it | the temporary directory | the temporary directory |

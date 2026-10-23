@@ -55,9 +55,17 @@ _NtCRT_ungetc_nolock(
     }
     if (Stream->_ptr == Stream->_base)
     {
+        /*
+         * A character pushed back at the start of the buffer, by scanf at the first of a fill: the unread characters
+         * move up when the buffer has room, of a string (sscanf) they cannot
+         */
         if (Stream->_cnt > 0)
         {
-            return EOF;
+            if ((Stream->_flag & _IOSTRG) || Stream->_cnt >= Stream->_bufsiz)
+            {
+                return EOF;
+            }
+            memmove(Stream->_base + 1, Stream->_base, Stream->_cnt);
         }
         Stream->_ptr++;
     }
