@@ -14,6 +14,11 @@ s/setenv("TZ", "UTC0", 1);/_putenv("TZ=UTC0");/
 s/), 4, "failed to accept U+10FFF\([EF]\)");/), 3, "failed to accept U+10FFF\1");/
 s/), 4, "wrong length");/), 3, "wrong length");/
 s/), 0x10000, "wrong char");/), 0xd800, "wrong char");/
+# clocale_mbfuncs: wctob returns EOF (C 7.29.6.1.2), not WEOF, which is 0xFFFF on Windows (wint_t of 16 bits). The
+# bytes 0x80..0xFF of the "C" locale are U+0080..U+00FF, as msvcrt (README.md "Locales"), whose classes are those of
+# Latin-1, not characters of no class (musl maps them to U+DF80..U+DFFF)
+s/(c=wctob(i)) != WEOF/(c=wctob(i)) != EOF/
+/^\tfor (i=128; i<256; i++) {/,/^\t}/d
 # fwscanf and fgetwc-buffering: the wide functions read a binary stream (tmpfile, the pipe of compat.h) as UTF-16
 # units on Windows (README.md "C, msvcrt and UCRT"), multibyte characters of the locale in a text stream
 /^#include <wchar\.h>/,/= tmpfile();/s/tmpfile()/fopen("fwscanf.tmp", "w+D")/
