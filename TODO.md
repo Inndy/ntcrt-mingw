@@ -39,6 +39,11 @@ and `acos` of `Math.cpp` took it from ntdll, and a program calling them did not 
   of `BaseIsThisAConsoleName` of kernel32 (`_NtCRT_IsLegacyConsoleName`: `CONIN$`, `CONOUT$`, `CON` for reading or
   writing alone) go to CreateFileW of kernel32 and give a legacy console handle; `_open` makes it inheritable by
   `SetHandleInformation`. `make test-console` opens them by name (`open`).
+- [x] **The loader lock of Windows 7** (README "The loader lock of Windows 7"). Its `LdrGetDllHandleEx` and
+  `LdrGetProcedureAddress` take the lock: the lookups of kernel32 when called (UTF-8 and wide console output, the
+  waits and flushes of console handles) and the parker of the first wait deadlocked against a thread in its
+  `DLL_THREAD_DETACH` that waited for them (win32lab-e4). They are looked up at startup on Windows 7, the user chose
+  that over every version (`NTCRT_K32_EAGER_ALWAYS`) and over a walk of the exports of kernel32.
 - [ ] **The whole test suite on Windows 7.** Only the programs above ran there. The event parker of
   `PthreadWait.cpp` (no `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
 

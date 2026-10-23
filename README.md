@@ -613,6 +613,33 @@ a module that one of them loads with `RTLD_LOCAL` is hidden only from the `dlsym
 program and of `RTLD_NEXT` called by that one, the others find it. dlfcn-win32 linked statically has the same
 limitation.
 
+### The loader lock of Windows 7
+
+`LdrGetDllHandleEx` and `LdrGetProcedureAddress` of Windows 7 take the loader lock, those of Windows 8 and later do
+not. A function of NtCRT that looked up kernel32 when called would wait for a thread that holds the lock, in a
+`DllMain` or a TLS callback (`DLL_THREAD_DETACH` of a thread that ends), while that thread waits for it: a deadlock.
+On Windows 7 NtCRT looks them up before `main`, in `.CRT$XIAA` before its other initializers:
+
+- the kernel32 functions of `NTCRT_K32_FUNCTIONS` (`src/NtCRT.h`): the console of the low I/O and the streams
+  (`WriteConsoleW` of UTF-8 and `_O_U16TEXT` output, `ReadConsoleW`, the console input of `Conio.cpp`, `CONIN$` and
+  `CONOUT$` by `CreateFileW`), the calls on legacy console handles (`WaitForSingleObjectEx`, `FlushFileBuffers`,
+  `GetFileSizeEx`, ...), `_pipe` and the spawn functions (`CreatePipe`, `CreateProcessW`), `_beep`, the locale
+  functions (`LCMapStringW`, `CompareStringW`, `GetLocaleInfoW`) and `UnhandledExceptionFilter`;
+- the module of the system messages of `FormatMessageW` (`src/Kernel32.cpp`);
+- the parker of the pthread waits (`src/PthreadWait.cpp`, `.CRT$XIC`), chosen at the first wait otherwise.
+
+Windows 8 and later look them up at the first call, without a cost at startup. `NTCRT_K32_EAGER_ALWAYS`
+(`CXXFLAGS="... -DNTCRT_K32_EAGER_ALWAYS"` for the build of NtCRT) looks them up on every version, about 2 us a name
+on x64 and 3 on WOW64 of Windows 11 at the start of every process. A function that kernel32 lacks stays NULL, as it
+would when looked up later. What stays:
+
+- tcc runs the initializers of NtCRT from `.init_array`, after `__getmainargs` and the constructors of the program:
+  what these call is looked up when called, as on Windows 8, and a constructor that starts threads before the table
+  is complete has the deadlock above.
+- `dlopen`, `dlsym`, `dlclose` and `dladdr`, and `LoadLibrary`, `GetProcAddress` and `GetModuleHandle` that a
+  program calls, take the loader lock on Windows 7 as they must: a thread in a `DllMain` or a TLS callback must not
+  wait for a thread that calls them, as with kernel32.
+
 ### File names, console and streams
 
 - The narrow file name functions (`fopen`, `_open`, `_stat`, `_mkdir`, `_findfirst`, `_fullpath`, `rename`,
