@@ -317,9 +317,12 @@ static void Cxx20()
     for (int i = 0; i < 4; i++)
     {
         Threads.emplace_back([&] {
+            /* acquire of libstdc++ may wait for ever: see std::counting_semaphore in README.md */
             for (int j = 0; j < 1000; j++)
             {
-                Semaphore.acquire();
+                while (!Semaphore.try_acquire_for(1ms))
+                {
+                }
                 Acquired++;
             }
         });
