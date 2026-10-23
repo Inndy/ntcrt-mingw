@@ -311,13 +311,17 @@ static void Cxx20()
     }
     check(Stopped == 1, "std::jthread");
 
-    std::counting_semaphore<8> Semaphore(0);
+    /* Up to 4000 released before an acquire */
+    std::counting_semaphore<4000> Semaphore(0);
     std::atomic<int> Acquired = 0;
     std::vector<std::thread> Threads;
     for (int i = 0; i < 4; i++)
     {
         Threads.emplace_back([&] {
-            /* acquire of libstdc++ may wait for ever: see std::counting_semaphore in README.md */
+            /*
+             * acquire of libstdc++ may wait for ever: see std::counting_semaphore in README.md. try_acquire_for gives
+             * pthread_cond_timedwait a deadline of steady_clock, which is past by CLOCK_REALTIME: it polls.
+             */
             for (int j = 0; j < 1000; j++)
             {
                 while (!Semaphore.try_acquire_for(1ms))

@@ -544,11 +544,14 @@ internals of winpthreads (`thread_print`, `cond_print`, `rwl_print`, `pthread_cr
 `pthread_mutexattr_setprotocol`, `pthread_mutexattr_setprioceiling`, `pthread_attr_setscope` and
 `pthread_setconcurrency` keep their value, which has no effect.
 
-`std::counting_semaphore` (and `std::binary_semaphore`) of libstdc++ 15 may block a thread for ever on MinGW-w64, with
+`std::counting_semaphore` of libstdc++ 15 with a maximum above 1 may block a thread for ever on MinGW-w64, with
 winpthreads as with NtCRT: without futex its `acquire` waits for a version of a pool of mutexes and condition
-variables that `release` raises only when the count leaves 0, and it waits after one compare-exchange lost to another
-thread although the count is not 0 (`_S_do_try_acquire` of `bits/semaphore_base.h`). Four threads that acquire while
-one releases hang within a few hundred rounds. `try_acquire_for` and `try_acquire_until` wait no longer than asked.
+variables that `release` raises only when the count leaves 0. `_S_do_try_acquire` of `bits/semaphore_base.h` tries one
+compare-exchange: when the 16 tries of `__atomic_spin` (`bits/atomic_wait.h`) all lose to other threads, the thread
+waits although the count is not 0. Four threads that acquired from one releasing (`counting_semaphore<4000>`) hung
+within a few hundred rounds on Windows 11, with a compare-exchange retried while the count is not 0 none did.
+`std::binary_semaphore` does not wait so: a compare-exchange lost leaves 0, which the next `release` leaves. The
+deadline of `try_acquire_for` and `try_acquire_until` ends their wait without another notification.
 
 `make test-pthread` (not in `make test`, it needs the network) runs the tests of pthreads4w 3.0.0 (Apache-2.0, the
 release archive of SourceForge) and the thread, semaphore and TLS tests of musl libc-test (MIT, a pinned commit) on
