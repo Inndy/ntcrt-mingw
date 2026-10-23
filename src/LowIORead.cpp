@@ -247,7 +247,7 @@ _NtCRT_ReadConsoleUtf8(
 
     while (Entry->ConsoleTextPos == Entry->ConsoleTextLength)
     {
-        auto const ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
+        auto const ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function(NTCRT_K32_ReadConsoleW);
         WCHAR Wide[1024];
         DWORD Units = 0, Got = 0, Kept;
         BOOL Eof;
@@ -337,7 +337,7 @@ _NtCRT_ReadUnicode(
          * Ctrl+Z as in the narrow text mode (_NtCRT_ConsoleText): msvcrt and UCRT drop it and the rest of the line in
          * _O_U16TEXT and end the input of the fd for good
          */
-        PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
+        PNTCRT_READ_CONSOLE_W ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function(NTCRT_K32_ReadConsoleW);
 
         for (;;)
         {

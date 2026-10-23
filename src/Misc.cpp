@@ -1409,7 +1409,7 @@ EXTERN_C void __cdecl _NtCRT__sleep(unsigned long duration)
 EXTERN_C void __cdecl _NtCRT__beep(unsigned frequency, unsigned duration)
 {
     typedef BOOL(WINAPI* PFN_BEEP)(DWORD, DWORD);
-    PFN_BEEP Beep = (PFN_BEEP)_NtCRT_GetKernel32Function("Beep");
+    PFN_BEEP Beep = (PFN_BEEP)_NtCRT_GetKernel32Function(NTCRT_K32_Beep);
 
     if (Beep != NULL)
     {

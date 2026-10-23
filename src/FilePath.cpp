@@ -91,7 +91,7 @@ _NtCRT_CreateFile(
          * A file, as CreateFileW of kernel32 (CreateDirectoryW goes to NtCreateFile): not inheritable, the console
          * server takes only the generic rights and opens what exists
          */
-        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function("CreateFileW");
+        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function(NTCRT_K32_CreateFileW);
 
         if (CreateFileW != NULL)
         {

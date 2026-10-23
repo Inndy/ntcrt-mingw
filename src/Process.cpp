@@ -273,7 +273,7 @@ _NtCRT_CreateProcess(
     _In_opt_ PWSTR Environment,
     _In_reads_opt_(3) const HANDLE* StdHandles)
 {
-    auto const CreateProcessW = (PNTCRT_CREATE_PROCESS_W)_NtCRT_GetKernel32Function("CreateProcessW");
+    auto const CreateProcessW = (PNTCRT_CREATE_PROCESS_W)_NtCRT_GetKernel32Function(NTCRT_K32_CreateProcessW);
     STARTUPINFOW StartupInfo = {};
     PROCESS_INFORMATION ProcessInfo;
     PUCHAR InheritBlock = NULL;
@@ -808,7 +808,7 @@ _NtCRT_CreatePipe(
     _In_ BOOL Inherit,
     _In_ DWORD Size)
 {
-    auto const CreatePipe = (PNTCRT_CREATE_PIPE)_NtCRT_GetKernel32Function("CreatePipe");
+    auto const CreatePipe = (PNTCRT_CREATE_PIPE)_NtCRT_GetKernel32Function(NTCRT_K32_CreatePipe);
     SECURITY_ATTRIBUTES Attributes = { sizeof(Attributes), NULL, Inherit };
 
     if (CreatePipe == NULL)

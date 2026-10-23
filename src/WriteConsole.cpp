@@ -26,7 +26,7 @@ _NtCRT_WriteConsoleW(
 
     if (!IS_NT_VERSION_GE(NT_VERSION_WIN8))
     {
-        auto const WriteConsoleW = (PNTCRT_WRITE_CONSOLE_W)_NtCRT_GetKernel32Function("WriteConsoleW");
+        auto const WriteConsoleW = (PNTCRT_WRITE_CONSOLE_W)_NtCRT_GetKernel32Function(NTCRT_K32_WriteConsoleW);
         if (WriteConsoleW == NULL)
         {
             _Inline_SetLastError(ERROR_CALL_NOT_IMPLEMENTED);

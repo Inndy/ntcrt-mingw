@@ -15,19 +15,17 @@
 /* Win7 fallbacks used by PolyFill/Console.inl, kernel32 is always loaded in a Win32 process */
 
 /*
- * The functions of kernel32 that NtCRT calls, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS: on all):
- * LdrGetDllHandleEx of Windows 7 takes the loader lock. Looked up later, a call (WriteConsoleW of a stream) would
- * wait for a thread that holds it in its DLL_THREAD_DETACH while that one waits for the caller (the stream lock).
+ * NTCRT_K32_FUNCTIONS and the module of the system messages, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS:
+ * on all), whose LdrGetDllHandleEx and LdrGetProcedureAddress take the loader lock: looked up later, a call would
+ * wait for a thread that holds it in its DLL_THREAD_DETACH while that one waits for the caller (a lock it holds).
+ * Before the other initializers (.CRT$XIAA, _NtCRT_InitLowIO is in .CRT$XIB), under tcc with them after the
+ * constructors of the program. An export kernel32 lacks stays NULL: kernel32 is always loaded in a Win32 process.
  */
-static const PCSTR g_Kernel32Names[] = {
-    "Beep", "CloseHandle", "CompareStringW", "CreateFileW", "CreatePipe", "CreateProcessW", "DuplicateHandle",
-    "FlushFileBuffers", "GetConsoleCP", "GetConsoleMode", "GetConsoleOutputCP", "GetFileInformationByHandle",
-    "GetFileSizeEx", "GetHandleInformation", "GetLocaleInfoW", "GetNumberOfConsoleInputEvents", "LCMapStringW",
-    "PeekConsoleInputW", "ReadConsoleInputW", "ReadConsoleW", "ReadFile", "SetConsoleCtrlHandler", "SetConsoleMode",
-    "SetEndOfFile", "SetHandleInformation", "UnhandledExceptionFilter", "VerifyConsoleIoHandle", "WriteConsoleW",
-    "WriteFile",
-};
-static PVOID g_Kernel32Functions[ARRAYSIZE(g_Kernel32Names)];
+#define NTCRT_K32_NAME(Name) #Name,
+static const PCSTR g_Kernel32Names[NTCRT_K32_COUNT] = { NTCRT_K32_FUNCTIONS(NTCRT_K32_NAME) };
+#undef NTCRT_K32_NAME
+static PVOID g_Kernel32Functions[NTCRT_K32_COUNT];
+static PVOID g_MessageModule;
 static LONG g_Kernel32Resolved;
 
 static
@@ -48,6 +46,16 @@ Kernel32Lookup(
     return NT_SUCCESS(LdrGetProcedureAddress(DllHandle, &ProcName, 0, &Address)) ? Address : NULL;
 }
 
+/* Message table resources of kernelbase.dll (or kernel32.dll before Win7) contain the system messages */
+static
+PVOID
+MessageModuleLookup(VOID)
+{
+    PVOID Module = _Inline_GetModuleHandleW(L"kernelbase.dll");
+
+    return Module != NULL ? Module : _Inline_GetModuleHandleW(L"kernel32.dll");
+}
+
 static int __cdecl ResolveKernel32(void)
 {
 #ifndef NTCRT_K32_EAGER_ALWAYS
@@ -56,31 +64,40 @@ static int __cdecl ResolveKernel32(void)
         return 0;
     }
 #endif
-    for (ULONG i = 0; i < ARRAYSIZE(g_Kernel32Names); i++)
+    for (ULONG i = 0; i < NTCRT_K32_COUNT; i++)
     {
         g_Kernel32Functions[i] = Kernel32Lookup(g_Kernel32Names[i]);
     }
+    __atomic_store_n(&g_MessageModule, MessageModuleLookup(), __ATOMIC_RELEASE);
     __atomic_store_n(&g_Kernel32Resolved, 1, __ATOMIC_RELEASE);
     return 0;
 }
-NTCRT_INITIALIZER(".CRT$XIC", _NtCRT_ResolveKernel32Ptr, ResolveKernel32);
+NTCRT_INITIALIZER(".CRT$XIAA", _NtCRT_ResolveKernel32Ptr, ResolveKernel32);
 
 EXTERN_C
 PVOID
 _NtCRT_GetKernel32Function(
-    _In_z_ PCSTR Name)
+    _In_ NTCRT_K32_FUNCTION Function)
 {
     if (__atomic_load_n(&g_Kernel32Resolved, __ATOMIC_ACQUIRE))
     {
-        for (ULONG i = 0; i < ARRAYSIZE(g_Kernel32Names); i++)
-        {
-            if (strcmp(g_Kernel32Names[i], Name) == 0)
-            {
-                return g_Kernel32Functions[i];
-            }
-        }
+        return g_Kernel32Functions[Function];
     }
-    return Kernel32Lookup(Name);
+    return Kernel32Lookup(g_Kernel32Names[Function]);
+}
+
+EXTERN_C
+PVOID
+_NtCRT_GetSystemMessageModule(VOID)
+{
+    PVOID Module = __atomic_load_n(&g_MessageModule, __ATOMIC_ACQUIRE);
+
+    if (Module == NULL)
+    {
+        Module = MessageModuleLookup();
+        __atomic_store_n(&g_MessageModule, Module, __ATOMIC_RELEASE);
+    }
+    return Module;
 }
 
 static
@@ -88,7 +105,7 @@ PCRT_GET_CONSOLE_MODE
 __cdecl
 try_get_console_mode(VOID) throw()
 {
-    return (PCRT_GET_CONSOLE_MODE)_NtCRT_GetKernel32Function("GetConsoleMode");
+    return (PCRT_GET_CONSOLE_MODE)_NtCRT_GetKernel32Function(NTCRT_K32_GetConsoleMode);
 }
 
 static
@@ -96,7 +113,7 @@ PCRT_GET_CONSOLE_OUTPUT_CP
 __cdecl
 try_get_console_output_cp(VOID) throw()
 {
-    return (PCRT_GET_CONSOLE_OUTPUT_CP)_NtCRT_GetKernel32Function("GetConsoleOutputCP");
+    return (PCRT_GET_CONSOLE_OUTPUT_CP)_NtCRT_GetKernel32Function(NTCRT_K32_GetConsoleOutputCP);
 }
 
 static
@@ -104,7 +121,7 @@ PCRT_VERIFY_CONSOLE_IO_HANDLE
 __cdecl
 try_get_verify_console_io_handle(VOID) throw()
 {
-    return (PCRT_VERIFY_CONSOLE_IO_HANDLE)_NtCRT_GetKernel32Function("VerifyConsoleIoHandle");
+    return (PCRT_VERIFY_CONSOLE_IO_HANDLE)_NtCRT_GetKernel32Function(NTCRT_K32_VerifyConsoleIoHandle);
 }
 
 /* Exports */
@@ -190,7 +207,7 @@ _K32_SetUnhandledExceptionFilter(
 
     if (!Initialized)
     {
-        Previous = RtlEncodePointer(_NtCRT_GetKernel32Function("UnhandledExceptionFilter"));
+        Previous = RtlEncodePointer(_NtCRT_GetKernel32Function(NTCRT_K32_UnhandledExceptionFilter));
         Initialized = TRUE;
     }
     Old = (LPTOP_LEVEL_EXCEPTION_FILTER)RtlDecodePointer(Previous);

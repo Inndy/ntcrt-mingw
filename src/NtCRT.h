@@ -632,8 +632,32 @@ extern "C" HANDLE WINAPI _K32_CreateFileW(LPCWSTR lpFileName,
                                           DWORD dwFlagsAndAttributes,
                                           HANDLE hTemplateFile);
 
-/* Resolve a kernel32 export at runtime, for what ntdll cannot do (console input, process creation) */
-extern "C" PVOID _NtCRT_GetKernel32Function(PCSTR Name);
+/*
+ * The kernel32 exports NtCRT calls, for what ntdll cannot do (console input, process creation, the console handles of
+ * Windows 7): PolyFill.cpp resolves them at startup on Windows 7, whose LdrGetProcedureAddress takes the loader lock
+ */
+#define NTCRT_K32_FUNCTIONS(X)                                                                                      \
+    X(Beep) X(CloseHandle) X(CompareStringW) X(CreateFileW) X(CreatePipe) X(CreateProcessW) X(DuplicateHandle)      \
+    X(FlushFileBuffers) X(GetConsoleCP) X(GetConsoleMode) X(GetConsoleOutputCP) X(GetFileInformationByHandle)       \
+    X(GetFileSize) X(GetFileSizeEx) X(GetHandleInformation) X(GetLocaleInfoW) X(GetNumberOfConsoleInputEvents)      \
+    X(LCMapStringW) X(PeekConsoleInputW) X(ReadConsoleInputW) X(ReadConsoleW) X(ReadFile) X(SetConsoleCtrlHandler)  \
+    X(SetConsoleMode) X(SetEndOfFile) X(SetFilePointer) X(SetFilePointerEx) X(SetHandleInformation)                 \
+    X(UnhandledExceptionFilter) X(VerifyConsoleIoHandle) X(WaitForMultipleObjectsEx) X(WaitForSingleObjectEx)       \
+    X(WriteConsoleW) X(WriteFile)
+
+enum NTCRT_K32_FUNCTION
+{
+#define NTCRT_K32_ENUM(Name) NTCRT_K32_##Name,
+    NTCRT_K32_FUNCTIONS(NTCRT_K32_ENUM)
+#undef NTCRT_K32_ENUM
+    NTCRT_K32_COUNT
+};
+
+/* An export of NTCRT_K32_FUNCTIONS, NULL if kernel32 has none */
+extern "C" PVOID _NtCRT_GetKernel32Function(NTCRT_K32_FUNCTION Function);
+
+/* The module of the system messages of FormatMessage (kernelbase.dll, or kernel32.dll before Windows 7) */
+extern "C" PVOID _NtCRT_GetSystemMessageModule(void);
 
 /*
  * A console handle of Windows 7 and earlier (3 in its low bits) is a handle of the console server, which the kernel
@@ -657,7 +681,7 @@ extern "C" NTSTATUS _NtCRT_CloseHandle(_In_ HANDLE Handle);
 #define NTCRT_LEGACY_CONSOLE_CALL(Handle, Failure, Name, ...)                                 \
     if (_NtCRT_IsLegacyConsoleHandle(Handle))                                                 \
     {                                                                                         \
-        auto const Function = (decltype(&_K32_##Name))_NtCRT_GetKernel32Function(#Name);      \
+        auto const Function = (decltype(&_K32_##Name))_NtCRT_GetKernel32Function(NTCRT_K32_##Name); \
         if (Function == NULL)                                                                 \
         {                                                                                     \
             _Inline_SetLastError(ERROR_INVALID_HANDLE);                                       \

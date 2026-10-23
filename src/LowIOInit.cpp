@@ -130,7 +130,7 @@ PNTCRT_RW_FILE
 _NtCRT_GetLegacyConsoleIo(
     _In_ BOOL Write)
 {
-    return (PNTCRT_RW_FILE)_NtCRT_GetKernel32Function(Write ? "WriteFile" : "ReadFile");
+    return (PNTCRT_RW_FILE)_NtCRT_GetKernel32Function(Write ? NTCRT_K32_WriteFile : NTCRT_K32_ReadFile);
 }
 
 EXTERN_C
@@ -140,7 +140,7 @@ _NtCRT_CloseHandle(
 {
     if (_NtCRT_IsLegacyConsoleHandle(Handle))
     {
-        auto const CloseHandle = (BOOL(WINAPI*)(HANDLE))_NtCRT_GetKernel32Function("CloseHandle");
+        auto const CloseHandle = (BOOL(WINAPI*)(HANDLE))_NtCRT_GetKernel32Function(NTCRT_K32_CloseHandle);
         return CloseHandle != NULL && CloseHandle(Handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
     }
     return NtClose(Handle);
@@ -155,7 +155,7 @@ _NtCRT_DuplicateHandle(
     if (_NtCRT_IsLegacyConsoleHandle(Handle))
     {
         typedef BOOL(WINAPI * PNTCRT_DUPLICATE_HANDLE)(HANDLE, HANDLE, HANDLE, LPHANDLE, DWORD, BOOL, DWORD);
-        auto const DuplicateHandle = (PNTCRT_DUPLICATE_HANDLE)_NtCRT_GetKernel32Function("DuplicateHandle");
+        auto const DuplicateHandle = (PNTCRT_DUPLICATE_HANDLE)_NtCRT_GetKernel32Function(NTCRT_K32_DuplicateHandle);
         return DuplicateHandle != NULL &&
                        DuplicateHandle(
                            NtCurrentProcess(), Handle, NtCurrentProcess(), NewHandle, 0, TRUE, DUPLICATE_SAME_ACCESS)

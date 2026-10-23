@@ -31,13 +31,13 @@ _NtCRT_ResolveConsoleApi(void)
 {
     if (!g_ConsoleApi.Resolved)
     {
-        g_ConsoleApi.ReadConsoleInputW = (PNTCRT_CONSOLE_INPUT)_NtCRT_GetKernel32Function("ReadConsoleInputW");
-        g_ConsoleApi.PeekConsoleInputW = (PNTCRT_CONSOLE_INPUT)_NtCRT_GetKernel32Function("PeekConsoleInputW");
+        g_ConsoleApi.ReadConsoleInputW = (PNTCRT_CONSOLE_INPUT)_NtCRT_GetKernel32Function(NTCRT_K32_ReadConsoleInputW);
+        g_ConsoleApi.PeekConsoleInputW = (PNTCRT_CONSOLE_INPUT)_NtCRT_GetKernel32Function(NTCRT_K32_PeekConsoleInputW);
         g_ConsoleApi.GetNumberOfConsoleInputEvents =
-            (PNTCRT_GET_NUMBER_OF_CONSOLE_INPUT_EVENTS)_NtCRT_GetKernel32Function("GetNumberOfConsoleInputEvents");
-        g_ConsoleApi.SetConsoleMode = (PNTCRT_SET_CONSOLE_MODE)_NtCRT_GetKernel32Function("SetConsoleMode");
-        g_ConsoleApi.ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function("ReadConsoleW");
-        g_ConsoleApi.GetConsoleCP = (PNTCRT_GET_CONSOLE_CP)_NtCRT_GetKernel32Function("GetConsoleCP");
+            (PNTCRT_GET_NUMBER_OF_CONSOLE_INPUT_EVENTS)_NtCRT_GetKernel32Function(NTCRT_K32_GetNumberOfConsoleInputEvents);
+        g_ConsoleApi.SetConsoleMode = (PNTCRT_SET_CONSOLE_MODE)_NtCRT_GetKernel32Function(NTCRT_K32_SetConsoleMode);
+        g_ConsoleApi.ReadConsoleW = (PNTCRT_READ_CONSOLE_W)_NtCRT_GetKernel32Function(NTCRT_K32_ReadConsoleW);
+        g_ConsoleApi.GetConsoleCP = (PNTCRT_GET_CONSOLE_CP)_NtCRT_GetKernel32Function(NTCRT_K32_GetConsoleCP);
         _InterlockedExchange(&g_ConsoleApi.Resolved, TRUE);
     }
     return g_ConsoleApi.ReadConsoleInputW != NULL && g_ConsoleApi.PeekConsoleInputW != NULL &&

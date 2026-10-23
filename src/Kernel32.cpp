@@ -1566,24 +1566,6 @@ NTCRT_API BOOL WINAPI _K32_IsProcessorFeaturePresent(_In_ DWORD ProcessorFeature
     return _Inline_IsProcessorFeaturePresent(ProcessorFeature);
 }
 
-/* Message table resources of kernelbase.dll (or kernel32.dll before Win7) contain the system messages */
-static
-PVOID
-_NtCRT_GetSystemMessageModule(VOID)
-{
-    static PVOID Module = NULL;
-
-    if (Module == NULL)
-    {
-        Module = _Inline_GetModuleHandleW(L"kernelbase.dll");
-        if (Module == NULL)
-        {
-            Module = _Inline_GetModuleHandleW(L"kernel32.dll");
-        }
-    }
-    return Module;
-}
-
 NTCRT_API
 DWORD
 WINAPI

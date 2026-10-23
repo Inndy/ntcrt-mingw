@@ -503,7 +503,7 @@ EXTERN_C int __cdecl _NtCRT_wsopen(const wchar_t* path, int oflag, int shflag, i
         if (_NtCRT_IsLegacyConsoleHandle(Handle))
         {
             auto const SetHandleInformation =
-                (decltype(&_K32_SetHandleInformation))_NtCRT_GetKernel32Function("SetHandleInformation");
+                (decltype(&_K32_SetHandleInformation))_NtCRT_GetKernel32Function(NTCRT_K32_SetHandleInformation);
 
             if (SetHandleInformation != NULL)
             {

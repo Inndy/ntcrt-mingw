@@ -25,7 +25,7 @@ _K32_CreateFileW(
 
     if (_NtCRT_IsLegacyConsoleName(lpFileName, dwDesiredAccess))
     {
-        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function("CreateFileW");
+        auto const CreateFileW = (decltype(&_K32_CreateFileW))_NtCRT_GetKernel32Function(NTCRT_K32_CreateFileW);
 
         if (CreateFileW != NULL)
         {

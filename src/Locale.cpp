@@ -19,7 +19,6 @@
 
 EXTERN_C char* __cdecl _NtCRT_setlocale(int category, const char* locale);
 EXTERN_C struct lconv* __cdecl _NtCRT_localeconv(void);
-EXTERN_C PVOID _NtCRT_GetKernel32Function(PCSTR Name);
 extern "C" unsigned short* _NtCRT_pctype;
 extern "C" unsigned int _NtCRT_lc_codepage;
 extern "C"
@@ -429,7 +428,7 @@ _NtCRT_IsLeadByteOf(
 EXTERN_C int __cdecl _NtCRT___crtCompareStringA(
     LCID Locale, DWORD Flags, LPCSTR Str1, int Count1, LPCSTR Str2, int Count2, int CodePage)
 {
-    auto const CompareStringW = (PNTCRT_COMPARE_STRING_W)_NtCRT_GetKernel32Function("CompareStringW");
+    auto const CompareStringW = (PNTCRT_COMPARE_STRING_W)_NtCRT_GetKernel32Function(NTCRT_K32_CompareStringW);
     PWSTR Wide1, Wide2;
     int WideCount1, WideCount2, Ret;
     CPINFO CpInfo;
@@ -508,7 +507,7 @@ EXTERN_C int __cdecl _NtCRT___crtCompareStringA(
 EXTERN_C int __cdecl _NtCRT___crtCompareStringW(
     LCID Locale, DWORD Flags, LPCWSTR Str1, int Count1, LPCWSTR Str2, int Count2, int CodePage)
 {
-    auto const CompareStringW = (PNTCRT_COMPARE_STRING_W)_NtCRT_GetKernel32Function("CompareStringW");
+    auto const CompareStringW = (PNTCRT_COMPARE_STRING_W)_NtCRT_GetKernel32Function(NTCRT_K32_CompareStringW);
 
     UNREFERENCED_PARAMETER(CodePage);
     if (Count1 > 0)
@@ -530,7 +529,7 @@ EXTERN_C int __cdecl _NtCRT___crtCompareStringW(
 EXTERN_C int __cdecl _NtCRT___crtLCMapStringA(
     LCID Locale, DWORD Flags, LPCSTR Src, int SrcCount, LPSTR Dst, int DstCount, int CodePage, BOOL Error)
 {
-    auto const LCMapStringW = (PNTCRT_LCMAP_STRING_W)_NtCRT_GetKernel32Function("LCMapStringW");
+    auto const LCMapStringW = (PNTCRT_LCMAP_STRING_W)_NtCRT_GetKernel32Function(NTCRT_K32_LCMapStringW);
     PWSTR Wide, Mapped;
     int WideCount, Ret;
 
@@ -588,7 +587,7 @@ Exit:
 EXTERN_C int __cdecl _NtCRT___crtLCMapStringW(
     LCID Locale, DWORD Flags, LPCWSTR Src, int SrcCount, LPWSTR Dst, int DstCount, int CodePage)
 {
-    auto const LCMapStringW = (PNTCRT_LCMAP_STRING_W)_NtCRT_GetKernel32Function("LCMapStringW");
+    auto const LCMapStringW = (PNTCRT_LCMAP_STRING_W)_NtCRT_GetKernel32Function(NTCRT_K32_LCMapStringW);
 
     UNREFERENCED_PARAMETER(CodePage);
     if (SrcCount > 0)
@@ -600,7 +599,7 @@ EXTERN_C int __cdecl _NtCRT___crtLCMapStringW(
 
 EXTERN_C int __cdecl _NtCRT___crtGetLocaleInfoW(LCID Locale, LCTYPE Type, LPWSTR Data, int Count, int CodePage)
 {
-    auto const GetLocaleInfoW = (PNTCRT_GET_LOCALE_INFO_W)_NtCRT_GetKernel32Function("GetLocaleInfoW");
+    auto const GetLocaleInfoW = (PNTCRT_GET_LOCALE_INFO_W)_NtCRT_GetKernel32Function(NTCRT_K32_GetLocaleInfoW);
 
     UNREFERENCED_PARAMETER(CodePage);
     return GetLocaleInfoW != NULL ? GetLocaleInfoW(Locale, Type, Data, Count) : 0;

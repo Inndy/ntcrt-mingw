@@ -874,7 +874,7 @@ EXTERN_C _NtCRT_sighandler_t __cdecl _NtCRT_signal(int sig, _NtCRT_sighandler_t 
     {
         typedef BOOL(WINAPI* PNTCRT_SET_CONSOLE_CTRL_HANDLER)(PHANDLER_ROUTINE, BOOL);
         PNTCRT_SET_CONSOLE_CTRL_HANDLER SetConsoleCtrlHandler =
-            (PNTCRT_SET_CONSOLE_CTRL_HANDLER)_NtCRT_GetKernel32Function("SetConsoleCtrlHandler");
+            (PNTCRT_SET_CONSOLE_CTRL_HANDLER)_NtCRT_GetKernel32Function(NTCRT_K32_SetConsoleCtrlHandler);
 
         if (SetConsoleCtrlHandler == NULL || !SetConsoleCtrlHandler(_NtCRT_CtrlHandler, TRUE))
         {
