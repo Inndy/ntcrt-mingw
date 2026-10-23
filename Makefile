@@ -775,22 +775,27 @@ $(BUILD)/install/driver.exe: tools/driver.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(KERNEL32_CC) -O2 -s -static -municode $(DRIVER_DIRS) -o $@ $<
 
-INSTALL_DEPS := $(LIBS) $(INSTALL_FILES) $(BUILD)/install/driver.exe
+# The licenses of NtCRT (MIT, KNSoft) and of the conversions ported from Go (BSD 3-clause), in share/doc/ntcrt: a
+# program linked with NtCRT has code under both, a binary distribution of it carries the two notices
+LICENSE_FILES := LICENSE LICENSE.Go
+INSTALL_DEPS := $(LIBS) $(INSTALL_FILES) $(BUILD)/install/driver.exe $(LICENSE_FILES)
 
 # $(call install-to,<dir>), not a recursive make, which would build the libraries beside the make that runs it
 define install-to
-mkdir -p "$(1)/bin" "$(1)/$(INSTALL_LIB)" "$(1)/include"
+mkdir -p "$(1)/bin" "$(1)/$(INSTALL_LIB)" "$(1)/include" "$(1)/share/doc/ntcrt"
 cp -r include/. "$(1)/include"
 cp $(LIBS) $(INSTALL_FILES) "$(1)/$(INSTALL_LIB)"
+cp $(LICENSE_FILES) "$(1)/share/doc/ntcrt"
 for t in $(INSTALL_TOOLS); do cp $(BUILD)/install/driver.exe "$(1)/bin/x86_64-w64-ntcrt-mingw32-$$t.exe"; done
 endef
 
 ifdef TCC
 # make TCC=1 install PREFIX=<dir>: libntcrt.a and ntdll.def for tcc into <dir>/lib/tcc, beside a GCC or LLVM build
-INSTALL_DEPS := $(LIBS)
+INSTALL_DEPS := $(LIBS) $(LICENSE_FILES)
 define install-to
-mkdir -p "$(1)/lib/tcc"
+mkdir -p "$(1)/lib/tcc" "$(1)/share/doc/ntcrt"
 cp $(LIBS) "$(1)/lib/tcc"
+cp $(LICENSE_FILES) "$(1)/share/doc/ntcrt"
 endef
 endif
 
@@ -810,11 +815,13 @@ test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
 	$(call install-to,$(INSTALL_TEST))
 	for f in $(LIBS); do cmp "$$f" "$(INSTALL_TEST)/lib/tcc/$${f##*/}" || exit 1; done
+	for f in $(LICENSE_FILES); do cmp "$$f" "$(INSTALL_TEST)/share/doc/ntcrt/$$f" || exit 1; done
 	@echo "install: ok"
 else
 test-install: $(INSTALL_DEPS)
 	rm -rf "$(INSTALL_TEST)"
 	$(call install-to,$(INSTALL_TEST))
+	for f in $(LICENSE_FILES); do cmp "$$f" "$(INSTALL_TEST)/share/doc/ntcrt/$$f" || exit 1; done
 	"$(INSTALL_TEST)/bin/x86_64-w64-ntcrt-mingw32-$(firstword $(INSTALL_TOOLS)).exe" -O2 '-DTEXT="a \"b\" c\\"' \
 	    -o "$(INSTALL_TEST)/hello.exe" test/start/install.c
 	"$(INSTALL_TEST)/hello.exe" | tr -d '\r' | grep -q -x -F 'a "b" c\'

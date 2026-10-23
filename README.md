@@ -16,12 +16,12 @@ g++ -static -specs=build/ntcrt.specs -o hello.exe hello.cpp
 make LLVM=1     # the same with clang into build-llvm (LLVM=<dir>/ for clang in <dir>), make LLVM=1 test, ...
 clang++ --config=build-llvm/ntcrt.cfg -static -o hello.exe hello.cpp
 
-make install PREFIX=C:/ntcrt          # include/, lib/gcc and the drivers in bin/
+make install PREFIX=C:/ntcrt          # include/, lib/gcc, the drivers in bin/, the licenses in share/doc/ntcrt
 make LLVM=1 install PREFIX=C:/ntcrt   # lib/clang and the clang drivers
 x86_64-w64-ntcrt-mingw32-gcc -o hello.exe hello.c    # with C:/ntcrt/bin in PATH
 
 make TCC=1 LLVM=<dir>/   # build-tcc/lib: libntcrt.a and ntdll.def for tcc in place of msvcrt.def, see "tcc"
-make TCC=1 LLVM=<dir>/ install PREFIX=C:/ntcrt   # those two into lib/tcc
+make TCC=1 LLVM=<dir>/ install PREFIX=C:/ntcrt   # those two into lib/tcc, the licenses in share/doc/ntcrt
 ```
 
 An installation can be moved: its drivers `x86_64-w64-ntcrt-mingw32-gcc`, `g++`, `cc`, `c++`, `clang` and `clang++`
@@ -250,7 +250,7 @@ and x64. `make size`, bytes:
 `make TCC=1` (with `LLVM=<dir>/` for clang in `<dir>`) builds `build-tcc/lib/libntcrt.a` and `build-tcc/lib/ntdll.def`
 for the x64 tcc: linked in place of `msvcrt.def` (and `kernel32.def` for what NtCRT has), a program tcc builds imports
 `ntdll.dll` only. The startup is that of tcc (`crt1.c` of `libtcc1.a`), which calls `__getmainargs` of NtCRT.
-`make TCC=1 install PREFIX=<dir>` copies the two into `<dir>/lib/tcc`.
+`make TCC=1 install PREFIX=<dir>` copies the two into `<dir>/lib/tcc` and the licenses into `<dir>/share/doc/ntcrt`.
 
 - tcc links ELF objects only: clang compiles NtCRT for the x64 of Windows into ELF (`x86_64-w64-windows-gnu-elf`,
   `NTCRT_TCC` in `src/NtCRT.h`). A function of msvcrt is a weak alias in the object that implements it, which a
@@ -877,4 +877,8 @@ Derived from [KNSoft.NtCRT](https://github.com/KNSoft/KNSoft.NtCRT) at commit
 `src/Float.cpp`, `src/Float.inl`, `src/FloatParse.cpp`, `src/FloatFormat.cpp`, `src/FloatPow10.inl` and
 `src/FloatPow10Small.cpp` (with `src/FloatPow10Small.inl`, made from the table by `test/float/pow10gen.py`) are ported
 from the Go 1.27 source (`src/internal/strconv`), under the BSD 3-clause license of The Go Authors, whose notice is in
-`src/Float.cpp`.
+`LICENSE.Go` (and in `src/Float.cpp`).
+
+A program statically linked with NtCRT includes code under the MIT license (KNSoft) and the BSD 3-clause license
+(The Go Authors): a binary distribution of it must come with both notices, `LICENSE` and `LICENSE.Go`, which
+`make install` copies into `<PREFIX>/share/doc/ntcrt`.
