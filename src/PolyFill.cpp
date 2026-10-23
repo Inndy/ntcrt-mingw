@@ -15,46 +15,53 @@
 /* Win7 fallbacks used by PolyFill/Console.inl, kernel32 is always loaded in a Win32 process */
 
 /*
- * NTCRT_K32_FUNCTIONS and the module of the system messages, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS:
- * on all), whose LdrGetDllHandleEx and LdrGetProcedureAddress take the loader lock: looked up later, a call would
- * wait for a thread that holds it in its DLL_THREAD_DETACH while that one waits for the caller (a lock it holds).
- * Before the other initializers (.CRT$XIAA, _NtCRT_InitLowIO is in .CRT$XIB), under tcc with them after
- * __getmainargs and the constructors of the program. An export kernel32 lacks stays NULL: kernel32 is always loaded
- * in a Win32 process.
+ * NTCRT_K32_FUNCTIONS, resolved at startup on Windows 7 (NTCRT_K32_EAGER_ALWAYS: on all), whose LdrGetDllHandleEx and
+ * LdrGetProcedureAddress take the loader lock: looked up later, a call would wait for a thread that holds it in its
+ * DLL_THREAD_DETACH while that one waits for the caller (a lock it holds). Before the other initializers
+ * (.CRT$XIAA, _NtCRT_InitLowIO is in .CRT$XIB), under tcc with them after __getmainargs and the constructors of the
+ * program. An export kernel32 lacks stays NULL: kernel32 is always loaded in a Win32 process.
  */
-#define NTCRT_K32_NAME(Name) #Name,
-static const PCSTR g_Kernel32Names[NTCRT_K32_COUNT] = { NTCRT_K32_FUNCTIONS(NTCRT_K32_NAME) };
+#define NTCRT_K32_NAME(Name) #Name "\0"
+static const char g_Kernel32Names[] = NTCRT_K32_FUNCTIONS(NTCRT_K32_NAME);
 #undef NTCRT_K32_NAME
 static PVOID g_Kernel32Functions[NTCRT_K32_COUNT];
-static PVOID g_MessageModule;
 static LONG g_Kernel32Resolved;
 
 static
 PVOID
-Kernel32Lookup(
-    _In_z_ PCSTR Name)
+Kernel32Handle(VOID)
 {
     static WCHAR Kernel32Name[] = L"kernel32.dll";
     UNICODE_STRING Kernel32 = { sizeof(Kernel32Name) - sizeof(WCHAR), sizeof(Kernel32Name), Kernel32Name };
-    ANSI_STRING ProcName;
-    PVOID DllHandle, Address;
+    PVOID DllHandle;
 
-    if (!NT_SUCCESS(_Inline_LdrGetDllHandle(NULL, NULL, &Kernel32, &DllHandle)))
-    {
-        return NULL;
-    }
-    _Inline_RtlInitAnsiString(&ProcName, Name);
-    return NT_SUCCESS(LdrGetProcedureAddress(DllHandle, &ProcName, 0, &Address)) ? Address : NULL;
+    return NT_SUCCESS(_Inline_LdrGetDllHandle(NULL, NULL, &Kernel32, &DllHandle)) ? DllHandle : NULL;
 }
 
-/* Message table resources of kernelbase.dll (or kernel32.dll before Win7) contain the system messages */
+/* Resolve the names from First to Last of kernel32 (DllHandle) into Functions */
 static
-PVOID
-MessageModuleLookup(VOID)
+VOID
+Kernel32Lookup(
+    _In_opt_ PVOID DllHandle,
+    _In_ ULONG First,
+    _In_ ULONG Last,
+    _Out_writes_(Last - First + 1) PVOID* Functions)
 {
-    PVOID Module = _Inline_GetModuleHandleW(L"kernelbase.dll");
+    PCSTR Name = g_Kernel32Names;
+    ANSI_STRING ProcName;
 
-    return Module != NULL ? Module : _Inline_GetModuleHandleW(L"kernel32.dll");
+    for (ULONG i = 0; i <= Last; i++, Name += strlen(Name) + 1)
+    {
+        if (i < First)
+        {
+            continue;
+        }
+        _Inline_RtlInitAnsiString(&ProcName, Name);
+        if (DllHandle == NULL || !NT_SUCCESS(LdrGetProcedureAddress(DllHandle, &ProcName, 0, &Functions[i - First])))
+        {
+            Functions[i - First] = NULL;
+        }
+    }
 }
 
 static int __cdecl ResolveKernel32(void)
@@ -65,11 +72,7 @@ static int __cdecl ResolveKernel32(void)
         return 0;
     }
 #endif
-    for (ULONG i = 0; i < NTCRT_K32_COUNT; i++)
-    {
-        g_Kernel32Functions[i] = Kernel32Lookup(g_Kernel32Names[i]);
-    }
-    __atomic_store_n(&g_MessageModule, MessageModuleLookup(), __ATOMIC_RELEASE);
+    Kernel32Lookup(Kernel32Handle(), 0, NTCRT_K32_COUNT - 1, g_Kernel32Functions);
     __atomic_store_n(&g_Kernel32Resolved, 1, __ATOMIC_RELEASE);
     return 0;
 }
@@ -80,25 +83,14 @@ PVOID
 _NtCRT_GetKernel32Function(
     _In_ NTCRT_K32_FUNCTION Function)
 {
+    PVOID Address;
+
     if (__atomic_load_n(&g_Kernel32Resolved, __ATOMIC_ACQUIRE))
     {
         return g_Kernel32Functions[Function];
     }
-    return Kernel32Lookup(g_Kernel32Names[Function]);
-}
-
-EXTERN_C
-PVOID
-_NtCRT_GetSystemMessageModule(VOID)
-{
-    PVOID Module = __atomic_load_n(&g_MessageModule, __ATOMIC_ACQUIRE);
-
-    if (Module == NULL)
-    {
-        Module = MessageModuleLookup();
-        __atomic_store_n(&g_MessageModule, Module, __ATOMIC_RELEASE);
-    }
-    return Module;
+    Kernel32Lookup(Kernel32Handle(), Function, Function, &Address);
+    return Address;
 }
 
 static

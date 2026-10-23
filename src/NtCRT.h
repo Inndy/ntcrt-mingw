@@ -656,9 +656,6 @@ enum NTCRT_K32_FUNCTION
 /* An export of NTCRT_K32_FUNCTIONS, NULL if kernel32 has none */
 extern "C" PVOID _NtCRT_GetKernel32Function(NTCRT_K32_FUNCTION Function);
 
-/* The module of the system messages of FormatMessage (kernelbase.dll, or kernel32.dll before Windows 7) */
-extern "C" PVOID _NtCRT_GetSystemMessageModule(void);
-
 /*
  * A console handle of Windows 7 and earlier (3 in its low bits) is a handle of the console server, which the kernel
  * would take for the handle of the process without those bits: only kernel32 takes it

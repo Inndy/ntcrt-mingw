@@ -1566,6 +1566,42 @@ NTCRT_API BOOL WINAPI _K32_IsProcessorFeaturePresent(_In_ DWORD ProcessorFeature
     return _Inline_IsProcessorFeaturePresent(ProcessorFeature);
 }
 
+/*
+ * Message table resources of kernelbase.dll (or kernel32.dll before Win7) contain the system messages. Found at
+ * startup on Windows 7, as NTCRT_K32_FUNCTIONS (PolyFill.cpp): its GetModuleHandleW takes the loader lock.
+ */
+static PVOID g_MessageModule;
+
+static
+PVOID
+_NtCRT_GetSystemMessageModule(VOID)
+{
+    PVOID Module = __atomic_load_n(&g_MessageModule, __ATOMIC_ACQUIRE);
+
+    if (Module == NULL)
+    {
+        Module = _Inline_GetModuleHandleW(L"kernelbase.dll");
+        if (Module == NULL)
+        {
+            Module = _Inline_GetModuleHandleW(L"kernel32.dll");
+        }
+        __atomic_store_n(&g_MessageModule, Module, __ATOMIC_RELEASE);
+    }
+    return Module;
+}
+
+static int __cdecl ResolveMessageModule(void)
+{
+#ifndef NTCRT_K32_EAGER_ALWAYS
+    if (!IS_NT_VERSION_GE(NT_VERSION_WIN8))
+#endif
+    {
+        _NtCRT_GetSystemMessageModule();
+    }
+    return 0;
+}
+NTCRT_INITIALIZER(".CRT$XIAA", _NtCRT_ResolveMessageModulePtr, ResolveMessageModule);
+
 NTCRT_API
 DWORD
 WINAPI
