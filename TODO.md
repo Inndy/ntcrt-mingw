@@ -51,8 +51,11 @@ and `acos` of `Math.cpp` took it from ntdll, and a program calling them did not 
   waits and flushes of console handles) and the parker of the first wait deadlocked against a thread in its
   `DLL_THREAD_DETACH` that waited for them (win32lab-e4). They are looked up at startup on Windows 7, the user chose
   that over every version (`NTCRT_K32_EAGER_ALWAYS`) and over a walk of the exports of kernel32.
-- [ ] **The whole test suite on Windows 7.** Only the programs above ran there. The event parker of
-  `PthreadWait.cpp` (no `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
+- [x] **The whole test suite on Windows 7.** `make test` of x64 and x86 passes on Windows 7 SP1 (win32lab-e4, on
+  1bc533f) but for `fuzz format`, whose ucrtbase there (10.0.14393) differs in 30 of 2459 checks (README); the thread
+  tests passed 20 runs in a row. That made the thread tests allow the 15.6 ms tick of `CLOCK_REALTIME`, left `atan2`
+  out of `libntdll_crt.a`, and found the loader lock above. The event parker of `PthreadWait.cpp` (no
+  `NtWaitForAlertByThreadId` before Windows 8) runs on Windows 7 only.
 
 ## Console
 
