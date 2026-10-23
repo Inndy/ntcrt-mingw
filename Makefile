@@ -210,8 +210,8 @@ $(BUILD)/ntdll.def: $(BUILD)/ntdll_crt.def
 
 # The library for tcc in lib/: libntcrt.a with the members of libgcc, libmingw32, libmingwex and libmsvcrt (its static
 # members) that NtCRT and TCC_SEEDS use, those of a GCC build, made ELF objects (src/Members.awk); and ntdll.def.
-# As there, libmingwex precedes ntdll. The members of libmingwex that src/MathX87.cpp wraps (fdim and sqrt) give their
-# names as _NtCRT_X87_<name>.
+# As there, libmingwex precedes ntdll. The members of libmingwex that src/MathX87.cpp and src/MathErrno*.cpp wrap give
+# their names as _NtCRT_X87_<name>, but the .refptr of a COMDAT.
 TCC_SOURCES := $(foreach l,libgcc.a libmingw32.a libmingwex.a,"$(shell $(CXX) -print-file-name=$(l))")
 
 $(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms src/Members.awk
@@ -220,15 +220,17 @@ $(BUILD)/members.txt: $(BUILD)/libntcrt.a $(BUILD)/ntcrt.syms src/Members.awk
 	cd $(BUILD)/coff && for l in $(TCC_SOURCES); do ar x "$$l"; done && \
 	    ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib64_libmsvcrt_')
 	cd $(BUILD)/coff && for o in $(X87_MINGWEX); do \
-	    objcopy $$(nm -g --defined-only $$o | awk 'NF == 3 { print "--redefine-sym", $$3 "=_NtCRT_X87_" $$3 }') $$o; \
+	    objcopy $$(nm -g --defined-only $$o | awk 'NF == 3 && $$3 !~ /^\./ { print "--redefine-sym", $$3 "=_NtCRT_X87_" $$3 }') $$o; \
 	done
 	{ printf '%s\n' $(TCC_SEEDS); nm -g --undefined-only $(BUILD)/libntcrt.a | awk '$$1 == "U" { print $$2 }'; } \
 	    > $(BUILD)/seeds.txt
 	cd $(BUILD)/coff && nm -A -g *.o | awk -v have=../ntcrt.syms -v seeds=../seeds.txt -f "$(CURDIR)/src/Members.awk" \
 	    ../ntcrt.syms ../seeds.txt - > ../members.txt
 
-# objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations. The long
-# double functions of the members (exp2l that exp2 calls) take 80 bits, not the long double of tcc: they are renamed.
+# objcopy makes the ELF objects without the unwind tables and debug information, coffrel the relocations. A .refptr
+# of a COMDAT is weak: ELF has no COMDAT of COFF, and two members may define one (that of signgam is in lgamma and
+# lgammaf). The long double functions of the members (exp2l that exp2 calls) take 80 bits, not the long double of
+# tcc: they are renamed.
 $(BUILD)/coffrel.exe: tools/coffrel.c | $(BUILD)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
 
@@ -239,7 +241,7 @@ $(BUILD)/lib/libntcrt.a: $(BUILD)/libntcrt.a $(BUILD)/members.txt $(BUILD)/coffr
 	    awk -v seeds='$(TCC_SEEDS)' 'BEGIN { n = split(seeds, s); for (i = 1; i <= n; i++) Long[s[i] "l"] = 1 } \
 	        NF == 3 && $$3 in Long { print $$3, "__ntcrt_" $$3 }' | sort -u > ../longdouble.txt
 	cd $(BUILD)/coff && xargs -I{} objcopy -O elf64-x86-64 --strip-debug -R .pdata -R .xdata -R '.rdata$$zzz' \
-	    --redefine-syms=../longdouble.txt {} ../elf/{} < ../members.txt
+	    --redefine-syms=../longdouble.txt --wildcard --weaken-symbol='.refptr.*' {} ../elf/{} < ../members.txt
 	cd $(BUILD)/elf && xargs ../coffrel.exe < ../members.txt
 	cp $(BUILD)/libntcrt.a $@
 	cd $(BUILD)/elf && xargs ar rs ../lib/libntcrt.a < ../members.txt
@@ -250,22 +252,25 @@ $(BUILD)/lib/ntdll.def: $(BUILD)/ntdll.def
 
 # The math functions that src/MathX87.cpp rounds (src/MathX87.awk), renamed _NtCRT_X87_<name> in the members of
 # libmsvcrt that define them, and those of libmingwex (the _WRAP lines) in copies of their members, all names renamed
-# (once: the .refptr.signgam of lgamma and lgammaf is in both). The assembler names of x86 have the prefix "_".
-X87_ROUND := $(shell awk -v x86=$(X86) -f src/MathX87.awk src/MathX87.cpp)
-X87_WRAP := $(shell awk -v x86=$(X86) -v wrap=1 -f src/MathX87.awk src/MathX87.cpp)
+# once but the .refptr of a COMDAT (that of signgam is in lgamma and lgammaf). The assembler names of x86 have the
+# prefix "_".
+X87_SRCS := src/MathX87.cpp $(wildcard src/MathErrno*.cpp)
+X87_ROUND := $(shell awk -v x86=$(X86) -f src/MathX87.awk $(X87_SRCS))
+X87_WRAP := $(shell awk -v x86=$(X86) -v wrap=1 -f src/MathX87.awk $(X87_SRCS))
 X87_MINGWEX := $(X87_WRAP:%=lib$(if $(X86),32,64)_libmingwex_a-%.o)
 define x87-rename
 cd $(BUILD)/msvcrt && ar x "$(MINGWEX_A)" $(X87_MINGWEX)
 cd $(BUILD)/msvcrt && { $(foreach f,$(X87_ROUND),echo $(if $(X86),_)$(f) $(if $(X86),_)_NtCRT_X87_$(f);) \
     nm -g --defined-only $(X87_MINGWEX) | \
-    awk -v p=$(if $(X86),_) 'NF == 3 { print $$3, p "_NtCRT_X87_" substr($$3, length(p) + 1) }'; } | sort -u > ../x87.syms
+    awk -v p=$(if $(X86),_) 'NF == 3 && $$3 !~ /^\./ { print $$3, p "_NtCRT_X87_" substr($$3, length(p) + 1) }'; } | \
+    sort -u > ../x87.syms
 cd $(BUILD)/msvcrt && nm -A -g --defined-only *.o | \
     awk 'NR == FNR { Rename[$$1] = 1; next } $$NF in Rename { sub(/:.*/, ""); print }' ../x87.syms - | sort -u | \
     xargs -r -n 1 objcopy --redefine-syms=../x87.syms
 endef
 
 # The static (non-import) members of libmsvcrt.a, minus those defining a symbol of libntcrt.a
-$(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms src/MathX87.cpp src/MathX87.awk
+$(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms $(X87_SRCS) src/MathX87.awk
 	rm -rf $(BUILD)/msvcrt
 	mkdir -p $(BUILD)/msvcrt
 	cd $(BUILD)/msvcrt && ar x "$(MSVCRT_A)" $$(ar t "$(MSVCRT_A)" | grep '^lib$(if $(X86),32,64)_libmsvcrt_')
@@ -280,8 +285,9 @@ $(BUILD)/libmsvcrt_static.a: $(BUILD)/ntcrt.syms src/MathX87.cpp src/MathX87.awk
 # src/FormatWide.cpp, its scanf (and the __ms_v*scanf that call msvcrt) by src/Scanf.cpp, src/ScanfWide.cpp,
 # src/StdioScanf.cpp and src/StdioWscanf.cpp, the strtod family of mingw-w64 by src/FloatParse.cpp, wcstoll,
 # wcstoull, wcstoimax and wcstoumax by src/Integer.cpp, btowc and wctob by src/MultibyteChar.cpp, ftruncate64 by
-# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp, lgamma and lgammaf, fdim, sqrt and the functions that set
-# no errno (exp2, log1p, log2, nexttoward, tgamma and those of float) of x64 by src/MathX87.cpp. libntcrt defines them under their names too, for lld.
+# src/LowIOFile.cpp, sleep and usleep by src/Clock.cpp, lgamma and lgammaf, fdim and sqrt of x64 by src/MathX87.cpp,
+# exp2, log1p, log2, nexttoward, tgamma and those of float of x64 by src/MathErrno*.cpp. libntcrt defines them under
+# their names too, for lld.
 WRAPS := $(foreach f,vfprintf vprintf vsprintf vsnprintf vasprintf fprintf printf sprintf snprintf asprintf \
                      vfwprintf vwprintf vswprintf vsnwprintf fwprintf wprintf swprintf snwprintf,--wrap=__mingw_$(f)) \
          $(foreach f,vfscanf vscanf vsscanf fscanf scanf sscanf vfwscanf vwscanf vswscanf fwscanf wscanf swscanf, \
@@ -319,10 +325,10 @@ printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> "$(3)"
 printf '*lib:\n%%{pg:-lgmon}\n\n' >> "$(3)"
 endef
 
-$(BUILD)/ntcrt.specs: Makefile src/MathX87.cpp src/MathX87.awk | $(BUILD)
+$(BUILD)/ntcrt.specs: Makefile $(X87_SRCS) src/MathX87.awk | $(BUILD)
 	$(call build-specs,$(CURDIR)/include,$(CURDIR)/$(BUILD),$@)
 
-$(BUILD)/install/ntcrt.specs: Makefile src/MathX87.cpp src/MathX87.awk
+$(BUILD)/install/ntcrt.specs: Makefile $(X87_SRCS) src/MathX87.awk
 	mkdir -p $(@D)
 	printf '*link:\n+ -Bstatic %s\n\n' "$(SPECS_LINK)" > $@
 	printf '*libgcc:\n%s\n\n' '$(SPECS_LIBGCC)' >> $@

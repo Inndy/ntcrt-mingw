@@ -10,68 +10,11 @@
  * libmsvcrt_static.a, those of libmingwex (_WRAP), which ld reads before libntcrt (--wrap), in copies of their
  * members, and in the members that the library for tcc takes. The functions here call them and round. Those not
  * listed return a value of their type: they round it themselves or their result is exact (fabs, floor, fmod, ...).
- * The functions of mingw-w64 that leave out an errno of C are taken the same way, see "errno" below.
+ * The functions of mingw-w64 that leave out an errno of C are taken the same way (src/MathErrno*.cpp).
  */
 
 #include "NtCRT.h"
-
-/* The result of a function of the x87: st(0) as the long double it is on x86, a double in xmm0 on x64 */
-#ifdef __i386__
-typedef long double NTCRT_X87_RESULT;
-#else
-typedef double NTCRT_X87_RESULT;
-#endif
-
-/* The control word before, the precision control (bits 8-9) set to 53 bits; the x87 state of the thread */
-static inline unsigned short _NtCRT_X87_Precision53(void)
-{
-    unsigned short Cw, Pc53;
-
-    __asm__ __volatile__("fnstcw %0" : "=m"(Cw));
-    Pc53 = (unsigned short)((Cw & ~0x300) | 0x200);
-    __asm__ __volatile__("fldcw %0" : : "m"(Pc53) : "memory");
-    return Cw;
-}
-
-static inline void _NtCRT_X87_Restore(unsigned short Cw)
-{
-    __asm__ __volatile__("fldcw %0" : : "m"(Cw) : "memory");
-}
-
-/* Rounded by the conversion to Type */
-#define NTCRT_X87_ROUND_AS(Function, Name, Type, Params, Args)   \
-    EXTERN_C NTCRT_X87_RESULT __cdecl _NtCRT_X87_##Name Params;  \
-    EXTERN_C Type __cdecl Function Params                        \
-    {                                                            \
-        return (Type)_NtCRT_X87_##Name Args;                     \
-    }
-#define NTCRT_X87_ROUND(Name, Type, Params, Args) NTCRT_X87_ROUND_AS(Name, Name, Type, Params, Args)
-
-/* _NtCRT_X87_<Name>53: Name at the precision control of 53 bits, for the function of C below */
-#define NTCRT_X87_ROUND53(Name, Params, Args)                    \
-    EXTERN_C NTCRT_X87_RESULT __cdecl _NtCRT_X87_##Name Params;  \
-    static inline double _NtCRT_X87_##Name##53 Params            \
-    {                                                            \
-        unsigned short Cw = _NtCRT_X87_Precision53();            \
-        NTCRT_X87_RESULT Result = _NtCRT_X87_##Name Args;        \
-        _NtCRT_X87_Restore(Cw);                                  \
-        return (double)Result;                                   \
-    }
-#define NTCRT_X87_ROUND53_WRAP NTCRT_X87_ROUND53
-
-/* For a name of libmingwex: __wrap_Name for ld, Name for lld, which reads libntcrt first */
-#define NTCRT_X87_WRAP_ALIAS(Name) \
-    EXTERN_C __typeof__(__wrap_##Name) Name __attribute__((alias("__wrap_" #Name)));
-#define NTCRT_X87_ROUND_WRAP(Name, Type, Params, Args)          \
-    NTCRT_X87_ROUND_AS(__wrap_##Name, Name, Type, Params, Args) \
-    NTCRT_X87_WRAP_ALIAS(Name)
-
-/* _NtCRT_X87_<Name>, a function of libmingwex that is not of the x87, for the function of C below */
-#define NTCRT_X87_DECLARE_WRAP(Name, Type, Params) EXTERN_C Type __cdecl _NtCRT_X87_##Name Params;
-
-/* _NtCRT_X87_<Name> of the x87 (x86), of libmsvcrt or of libmingwex (_WRAP), for the function of C below */
-#define NTCRT_X87_DECLARE(Name, Params) EXTERN_C NTCRT_X87_RESULT __cdecl _NtCRT_X87_##Name Params;
-#define NTCRT_X87_DECLARE_X87_WRAP NTCRT_X87_DECLARE
+#include "MathX87.inl"
 
 /*
  * fdim: an x - y beyond double is finite in the x87 (x86), which mingw-w64 takes as no overflow, and the infinity of
@@ -166,76 +109,3 @@ EXTERN_C double __cdecl __wrap_sqrt(double x)
 NTCRT_X87_WRAP_ALIAS(sqrt)
 #endif
 
-/*
- * errno: the errors of C (math_errhandling has MATH_ERRNO) that the functions of mingw-w64 leave out, the domain
- * error (EDOM) of log1p below -1 and log2 below 0, the pole error (ERANGE) of log1p(-1), log2(0) and of lgamma at 0
- * and the negative integers (EDOM by mingw-w64), the overflow (ERANGE) of exp2, tgamma, lgamma and nexttoward. The
- * function of C calls that of mingw-w64 (_NtCRT_X87_<name>), rounds its result to its type (x86) and sets errno.
- */
-static inline void _NtCRT_MathLogErrno(double x, double Pole)
-{
-    if (x == Pole)
-    {
-        NTCRT_ERRNO = ERANGE;
-    } else if (x < Pole)
-    {
-        NTCRT_ERRNO = EDOM;
-    }
-}
-
-/* An infinity of a finite argument: an overflow or a pole, ERANGE either */
-static inline void _NtCRT_MathRangeErrno(double Result, double x)
-{
-    if (__builtin_isinf(Result) && __builtin_isfinite(x))
-    {
-        NTCRT_ERRNO = ERANGE;
-    }
-}
-
-#define NTCRT_MATH_ERRNO_AS(Function, Name, Type, Params, Args, Check)     EXTERN_C Type __cdecl Function Params                                   {                                                                           Type Result = (Type)_NtCRT_X87_##Name Args;                                                                                                     Check;                                                                  return Result;                                                      }
-#define NTCRT_MATH_ERRNO(Name, ...) NTCRT_MATH_ERRNO_AS(Name, Name, __VA_ARGS__)
-#define NTCRT_MATH_ERRNO_WRAP(Name, ...) NTCRT_MATH_ERRNO_AS(__wrap_##Name, Name, __VA_ARGS__) NTCRT_X87_WRAP_ALIAS(Name)
-
-#ifdef __i386__
-NTCRT_X87_DECLARE(exp2, (double x))
-NTCRT_X87_DECLARE(log1p, (double x))
-NTCRT_X87_DECLARE(log2, (double x))
-NTCRT_X87_DECLARE(nexttoward, (double x, long double y))
-NTCRT_X87_DECLARE(tgamma, (double x))
-NTCRT_X87_DECLARE(exp2f, (float x))
-NTCRT_X87_DECLARE(log1pf, (float x))
-NTCRT_X87_DECLARE(log2f, (float x))
-NTCRT_X87_DECLARE(nexttowardf, (float x, long double y))
-NTCRT_X87_DECLARE(tgammaf, (float x))
-NTCRT_X87_DECLARE_X87_WRAP(lgamma, (double x))
-NTCRT_X87_DECLARE_X87_WRAP(lgammaf, (float x))
-/* Members of libmsvcrt on x86, of libmingwex on x64 */
-#define NTCRT_MATH_ERRNO_MSVCRT NTCRT_MATH_ERRNO
-#else
-NTCRT_X87_DECLARE_WRAP(exp2, double, (double x))
-NTCRT_X87_DECLARE_WRAP(log1p, double, (double x))
-NTCRT_X87_DECLARE_WRAP(log2, double, (double x))
-NTCRT_X87_DECLARE_WRAP(nexttoward, double, (double x, long double y))
-NTCRT_X87_DECLARE_WRAP(tgamma, double, (double x))
-NTCRT_X87_DECLARE_WRAP(exp2f, float, (float x))
-NTCRT_X87_DECLARE_WRAP(log1pf, float, (float x))
-NTCRT_X87_DECLARE_WRAP(log2f, float, (float x))
-NTCRT_X87_DECLARE_WRAP(nexttowardf, float, (float x, long double y))
-NTCRT_X87_DECLARE_WRAP(tgammaf, float, (float x))
-NTCRT_X87_DECLARE_WRAP(lgamma, double, (double x))
-NTCRT_X87_DECLARE_WRAP(lgammaf, float, (float x))
-#define NTCRT_MATH_ERRNO_MSVCRT NTCRT_MATH_ERRNO_WRAP
-#endif
-
-NTCRT_MATH_ERRNO_MSVCRT(exp2, double, (double x), (x), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_MSVCRT(log1p, double, (double x), (x), _NtCRT_MathLogErrno(x, -1))
-NTCRT_MATH_ERRNO_MSVCRT(log2, double, (double x), (x), _NtCRT_MathLogErrno(x, 0))
-NTCRT_MATH_ERRNO_MSVCRT(nexttoward, double, (double x, long double y), (x, y), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_MSVCRT(tgamma, double, (double x), (x), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_MSVCRT(exp2f, float, (float x), (x), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_MSVCRT(log1pf, float, (float x), (x), _NtCRT_MathLogErrno(x, -1))
-NTCRT_MATH_ERRNO_MSVCRT(log2f, float, (float x), (x), _NtCRT_MathLogErrno(x, 0))
-NTCRT_MATH_ERRNO_MSVCRT(nexttowardf, float, (float x, long double y), (x, y), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_MSVCRT(tgammaf, float, (float x), (x), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_WRAP(lgamma, double, (double x), (x), _NtCRT_MathRangeErrno(Result, x))
-NTCRT_MATH_ERRNO_WRAP(lgammaf, float, (float x), (x), _NtCRT_MathRangeErrno(Result, x))

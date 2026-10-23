@@ -219,6 +219,10 @@ With a MinGW-w64 toolchain for i686 first in `PATH` (`g++ -dumpmachine` is `i686
   MATH_ERREXCEPT` in the headers of MinGW-w64 15, 11 has none): `log1p` and `log2` set `EDOM` below -1 and 0 and
   `ERANGE` at them (a pole), `exp2`, `tgamma` and `nexttoward` `ERANGE` on an overflow, as `exp` and `nextafter`
   do, `lgamma` `ERANGE` at a pole (0 and the negative integers, `EDOM` by mingw-w64), those of `float` the same.
+  An overflow is an infinity or, rounded toward zero or downward, the largest finite value; the comparisons are quiet
+  (a NaN raises nothing). `src/MathErrno*.cpp` has an object for each function and that of `float`: a program links
+  those it calls only. The library for tcc makes the `.refptr` of a COMDAT weak (`.refptr.signgam` is in the members
+  of `lgamma` and `lgammaf`, ELF has no COMDAT of COFF).
 - clang: `make LLVM=<clang64>/` with the i686 GCC first in `PATH`, clang of msys2 clang64 for `i686-w64-mingw32` on
   the sysroot of mingw32 (there is no clang32). The library has the DWARF unwind tables of GCC (`-funwind-tables`), and
   the personality routine of `pthread_once` is in a section that is no COMDAT: lld keeps no section for the

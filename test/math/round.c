@@ -137,6 +137,34 @@ int main(void)
             printf("FAIL nexttoward of an overflow: errno %d\n", errno);
             g_Failures++;
         }
+        /* A NaN raises no invalid operation; an overflow rounded toward zero is the largest finite value */
+        feclearexcept(FE_ALL_EXCEPT);
+        if (!isnan(log1p(NAN)) || !isnan(log2(NAN)) || !isnan(log1pf(NAN)) || !isnan(log2f(NAN)) ||
+            fetestexcept(FE_INVALID))
+        {
+            printf("FAIL log1p, log2 of a NaN: exceptions %#x\n", fetestexcept(FE_ALL_EXCEPT));
+            g_Failures++;
+        }
+        fesetround(FE_TOWARDZERO);
+        for (int i = 0; i < 4; i++)
+        {
+            static const char* const Names[] = { "exp2(1024)", "exp2f(128)", "tgamma(200)", "tgammaf(40)" };
+
+            errno = 0;
+            switch (i)
+            {
+            case 0: exp2(1024); break;
+            case 1: exp2f(128); break;
+            case 2: tgamma(200); break;
+            case 3: tgammaf(40); break;
+            }
+            if (errno != ERANGE)
+            {
+                printf("FAIL %s toward zero: errno %d\n", Names[i], errno);
+                g_Failures++;
+            }
+        }
+        fesetround(FE_TONEAREST);
     }
 
 #ifdef __i386__
