@@ -14,10 +14,17 @@ typedef struct _NTCRT_POW10
     ULONG64 Lo;
 } NTCRT_POW10;
 
-/* 1e-348 to 1e347, see FloatPow10.inl */
+/*
+ * 1e-348 to 1e347, see FloatPow10.inl. NTCRT_POW10_SMALL (make POW10_SMALL=1): computed by _NtCRT_GetPow10 from every
+ * 27th (FloatPow10Small.cpp), 584 bytes for 11136 and a conversion slower.
+ */
 #define NTCRT_POW10_MIN (-348)
 #define NTCRT_POW10_MAX 347
+#ifdef NTCRT_POW10_SMALL
+extern "C" NTCRT_POW10 _NtCRT_GetPow10(int p);
+#else
 extern "C" const NTCRT_POW10 _NtCRT_Pow10[NTCRT_POW10_MAX - NTCRT_POW10_MIN + 1];
+#endif
 
 #pragma region Unrounded scaling (uscale.go)
 
@@ -59,8 +66,15 @@ typedef struct _NTCRT_SCALER
 /* The scaling constants of e, p, lp must be _NtCRT_Log2Pow10(p) */
 static inline void _NtCRT_Prescale(NTCRT_SCALER* Pre, int e, int p, int lp)
 {
+#ifdef NTCRT_POW10_SMALL
+    NTCRT_POW10 Pm = _NtCRT_GetPow10(p);
+
+    Pre->PmHi = Pm.Hi;
+    Pre->PmLo = Pm.Lo;
+#else
     Pre->PmHi = _NtCRT_Pow10[p - NTCRT_POW10_MIN].Hi;
     Pre->PmLo = _NtCRT_Pow10[p - NTCRT_POW10_MIN].Lo;
+#endif
     Pre->s = -(e + lp + 3);
 }
 

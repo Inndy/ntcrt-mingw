@@ -38,7 +38,9 @@
 #include "NtCRT.h"
 #include "Float.inl"
 
+#ifndef NTCRT_POW10_SMALL
 #include "FloatPow10.inl"
+#endif
 
 #pragma region Multiprecision decimal (decimal.go)
 

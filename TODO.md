@@ -20,6 +20,13 @@ the arguments of printf and scanf, pthreads, the 32-bit `time_t` names and the x
   a scan of every `float` found `sqrtf` correctly rounded, the library for tcc included. With them: `sqrt` of a
   negative number raises `FE_INVALID`, of a NaN leaves `errno`; `fdim` sets `ERANGE` on an overflow only.
 
+## Size
+
+- [x] **The powers of 10 of the float conversions from every 27th** (`make POW10_SMALL=1`, README "Size"). 584
+  bytes in place of the 11136 of the table of Go, 10 KB less in every program with printf or scanf, for a conversion
+  about 4.5 ns slower on x64 and 17 to 20 ns on x86. The user kept the table by default, for the speed the conversions of Go are taken for; `test/float/pow10.cpp`
+  checks the computed powers in every build.
+
 ## Windows 7
 
 Windows 7 SP1 x64 and WOW64 run `ret7`, `puts`, `nlsdata`, `pebteb`, `tlsattach`, the `thread_local` destructors

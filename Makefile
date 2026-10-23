@@ -33,15 +33,23 @@ NOUNWIND := -nounwind
 CXXFLAGS += -fno-asynchronous-unwind-tables -fno-unwind-tables
 endif
 
+# POW10_SMALL=1: the powers of 10 of the floating point conversions computed from every 27th (NTCRT_POW10_SMALL,
+# src/FloatPow10Small.cpp), into build-...-pow10small: about 10 KB less in a program with printf or scanf, a slower
+# conversion. See README.md "Size".
+ifeq ($(POW10_SMALL),1)
+POW10S   := -pow10small
+CXXFLAGS += -DNTCRT_POW10_SMALL
+endif
+
 ifdef TCC
-BUILD    ?= build-tcc
+BUILD    ?= build-tcc$(POW10S)
 else ifdef LLVM
 # A section for each variable, which lld drops unused. GCC would put the zero data in .data$ sections, which take
 # space in the file unlike .bss, and ld links whole objects anyway.
 CXXFLAGS += -fdata-sections
-BUILD    ?= build-llvm$(if $(X86),-i686)$(NOUNWIND)
+BUILD    ?= build-llvm$(if $(X86),-i686)$(NOUNWIND)$(POW10S)
 else
-BUILD    ?= build$(if $(X86),-i686)$(NOUNWIND)
+BUILD    ?= build$(if $(X86),-i686)$(NOUNWIND)$(POW10S)
 endif
 # tcc defines __STDC_NO_THREADS__, its library has no thread functions
 SRCS     := $(filter-out $(if $(TCC),$(filter-out src/PthreadTime.cpp,$(wildcard src/Pthread*.cpp)) src/C11%.cpp),$(wildcard src/*.cpp))
@@ -421,8 +429,14 @@ $(BUILD)/math/round.exe: test/math/round.c $(LIBS) $(DRIVER)
 	mkdir -p $(@D)
 	$(NTCRT_CC) -std=c17 -O2 -fno-builtin -static -o $@ $<
 
-test-math: $(BUILD)/math/round.exe
+# _NtCRT_GetPow10 of POW10_SMALL=1, in every library, against the table it is made from (test/float/pow10gen.py)
+$(BUILD)/float/pow10.exe: test/float/pow10.cpp src/FloatPow10.inl $(LIBS) $(DRIVER)
+	mkdir -p $(@D)
+	$(NTCRT_CXX) -std=c++23 -O2 -static -o $@ $<
+
+test-math: $(BUILD)/math/round.exe $(BUILD)/float/pow10.exe
 	./$<
+	./$(BUILD)/float/pow10.exe
 
 # scanf where the fuzz cannot compare with UCRT: the examples of C11, streams, the wide, _s and _l functions, msvcrt,
 # the locale and floating point numbers that would round twice. The map shows that libmingwex gives no scanf, the

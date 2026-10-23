@@ -148,7 +148,10 @@ Stripped sizes in bytes (`make size`), before the UTF-8 locale work, before the 
 The msvcrt.dll column is the default MinGW-w64 runtime of GCC, which imports it (and links winpthreads). A program
 with printf links the narrow engine (`src/Printf.cpp`), the digits of `src/FloatFormat.cpp` and the decimal of
 `src/Float.cpp`, with ld all of them; the 128-bit powers of 10 of `src/FloatPow10.inl` are 11136 bytes of them,
-a sixth of `printf` with lld. A file grows by 512 bytes (the file alignment) at a time: a change of a few bytes
+a sixth of `printf` with lld. `make POW10_SMALL=1` (`NTCRT_POW10_SMALL`, into `build-pow10small`) computes them from
+every 27th (`src/FloatPow10Small.cpp`, 584 bytes): `printf`, `wprintf`, `sscanf` and `std::cout` are 10240 bytes
+smaller with ld, a conversion is about 4.5 ns slower on x64 and 17 to 20 ns on x86 (`printf("%.17g")` takes 65 ns,
+`strtod` 44 on x64). The default keeps the table of Go, for speed. A file grows by 512 bytes (the file alignment) at a time: a change of a few bytes
 moves a program a step up or down, with ld and lld apart. What ld links beyond lld is the unused functions of these objects, most of all
 the code page conversions of the PolyFill (`MultiByteToWideChar` and `GetCPInfo` beside the `WideCharToMultiByte` of
 `argv`, one object of the shared sources). A program with sscanf links the narrow scanf engine (`src/Scanf.cpp`)
@@ -857,6 +860,7 @@ Derived from [KNSoft.NtCRT](https://github.com/KNSoft/KNSoft.NtCRT) at commit
 `test/upstream/` are copied from it, `include/KNSoft/NDK/` follows
 [KNSoft.NDK](https://github.com/KNSoft/KNSoft.NDK) (MIT).
 
-`src/Float.cpp`, `src/Float.inl`, `src/FloatParse.cpp`, `src/FloatFormat.cpp` and `src/FloatPow10.inl` are ported
+`src/Float.cpp`, `src/Float.inl`, `src/FloatParse.cpp`, `src/FloatFormat.cpp`, `src/FloatPow10.inl` and
+`src/FloatPow10Small.cpp` (with `src/FloatPow10Small.inl`, made from the table by `test/float/pow10gen.py`) are ported
 from the Go 1.27 source (`src/internal/strconv`), under the BSD 3-clause license of The Go Authors, whose notice is in
 `src/Float.cpp`.
