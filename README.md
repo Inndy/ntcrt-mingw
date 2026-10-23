@@ -551,7 +551,10 @@ compare-exchange: when the 16 tries of `__atomic_spin` (`bits/atomic_wait.h`) al
 waits although the count is not 0. Four threads that acquired from one releasing (`counting_semaphore<4000>`) hung
 within a few hundred rounds on Windows 11, with a compare-exchange retried while the count is not 0 none did.
 `std::binary_semaphore` does not wait so: a compare-exchange lost leaves 0, which the next `release` leaves. The
-deadline of `try_acquire_for` and `try_acquire_until` ends their wait without another notification.
+deadline of `try_acquire_for` and `try_acquire_until` ends their wait without another notification. This is GCC PR
+libstdc++/104928, fixed in GCC 16 (r16-1102, `acquire` waits only for a count of 0) and not backported to 15.x; on
+Linux the futex waits for the count, which can be back at the value seen (an ABA), and blocks so as well. The same
+four threads built by GCC 16.2 of MSYS2 finished every round.
 
 `make test-pthread` (not in `make test`, it needs the network) runs the tests of pthreads4w 3.0.0 (Apache-2.0, the
 release archive of SourceForge) and the thread, semaphore and TLS tests of musl libc-test (MIT, a pinned commit) on

@@ -320,7 +320,8 @@ static void Cxx20()
         Threads.emplace_back([&] {
             /*
              * acquire of libstdc++ may wait for ever: see std::counting_semaphore in README.md. try_acquire_for gives
-             * pthread_cond_timedwait a deadline of steady_clock, which is past by CLOCK_REALTIME: it polls.
+             * pthread_cond_timedwait a deadline of steady_clock, which is past by CLOCK_REALTIME: it polls. With
+             * libstdc++ 16 (PR 104928 fixed) this can be acquire again.
              */
             for (int j = 0; j < 1000; j++)
             {
